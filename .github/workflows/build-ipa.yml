@@ -1,0 +1,49 @@
+# Builds the unsigned SimPilotEFB.ipa on every push to main and publishes it as a GitHub release,
+# so it can be installed with TrollStore straight from the Releases page.
+name: Build IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-ipa
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Xcode
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Build IPA
+        run: ./scripts/build-ipa.sh
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimPilotEFB-ipa
+          path: SimPilotEFB.ipa
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(grep -m1 'MARKETING_VERSION' ios/project.yml | sed -E 's/.*"([^"]+)".*/\1/')"
+          tag="v${version}-build.${GITHUB_RUN_NUMBER}"
+          gh release create "$tag" SimPilotEFB.ipa \
+            --target "$GITHUB_SHA" \
+            --title "SimPilot EFB ${version} (build ${GITHUB_RUN_NUMBER})" \
+            --latest \
+            --notes "Unsigned build of ${GITHUB_SHA::7} for TrollStore (iPad, iOS 15+). Download SimPilotEFB.ipa below and open it with TrollStore."

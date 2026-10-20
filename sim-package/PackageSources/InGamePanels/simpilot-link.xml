@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="Windows-1252"?>
+<SimBase.Document Type="InGamePanels" version="1,0">
+  <Filename>SimPilotLink.spb</Filename>
+  <InGamePanels.InGamePanelDefinition id="PANEL_SIMPILOT_LINK" Name="SimPilot Link"
+    url="html_ui/InGamePanels/SimPilotLink/SimPilotLink.html"
+    resizeDirections="Both" minWidth="20" minHeight="20" defaultWidth="24"
+    defaultHeight="30" defaultTop="30" defaultRight="2"
+    icon="ICON_TOOLBAR_SIMPILOT_LINK" buttonVisible="true">
+  </InGamePanels.InGamePanelDefinition>
+</SimBase.Document>

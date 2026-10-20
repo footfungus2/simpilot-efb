@@ -1,0 +1,67 @@
+{
+  "_comment": "Real charts bundled for debugging without the sim. Personal use only — UK AIP charts are (c) NATS / Crown copyright; do not redistribute. Georeference either as 'grid' (straight lat/lon grid: lines measured in PDF points, y up) or 'lambert' (fitted Lambert conic: chart = t + s·R(θ)·[u, −v] in display coordinates after 'rotate'). 'rotate' = 90 turns a sideways page clockwise so north is up. 'frame' is the map area in display chart units from the top-left. Each entry was checked against coordinates printed on the chart (waypoints/navaids land on their symbols).",
+  "charts": [
+    {
+      "icao": "EGSS",
+      "type": "SID",
+      "name": "CLN 5S / CLN 9R (RWY 04/22) — UK AIP",
+      "file": "EGSS-SID-CLN5S-CLN9R.pdf",
+      "source": "UK AIP AD 2-EGSS-6-3, AIRAC 10-26 (chart 520515)",
+      "runways": [
+        "04",
+        "22"
+      ],
+      "procedures": [
+        "CLN5S",
+        "CLN9R"
+      ],
+      "rotate": 90,
+      "lambert": {
+        "sp1": 51.5,
+        "sp2": 52.0,
+        "cm": 0.5,
+        "similarity": [
+          295.8648,
+          -28216.93,
+          36147.3693,
+          0.00050122
+        ]
+      },
+      "frame": [
+        20,
+        10,
+        692,
+        486
+      ]
+    },
+    {
+      "icao": "EGSS",
+      "type": "SID",
+      "name": "DET 2D (RWY 04) — UK AIP",
+      "file": "EGSS-SID-DET2D-RWY04.pdf",
+      "source": "UK AIP AD 2-EGSS-6-6, AIRAC 10-26 (chart 479651)",
+      "runways": [
+        "04"
+      ],
+      "procedures": [
+        "DET2D"
+      ],
+      "grid": {
+        "lon0": 0.0,
+        "x0": 88.062,
+        "lon1": 0.5,
+        "x1": 283.438,
+        "lat0": 51.5,
+        "y0": 318.731,
+        "lat1": 52.0,
+        "y1": 633.606
+      },
+      "frame": [
+        8,
+        34,
+        488,
+        618
+      ]
+    }
+  ]
+}

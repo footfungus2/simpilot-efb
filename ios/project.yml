@@ -1,0 +1,78 @@
+# XcodeGen spec. Generate the project with:  cd ios && xcodegen
+name: SimPilotEFB
+options:
+  bundleIdPrefix: com.simpilot
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+  # Marks the project as checked by this Xcode, so it stops offering "Update to recommended settings".
+  xcodeVersion: "27.1"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "2" # iPad only
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+# MapLibre Native globe build (tag ios-v2026.10.19-globe, MapLibre 7.0 pre-release), vendored by
+# scripts/vendor-maplibre.sh with its minimum iOS lowered 15.5 → 15.0 (no newer system symbols are used).
+# Whether it runs on the iPad's iOS 15.3.1 still has to be confirmed on the device.
+# Fallback if it doesn't: the SPM package maplibre-gl-native-distribution exactVersion 6.31.0 (flat map only).
+targets:
+  SimPilotEFB:
+    type: application
+    platform: iOS
+    sources:
+      - path: SimPilotEFB
+        excludes:
+          - "Resources/Basemap/**"
+          - "Resources/TestCharts/**"
+      - path: SimPilotEFB/Resources/Basemap
+        type: folder
+        buildPhase: resources
+      - path: SimPilotEFB/Resources/TestCharts
+        type: folder
+        buildPhase: resources
+    configFiles:
+      Debug: Signing.xcconfig
+    dependencies:
+      - framework: Vendor/MapLibre.xcframework
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.simpilot.efb
+        PRODUCT_NAME: SimPilotEFB
+        INFOPLIST_FILE: SimPilotEFB/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+      configs:
+        # Debug: signed with your Apple ID (free Personal Team, set in Local.xcconfig) so Xcode can run it
+        # on "My Mac (Designed for iPad)". Separate bundle ID so it sits next to the TrollStore install.
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: com.simpilot.efb.dev
+          CODE_SIGN_STYLE: Automatic
+        # Release: unsigned build for TrollStore (it fake-signs on install).
+        Release:
+          CODE_SIGNING_ALLOWED: NO
+          CODE_SIGNING_REQUIRED: NO
+          CODE_SIGN_IDENTITY: ""
+  SimPilotEFBTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - SimPilotEFBTests
+    dependencies:
+      - target: SimPilotEFB
+    settings:
+      base:
+        CODE_SIGNING_ALLOWED: NO
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  SimPilotEFB:
+    build:
+      targets:
+        SimPilotEFB: all
+        SimPilotEFBTests: [test]
+    test:
+      targets:
+        - SimPilotEFBTests

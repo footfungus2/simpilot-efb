@@ -1,0 +1,35 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# bridge runtime cache (contains extracted chart images — personal use only, never commit)
+bridge/cache/
+
+# sim package build output
+sim-package/Packages/
+sim-package/_Temp/
+sim-package/PackageSources/html_ui/InGamePanels/SimPilotLink/link.js
+
+# iOS
+ios/SimPilotEFB.xcodeproj/
+ios/build/
+# MapLibre, fetched by scripts/vendor-maplibre.sh
+ios/Vendor/
+build/
+*.ipa
+*.tipa
+xcuserdata/
+DerivedData/
+
+# UK AIP debug charts (© NATS / Crown copyright) — personal use only, never commit (see README)
+ios/SimPilotEFB/Resources/TestCharts/*.pdf
+
+# stray output from other tools
+/Users/
+
+# personal signing team (see ios/Signing.xcconfig)
+ios/Local.xcconfig
+
+# local assistant notes about this machine/setup
+CLAUDE.md

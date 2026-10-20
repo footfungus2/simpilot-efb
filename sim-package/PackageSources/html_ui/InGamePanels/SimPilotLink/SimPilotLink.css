@@ -1,0 +1,37 @@
+#spl-root {
+  padding: 8px 12px;
+  color: var(--textColor);
+  font-family: Roboto-Regular, sans-serif;
+  font-size: 14px;
+  background-color: var(--backgroundColorPanel);
+  height: 100%;
+  overflow: hidden;
+}
+.spl-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+.spl-label {
+  opacity: 0.6;
+}
+.spl-ok {
+  color: #3fbf6a;
+}
+.spl-bad {
+  color: #e8a33d;
+}
+#spl-log {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-family: RobotoMono-Light, monospace;
+  font-size: 11px;
+  opacity: 0.8;
+}
+#spl-log li {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

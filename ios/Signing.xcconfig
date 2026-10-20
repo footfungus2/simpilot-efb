@@ -1,0 +1,5 @@
+// Debug signing for running on "My Mac (Designed for iPad)".
+// Put your own team in ios/Local.xcconfig (not committed), e.g.:
+//   DEVELOPMENT_TEAM = ABCDE12345
+// Release builds (the TrollStore IPA) are unsigned and don't need it.
+#include? "Local.xcconfig"
