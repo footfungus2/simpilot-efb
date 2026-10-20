@@ -59,6 +59,17 @@ final class ChartsModel: ObservableObject {
                 self.reloadIndex()
             }
             .store(in: &cancellables)
+        // …and again when the SimPilot Link panel comes online in the sim, so a request the bridge lost
+        // (e.g. it was restarted before the panel was opened) is sent again.
+        bridge.$status
+            .map { $0?.link.connected == true }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] linkUp in
+                guard let self, linkUp, self.isTestCharts || self.isWaitingOrFailed else { return }
+                self.reloadIndex()
+            }
+            .store(in: &cancellables)
     }
 
     /// Procedures of the loaded flight at this airport (e.g. ["CLN5S"]); the matching chart opens first.
@@ -75,6 +86,13 @@ final class ChartsModel: ObservableObject {
             return match
         }
         return visibleCharts.first
+    }
+
+    private var isWaitingOrFailed: Bool {
+        switch state {
+        case .waitingForSim, .failed: return true
+        default: return false
+        }
     }
 
     /// True while showing generated test charts instead of the sim's Lido charts.
