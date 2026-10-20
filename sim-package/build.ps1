@@ -25,13 +25,18 @@ if (-not (Test-Path "$PSScriptRoot\Packages\simpilot-link\layout.json")) { throw
 # 3. Find the Community folder from UserCfg.opt (MS Store and Steam keep it in different places).
 $cfgCandidates = @(
   "$env:LOCALAPPDATA\Packages\Microsoft.Limitless_8wekyb3d8bbwe\LocalCache\UserCfg.opt",
+  "$env:LOCALAPPDATA\Packages\Microsoft.Limitless_8wekyb3d8bbwe\LocalState\UserCfg.opt",
   "$env:APPDATA\Microsoft Flight Simulator 2024\UserCfg.opt"
 )
 $community = $null
 foreach ($cfg in $cfgCandidates) {
   if (Test-Path $cfg) {
     $line = Select-String -Path $cfg -Pattern '^InstalledPackagesPath\s+"(.+)"' | Select-Object -First 1
-    if ($line) { $community = Join-Path $line.Matches[0].Groups[1].Value 'Community'; break }
+    if ($line) {
+      $community = Join-Path $line.Matches[0].Groups[1].Value 'Community'
+      Write-Host "MSFS 2024 settings: $cfg"
+      break
+    }
   }
 }
 if (-not $community -or -not (Test-Path $community)) {
@@ -43,4 +48,8 @@ $dest = Join-Path $community 'simpilot-link'
 if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
 Copy-Item -Recurse "$PSScriptRoot\Packages\simpilot-link" $dest
 Write-Host "Installed SimPilot Link to $dest" -ForegroundColor Green
+if (-not (Test-Path (Join-Path $dest 'layout.json')) -or -not (Test-Path (Join-Path $dest 'manifest.json'))) {
+  Write-Host "Warning: layout.json/manifest.json missing in $dest - MSFS won't load the panel." -ForegroundColor Yellow
+}
+Write-Host "In a Free Flight: toolbar > gear icon > switch 'SimPilot Link' on, then open it."
 Write-Host "Restart MSFS (or the flight) and open 'SimPilot Link' from the toolbar once per session."

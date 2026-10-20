@@ -1,6 +1,6 @@
 <AssetPackage Name="simpilot-link" Version="0.1.0">
 	<ItemSettings>
-		<ContentType>SPB</ContentType>
+		<ContentType>MISC</ContentType>
 		<Title>SimPilot EFB Link</Title>
 		<Manufacturer>SimPilot</Manufacturer>
 		<Creator>SimPilot</Creator>
