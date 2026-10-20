@@ -1,15 +1,20 @@
 # Builds the SimPilot Link toolbar panel and installs it into the MSFS 2024 Community folder.
 # Requirements: Node.js 20+, and the MSFS 2024 SDK (Dev Mode > Help > SDK Installer), which sets MSFS2024_SDK.
-# Usage (PowerShell, from this folder):  ./build.ps1
+# Usage (PowerShell, from this folder):
+#   powershell -ExecutionPolicy Bypass -File .\build.ps1
+#   powershell -ExecutionPolicy Bypass -File .\build.ps1 -Community "D:\MSFS\Community"   # your Community folder
+param([string]$Community)
 
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
+Write-Host "== 1/4 Building the panel script" -ForegroundColor Cyan
 
 # 1. Bundle the panel script.
 if (-not (Test-Path node_modules)) { npm install --no-audit --no-fund }
 npm run build
 
 # 2. Package with the SDK's fspackagetool.
+Write-Host "== 2/4 Packaging with the MSFS 2024 SDK" -ForegroundColor Cyan
 $sdk = $env:MSFS2024_SDK
 if (-not $sdk) { $sdk = $env:MSFS_SDK }
 if (-not $sdk -or -not (Test-Path "$sdk\Tools\bin\fspackagetool.exe")) {
@@ -21,6 +26,7 @@ if (-not (Test-Path "$PSScriptRoot\Packages\simpilot-link\layout.json")) {
   & "$sdk\Tools\bin\fspackagetool.exe" "$PSScriptRoot\package.xml"
 }
 if (-not (Test-Path "$PSScriptRoot\Packages\simpilot-link\layout.json")) { throw "fspackagetool did not produce Packages\simpilot-link" }
+Write-Host "Built $PSScriptRoot\Packages\simpilot-link"
 
 # 3. Find the Community folder from UserCfg.opt (MS Store and Steam keep it in different places).
 $cfgCandidates = @(
@@ -28,8 +34,9 @@ $cfgCandidates = @(
   "$env:LOCALAPPDATA\Packages\Microsoft.Limitless_8wekyb3d8bbwe\LocalState\UserCfg.opt",
   "$env:APPDATA\Microsoft Flight Simulator 2024\UserCfg.opt"
 )
-$community = $null
-foreach ($cfg in $cfgCandidates) {
+Write-Host "== 3/4 Finding the Community folder" -ForegroundColor Cyan
+$community = $Community
+if (-not $community) { foreach ($cfg in $cfgCandidates) {
   if (Test-Path $cfg) {
     $line = Select-String -Path $cfg -Pattern '^InstalledPackagesPath\s+"(.+)"' | Select-Object -First 1
     if ($line) {
@@ -38,12 +45,13 @@ foreach ($cfg in $cfgCandidates) {
       break
     }
   }
-}
+} }
 if (-not $community -or -not (Test-Path $community)) {
   $community = Read-Host "Couldn't find your Community folder. Paste its full path"
 }
 
 # 4. Install (replace any previous copy).
+Write-Host "== 4/4 Installing into $community" -ForegroundColor Cyan
 $dest = Join-Path $community 'simpilot-link'
 if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
 Copy-Item -Recurse "$PSScriptRoot\Packages\simpilot-link" $dest

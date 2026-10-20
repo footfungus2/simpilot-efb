@@ -116,8 +116,11 @@ the live aircraft position on the map, the vertical profile and the charts.
 **2. Optional: enable chart export from the sim**
 
 1. In MSFS 2024, enable *Developer Mode*, then **Help → SDK Installer** and install the SDK.
-2. In PowerShell, run `cd sim-package` and then `./build.ps1`. This builds the panel and copies it into your Community folder.
-3. In a flight, open **SimPilot Link** from the toolbar once. It shows *Bridge: connected* and exports charts when the iPad asks for them.
+2. In PowerShell, inside the `sim-package` folder, run
+   `powershell -ExecutionPolicy Bypass -File .\build.ps1`. This builds the panel and copies it into your Community folder.
+   If it picks the wrong folder, add yours: `... -File .\build.ps1 -Community "D:\MSFS\Community"`.
+3. Start a **Free Flight**, open the toolbar's **gear icon** and switch **SimPilot Link** on (MSFS 2024 hides add-on panels
+   until you do), then open it. It shows *Bridge: connected* and exports charts when the iPad asks for them.
 
 ## How it works
 
