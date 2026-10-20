@@ -1,10 +1,10 @@
 <div align="center">
 
+<img src="docs/images/hero.jpg" alt="SimPilot EFB on iPad: enroute map and airport moving map" width="100%">
+
 # SimPilot EFB
 
 **An airline-style electronic flight bag for Microsoft Flight Simulator 2024, built for the iPad.**
-
-Enroute moving map · airport moving map · charts with your aircraft on them · SimBrief flight folder · live VATSIM traffic
 
 [![Build IPA](https://github.com/footfungus2/simpilot-efb/actions/workflows/build-ipa.yml/badge.svg)](https://github.com/footfungus2/simpilot-efb/actions/workflows/build-ipa.yml)
 [![Latest release](https://img.shields.io/github/v/release/footfungus2/simpilot-efb?include_prereleases&label=download&color=3d8bff)](https://github.com/footfungus2/simpilot-efb/releases/latest)
@@ -12,6 +12,8 @@ Enroute moving map · airport moving map · charts with your aircraft on them ·
 ![MSFS 2024](https://img.shields.io/badge/MSFS-2024-0b5cad)
 ![Swift](https://img.shields.io/badge/Swift-SwiftUI-F05138?logo=swift&logoColor=white)
 ![Node](https://img.shields.io/badge/bridge-Node.js%2020-339933?logo=node.js&logoColor=white)
+
+[**Download**](https://github.com/footfungus2/simpilot-efb/releases/latest) · [Features](#features) · [Screenshots](#screenshots) · [Install](#install-on-the-ipad) · [Connect to MSFS](#connect-to-msfs-2024)
 
 </div>
 
@@ -29,6 +31,7 @@ weather, VATSIM and the maps all load directly on the iPad.
 ## Contents
 
 - [Features](#features)
+- [Screenshots](#screenshots)
 - [Install on the iPad](#install-on-the-ipad)
 - [Connect to MSFS 2024](#connect-to-msfs-2024)
 - [How it works](#how-it-works)
@@ -38,7 +41,7 @@ weather, VATSIM and the maps all load directly on the iPad.
 
 ## Features
 
-### 🗺️ Enroute map
+### Enroute map
 - **3D globe** that flattens into a flat chart as you zoom in, with a clean solid-colour basemap
 - SimBrief route with waypoint triangles, FIR boundaries and airports
 - **NAV filters**: route, airports, FIRs, VOR, NDB, DME/TACAN and frequency labels
@@ -46,25 +49,42 @@ weather, VATSIM and the maps all load directly on the iPad.
 - **Vertical profile** and **flight progress strip** (next fix, top of descent, destination)
 - Weather: METAR station dots and SIGMET areas
 
-### 🛬 Airport moving map
+### Airport moving map
 - Zoom into any airport for a ground map with taxiways, runways, **stands and holding points**, without roads or clutter
 - Taxi-route highlighting and an **ON RWY / APPROACHING RWY** awareness banner
 - Data from OpenStreetMap, cached on the device so it works offline afterwards
 
-### 📄 Charts
+### Charts
 - The sim's built-in charts, exported by an in-sim toolbar panel
 - **Your aircraft drawn on georeferenced charts**, with follow mode
 - **Show a chart on the map**, overlaid in place
 - **Apple Pencil annotations** (double-tap honours the system eraser and palette setting), plus split view of chart and map
 - **Flight chart pack**: pin the charts for this flight and keep them available offline
 
-### 🧳 Flight folder
+### Flight folder
 - Loads your latest **SimBrief** OFP: route, navlog, fuel, alternates and the full OFP document
 - Route notes, extra alternates and a demo flight mode for testing without the sim
 
-### 📡 VATSIM layer
+### VATSIM layer
 - Live pilots and controllers, styled after VATSIM Radar
 - **Real sector ownership** from VATGlasses at the flight level you choose, with approach areas and traffic counts
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/enroute-map.jpg" alt="Enroute map with the SimBrief route"><br><b>Enroute map</b><br>SimBrief route, FIRs, airports and the flight folder</td>
+    <td width="50%"><img src="docs/images/airport-map.jpg" alt="Airport moving map at London Stansted"><br><b>Airport moving map</b><br>Stands, holding points, taxiway names and runway badges</td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/vatsim.jpg" alt="Live VATSIM controllers and sectors"><br><b>Live VATSIM</b><br>Online controllers, real sector ownership and approach areas</td>
+    <td><img src="docs/images/waypoint-details.jpg" alt="Waypoint details card"><br><b>Tap for details</b><br>Planned level, leg and distance for any fix on the route</td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/charts.jpg" alt="Chart viewer"><br><b>Charts</b><br>Airport, approach and departure charts by category</td>
+    <td><img src="docs/images/split-view.jpg" alt="Split view of chart and map"><br><b>Split view</b><br>Chart and live map side by side</td>
+  </tr>
+</table>
 
 ## Install on the iPad
 
@@ -77,7 +97,7 @@ weather, VATSIM and the maps all load directly on the iPad.
 Updates install the same way, over the old version, and keep your settings. Every push to `main` is built automatically by
 GitHub Actions and published as a new release.
 
-On first launch, open **Settings** (✓ button) and enter your SimBrief username, then tap **Load latest OFP**.
+On first launch, open **Settings** and enter your SimBrief username, then tap **Load latest OFP**.
 
 ## Connect to MSFS 2024
 
