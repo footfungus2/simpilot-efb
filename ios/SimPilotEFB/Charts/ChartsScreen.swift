@@ -158,8 +158,19 @@ private struct ChartsContent: View {
 
 private struct ChartListSidebar: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var bridge: BridgeClient
     @Environment(\.theme) private var theme
     @ObservedObject var model: ChartsModel
+
+    /// Why the generated test charts are showing instead of the sim's charts.
+    private var testChartsReason: String {
+        guard bridge.isConnected else { return "Test charts — PC bridge not connected" }
+        if bridge.status?.link.connected == true {
+            if case .waitingForSim = model.state { return "Test charts — loading the sim's charts…" }
+            return "Test charts — sim has no charts for this airport"
+        }
+        return "Test charts — open SimPilot Link from the MSFS toolbar to load the sim's charts"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -201,11 +212,12 @@ private struct ChartListSidebar: View {
             .padding(.bottom, 10)
 
             if model.isTestCharts {
-                HStack(spacing: 6) {
-                    Image(systemName: "hammer.fill").font(.system(size: 11))
-                    Text("Test charts — sim not connected").font(.system(size: 12, weight: .semibold))
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "hammer.fill").font(.system(size: 11)).padding(.top, 2)
+                    Text(testChartsReason).font(.system(size: 12, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
                 }
                 .foregroundColor(Theme.warnOrange)
+                .padding(.horizontal, 12)
                 .padding(.bottom, 8)
             }
 

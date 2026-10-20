@@ -12,7 +12,8 @@ import { getChartPages, getIndexForAirport, loadChartLiveView } from './charts.j
 declare const TemplateElement: { new (): HTMLElement; prototype: HTMLElement };
 declare function checkAutoload(): void;
 
-const BRIDGE = 'http://localhost:8380';
+// 127.0.0.1, not localhost: Windows may resolve localhost to IPv6 (::1), but the bridge listens on IPv4.
+const BRIDGE = 'http://127.0.0.1:8380';
 const POLL_MS = 2000;
 
 type Method = 'xhr' | 'bridge' | 'view';
@@ -204,22 +205,27 @@ async function tick(): Promise<void> {
         await request('POST', '/link/done', { jobId: job.id, icao: job.icao, error: msg }).catch(() => {});
       }
     }
-  } catch {
-    setText('spl-bridge', 'not running', false);
+  } catch (err) {
+    // Show why, so a blocked or wrong address can be told apart from a bridge that isn't started.
+    setText('spl-bridge', `not reachable (${(err as Error).message.replace('GET /link/poll: ', '')})`, false);
   } finally {
     busy = false;
   }
 }
 
-class SimPilotLinkPanel extends TemplateElement {
-  connectedCallback(): void {
-    (TemplateElement.prototype as any).connectedCallback?.call(this);
-    uiLog('SimPilot Link ready');
-  }
-}
-window.customElements.define('simpilot-link-panel', SimPilotLinkPanel as unknown as CustomElementConstructor);
-checkAutoload();
-
-// Start polling as soon as the panel's view is loaded (it is created hidden at flight start).
+// Start polling first, as soon as the panel's view is loaded, so a UI registration error below can't stop it.
 setInterval(() => void tick(), POLL_MS);
 void tick();
+
+try {
+  class SimPilotLinkPanel extends TemplateElement {
+    connectedCallback(): void {
+      (TemplateElement.prototype as any).connectedCallback?.call(this);
+      uiLog('SimPilot Link ready');
+    }
+  }
+  window.customElements.define('simpilot-link-panel', SimPilotLinkPanel as unknown as CustomElementConstructor);
+  checkAutoload();
+} catch (err) {
+  log(`panel setup: ${(err as Error).message}`, 'warn');
+}
