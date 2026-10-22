@@ -1,117 +1,241 @@
 import SwiftUI
 
-/// Building blocks drawn like real Airbus cockpit hardware: panel plates, 7-segment windows, square
-/// pushbuttons with annunciators, rotary knobs, overhead toggle switches and rotary selectors.
+/// Building blocks drawn after photos of real A320 panels: glareshield (FCU), pedestal (RMP, ATC/TCAS) and
+/// overhead (lights) plates, LCD windows, black keys with green annunciators, silver knurled knobs, round
+/// pushbuttons, bat-handle toggle switches on chrome nuts and pointer selectors.
 enum Cockpit {
-    static let panel = Color(hex: 0x4A5561)
-    static let panelDark = Color(hex: 0x3B4550)
-    static let engraving = Color(white: 0.93)
-    static let amber = Color(hex: 0xFF9F1A)
-    static let green = Color(hex: 0x3BE26B)
-    static let white = Color(hex: 0xF4F1E6)
-    static let buttonFace = Color(hex: 0x2A2E33)
+    enum Area {
+        case glareshield, pedestal, overhead
+
+        var plate: Color {
+            switch self {
+            case .glareshield: return Color(hex: 0x2E3237)
+            case .pedestal: return Color(hex: 0x4D5B6B)
+            case .overhead: return Color(hex: 0x6C7F94)
+            }
+        }
+
+        var plateDark: Color {
+            switch self {
+            case .glareshield: return Color(hex: 0x25282C)
+            case .pedestal: return Color(hex: 0x435060)
+            case .overhead: return Color(hex: 0x617488)
+            }
+        }
+    }
+
+    static let engraving = Color(hex: 0xF2F2EE)
+    static let amber = Color(hex: 0xFF9A1F)
+    static let green = Color(hex: 0x37E26A)
+    static let key = Color(hex: 0x15171A)
+    static let lcd = Color(hex: 0x0A0B0C)
 
     static func segment(_ size: CGFloat) -> Font { .custom("DSEG7Classic-Bold", size: size) }
-    static func label(_ size: CGFloat = 11, weight: Font.Weight = .bold) -> Font { .system(size: size, weight: weight) }
+    /// Airbus panel lettering is a condensed sans; Avenir Next Condensed ships with iOS 15.
+    static func label(_ size: CGFloat = 11, heavy: Bool = false) -> Font {
+        .custom(heavy ? "AvenirNextCondensed-Bold" : "AvenirNextCondensed-DemiBold", size: size)
+    }
 }
 
-/// A grey panel plate with screws in the corners and an optional engraved title.
+/// Engraved panel text.
+struct Engraved: View {
+    var text: String
+    var size: CGFloat = 11
+    var heavy = false
+    var color: Color = Cockpit.engraving
+
+    init(_ text: String, size: CGFloat = 11, heavy: Bool = false, color: Color = Cockpit.engraving) {
+        self.text = text
+        self.size = size
+        self.heavy = heavy
+        self.color = color
+    }
+
+    var body: some View {
+        Text(text).font(Cockpit.label(size, heavy: heavy)).foregroundColor(color).fixedSize()
+    }
+}
+
+/// A cockpit panel plate with screws in the corners.
 struct PanelPlate<Content: View>: View {
-    var title: String?
+    var area: Cockpit.Area
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(spacing: 10) {
-            if let title {
-                Text(title).font(Cockpit.label(12, weight: .heavy)).foregroundColor(Cockpit.engraving).tracking(1.5)
-            }
-            content
-        }
-        .padding(.horizontal, 22).padding(.vertical, 16)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(LinearGradient(colors: [Cockpit.panel, Cockpit.panelDark], startPoint: .top, endPoint: .bottom))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.black.opacity(0.55), lineWidth: 1.5))
-                .shadow(color: .black.opacity(0.5), radius: 6, y: 3)
-        )
-        .overlay(screws)
+        content
+            .padding(.horizontal, 26).padding(.vertical, 20)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(LinearGradient(colors: [area.plate, area.plateDark], startPoint: .top, endPoint: .bottom))
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.black.opacity(0.6), lineWidth: 1.5))
+                    .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.white.opacity(0.07), lineWidth: 1).padding(1.5))
+                    .shadow(color: .black.opacity(0.55), radius: 8, y: 4)
+            )
+            .overlay(screws)
     }
 
     private var screws: some View {
         GeometryReader { g in
             ForEach(0..<4, id: \.self) { i in
-                Screw().position(x: i % 2 == 0 ? 9 : g.size.width - 9, y: i < 2 ? 9 : g.size.height - 9)
+                Screw().position(x: i % 2 == 0 ? 10 : g.size.width - 10, y: i < 2 ? 10 : g.size.height - 10)
             }
         }
         .allowsHitTesting(false)
     }
 }
 
-private struct Screw: View {
+struct Screw: View {
+    var size: CGFloat = 9
+
     var body: some View {
         ZStack {
-            Circle().fill(RadialGradient(colors: [Color(white: 0.75), Color(white: 0.35)], center: .topLeading, startRadius: 0, endRadius: 8))
-            Rectangle().fill(Color.black.opacity(0.6)).frame(width: 6, height: 1.2).rotationEffect(.degrees(35))
+            Circle().fill(RadialGradient(colors: [Color(white: 0.82), Color(white: 0.38)], center: .topLeading, startRadius: 0, endRadius: size))
+            Rectangle().fill(Color.black.opacity(0.55)).frame(width: size * 0.75, height: 1.3).rotationEffect(.degrees(40))
         }
-        .frame(width: 8, height: 8)
+        .frame(width: size, height: size)
+        .shadow(color: .black.opacity(0.4), radius: 0.5, y: 0.5)
     }
 }
 
-/// Black LCD window with amber 7-segment digits; unlit segments show faintly like the real displays.
-struct SegmentDisplay: View {
+/// Group heading as engraved on the overhead: title centred on a white line, with short drops at both ends.
+struct GroupHeading: View {
+    var title: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            line
+            Engraved(title, size: 14, heavy: true)
+            line
+        }
+    }
+
+    private var line: some View {
+        Rectangle().fill(Cockpit.engraving.opacity(0.85)).frame(height: 1.4)
+    }
+}
+
+/// LCD window: amber 7-segment digits; unlit segments show faintly like the real displays.
+struct LCDText: View {
     var text: String
     var ghost: String
     var size: CGFloat = 30
     var color: Color = Cockpit.amber
-    var trailing: String? = nil // e.g. the managed-mode dot
 
     var body: some View {
-        HStack(spacing: 6) {
-            ZStack(alignment: .trailing) {
-                Text(ghost).foregroundColor(color.opacity(0.07))
-                Text(text).foregroundColor(color).shadow(color: color.opacity(0.6), radius: 4)
-            }
-            .font(Cockpit.segment(size))
-            .lineLimit(1)
-            .fixedSize()
-            if let trailing {
-                Text(trailing).font(.system(size: size * 0.5, weight: .bold)).foregroundColor(color).frame(width: size * 0.4)
-            }
+        ZStack(alignment: .trailing) {
+            Text(ghost).foregroundColor(color.opacity(0.06))
+            Text(text).foregroundColor(color).shadow(color: color.opacity(0.55), radius: 4)
         }
-        .padding(.horizontal, 10).padding(.vertical, 8)
-        .background(RoundedRectangle(cornerRadius: 3).fill(Color(hex: 0x0B0C0D)))
-        .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.black, lineWidth: 2))
-        .overlay(RoundedRectangle(cornerRadius: 3).stroke(Color.white.opacity(0.08), lineWidth: 1).padding(1))
+        .font(Cockpit.segment(size))
+        .lineLimit(1)
+        .fixedSize()
     }
 }
 
-/// Square Airbus pushbutton: engraved legend, green/white annunciator bar when lit. Calls `action` on press.
-struct AirbusButton: View {
+/// LCD in a screwed bezel (RMP and ATC windows).
+struct BezelLCD: View {
+    var text: String
+    var ghost: String
+    var size: CGFloat = 30
+
+    var body: some View {
+        LCDText(text: text, ghost: ghost, size: size)
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            .background(RoundedRectangle(cornerRadius: 3).fill(Cockpit.lcd))
+            .padding(7)
+            .background(
+                RoundedRectangle(cornerRadius: 4).fill(Color(hex: 0x2A3038))
+                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.black.opacity(0.7)))
+            )
+            .overlay(GeometryReader { g in
+                ForEach(0..<4, id: \.self) { i in
+                    Screw(size: 6).position(x: i % 2 == 0 ? 6 : g.size.width - 6, y: i < 2 ? 6 : g.size.height - 6)
+                }
+            })
+    }
+}
+
+/// Black key with white legend. `bars` draws the FCU-style green annunciator inside the key;
+/// `led` draws the RMP-style green light above it, over a small engraved ▼.
+struct BlackKey: View {
     var label: String
-    var lit = false
-    var light: Color = Cockpit.green
     var width: CGFloat = 54
-    var height: CGFloat = 46
-    var fontSize: CGFloat? = nil
+    var height: CGFloat = 32
+    var fontSize: CGFloat = 13
+    var bars: Bool? = nil
+    var led: Bool? = nil
+    var action: () -> Void
+    @State private var pressed = false
+
+    var body: some View {
+        VStack(spacing: 3) {
+            if let led {
+                ZStack {
+                    Image(systemName: "arrowtriangle.down.fill").font(.system(size: 6)).foregroundColor(Cockpit.engraving.opacity(0.75))
+                        .offset(y: 3)
+                    Capsule().fill(led ? Cockpit.green : .clear).frame(width: 9, height: 4)
+                        .shadow(color: led ? Cockpit.green : .clear, radius: 4).offset(y: -3)
+                }
+                .frame(height: 12)
+            }
+            VStack(spacing: 3) {
+                if let bars {
+                    HStack(spacing: 3) {
+                        ForEach(0..<3, id: \.self) { _ in
+                            Capsule().fill(bars ? Cockpit.green : Color.white.opacity(0.08)).frame(width: 8, height: 3)
+                        }
+                    }
+                    .shadow(color: bars ? Cockpit.green : .clear, radius: 3)
+                }
+                Text(label).font(Cockpit.label(fontSize, heavy: true)).foregroundColor(Cockpit.engraving)
+                    .lineLimit(1).minimumScaleFactor(0.6)
+            }
+            .frame(width: width, height: height)
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(LinearGradient(colors: [Color(hex: 0x24272B), Cockpit.key], startPoint: .top, endPoint: .bottom))
+                    .shadow(color: .black.opacity(pressed ? 0.15 : 0.75), radius: pressed ? 0.5 : 2.5, y: pressed ? 0 : 2)
+            )
+            .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.white.opacity(0.08)))
+            .scaleEffect(pressed ? 0.95 : 1)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { tap() }
+        .accessibilityElement()
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private func tap() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        pressed = true
+        action()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { pressed = false }
+    }
+}
+
+/// Small round pushbutton in a chrome ring (SPD MACH, HDG-V/S TRK-FPA, METRIC ALT, IDENT).
+struct RoundButton: View {
+    var label: String? = nil
+    var size: CGFloat = 30
     var action: () -> Void
     @State private var pressed = false
 
     var body: some View {
         VStack(spacing: 4) {
-            Capsule().fill(lit ? light : Color.black.opacity(0.45))
-                .frame(width: width * 0.55, height: 4)
-                .shadow(color: lit ? light : .clear, radius: 4)
-            Text(label).font(Cockpit.label(fontSize ?? (label.count > 5 ? 9 : 11))).foregroundColor(Cockpit.white)
-                .lineLimit(2).multilineTextAlignment(.center).minimumScaleFactor(0.7)
+            ZStack {
+                Circle().fill(LinearGradient(colors: [Color(white: 0.85), Color(white: 0.4)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                Circle().fill(RadialGradient(colors: [Color(hex: 0x2B2E32), Color(hex: 0x070808)], center: .topLeading, startRadius: 1, endRadius: size))
+                    .padding(3)
+            }
+            .frame(width: size, height: size)
+            .scaleEffect(pressed ? 0.92 : 1)
+            .shadow(color: .black.opacity(0.6), radius: 2, y: 2)
+            if let label {
+                Text(label).font(Cockpit.label(10, heavy: true)).foregroundColor(Cockpit.engraving)
+                    .multilineTextAlignment(.center).fixedSize()
+            }
         }
-        .frame(width: width, height: height)
-        .background(
-            RoundedRectangle(cornerRadius: 4)
-                .fill(LinearGradient(colors: [Color(hex: 0x3A3F45), Cockpit.buttonFace], startPoint: .top, endPoint: .bottom))
-                .shadow(color: .black.opacity(pressed ? 0.2 : 0.7), radius: pressed ? 1 : 3, y: pressed ? 0 : 2)
-        )
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.black.opacity(0.8), lineWidth: 1))
-        .scaleEffect(pressed ? 0.96 : 1)
         .contentShape(Rectangle())
         .onTapGesture {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
@@ -119,19 +243,15 @@ struct AirbusButton: View {
             action()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { pressed = false }
         }
-        .accessibilityElement()
-        .accessibilityLabel(label)
-        .accessibilityAddTraits(.isButton)
     }
 }
 
-/// Rotary knob: drag around it (or up/down) to turn, tap the left/right half for one step.
-/// With `inner`, the centre cap is a second concentric knob (RMP frequency selector).
-struct RotaryKnob: View {
-    var size: CGFloat = 70
+/// Silver knurled knob (FCU, RMP). Drag around it (or up/down) to turn; tap the left/right half for one step.
+/// With `inner`, the silver cap is a second concentric knob (RMP kHz).
+struct KnurledKnob: View {
+    var size: CGFloat = 64
     var onStep: (Int) -> Void
     var inner: ((Int) -> Void)? = nil
-    var caption: String? = nil
 
     @State private var outerAngle: Double = 0
     @State private var innerAngle: Double = 0
@@ -139,42 +259,44 @@ struct RotaryKnob: View {
     @State private var accumulated: Double = 0
     @State private var draggingInner = false
 
-    private let degreesPerStep = 24.0
+    private let degreesPerStep = 22.0
+    private var innerRadius: CGFloat { size * (inner == nil ? 0.31 : 0.3) }
 
     var body: some View {
-        VStack(spacing: 6) {
+        ZStack {
+            // Outer knurled ring.
             ZStack {
-                knob(diameter: size, angle: outerAngle, ridges: 18)
-                if inner != nil {
-                    knob(diameter: size * 0.56, angle: innerAngle, ridges: 12)
+                Circle().fill(RadialGradient(colors: [Color(hex: 0x5E646B), Color(hex: 0x1C1E21)], center: .topLeading, startRadius: 2, endRadius: size))
+                ForEach(0..<40, id: \.self) { i in
+                    Rectangle().fill(Color.black.opacity(0.45)).frame(width: 1.2, height: size * 0.11)
+                        .offset(y: -size * 0.445).rotationEffect(.degrees(Double(i) * 9))
                 }
             }
-            .frame(width: size, height: size)
-            .contentShape(Circle())
-            .gesture(drag)
-            .simultaneousGesture(SpatialTapGestureCompat { location in
-                let center = CGPoint(x: size / 2, y: size / 2)
-                let isInner = inner != nil && hypot(location.x - center.x, location.y - center.y) < size * 0.28
-                step(location.x < center.x ? -1 : 1, inner: isInner)
-            })
-            if let caption {
-                Text(caption).font(Cockpit.label(9, weight: .heavy)).foregroundColor(Cockpit.engraving)
+            .rotationEffect(.degrees(outerAngle))
+            // Silver cap.
+            ZStack {
+                Circle().fill(RadialGradient(colors: [Color(white: 0.96), Color(white: 0.62)], center: UnitPoint(x: 0.35, y: 0.3), startRadius: 1, endRadius: innerRadius * 1.6))
+                Circle().stroke(Color(white: 0.45), lineWidth: 1)
+                if inner != nil {
+                    ForEach(0..<24, id: \.self) { i in
+                        Rectangle().fill(Color.black.opacity(0.18)).frame(width: 1, height: innerRadius * 0.25)
+                            .offset(y: -innerRadius * 0.85).rotationEffect(.degrees(Double(i) * 15))
+                    }
+                }
             }
+            .frame(width: innerRadius * 2, height: innerRadius * 2)
+            .rotationEffect(.degrees(inner == nil ? outerAngle : innerAngle))
+            .shadow(color: .black.opacity(0.45), radius: 2, y: 1.5)
         }
-    }
-
-    private func knob(diameter: CGFloat, angle: Double, ridges: Int) -> some View {
-        ZStack {
-            Circle().fill(RadialGradient(colors: [Color(hex: 0x50565D), Color(hex: 0x16181B)], center: .topLeading, startRadius: 2, endRadius: diameter))
-            ForEach(0..<ridges, id: \.self) { i in
-                Rectangle().fill(Color.black.opacity(0.55)).frame(width: 2, height: diameter * 0.12)
-                    .offset(y: -diameter * 0.44).rotationEffect(.degrees(Double(i) / Double(ridges) * 360))
-            }
-            Rectangle().fill(Color.white.opacity(0.85)).frame(width: 2.5, height: diameter * 0.2).offset(y: -diameter * 0.28)
-        }
-        .frame(width: diameter, height: diameter)
-        .rotationEffect(.degrees(angle))
+        .frame(width: size, height: size)
         .shadow(color: .black.opacity(0.6), radius: 3, y: 2)
+        .contentShape(Circle())
+        .gesture(drag)
+        .simultaneousGesture(TapWithLocation { location in
+            let c = CGPoint(x: size / 2, y: size / 2)
+            let isInner = inner != nil && hypot(location.x - c.x, location.y - c.y) < innerRadius
+            step(location.x < c.x ? -1 : 1, inner: isInner)
+        })
     }
 
     private var drag: some Gesture {
@@ -182,7 +304,7 @@ struct RotaryKnob: View {
             .onChanged { v in
                 let c = CGPoint(x: size / 2, y: size / 2)
                 if lastAngle == nil {
-                    draggingInner = inner != nil && hypot(v.startLocation.x - c.x, v.startLocation.y - c.y) < size * 0.28
+                    draggingInner = inner != nil && hypot(v.startLocation.x - c.x, v.startLocation.y - c.y) < innerRadius
                 }
                 let a = atan2(v.location.y - c.y, v.location.x - c.x) * 180 / .pi
                 if let last = lastAngle {
@@ -214,7 +336,7 @@ struct RotaryKnob: View {
 }
 
 /// iOS 15 has no SpatialTapGesture: a zero-distance drag that ends where it started acts as a tap with a location.
-private struct SpatialTapGestureCompat: Gesture {
+struct TapWithLocation: Gesture {
     var action: (CGPoint) -> Void
     init(_ action: @escaping (CGPoint) -> Void) { self.action = action }
 
@@ -225,58 +347,84 @@ private struct SpatialTapGestureCompat: Gesture {
     }
 }
 
-/// Overhead toggle switch: positions top to bottom; tap a legend to move the lever there.
-struct ToggleSwitch: View {
-    var title: String
+/// Bat-handle toggle on a chrome nut, as on the A320 overhead and pedestal. Positions are top → bottom; the top
+/// legend sits above the switch, the bottom one below, a middle one to the right. Tap a legend, or the upper/lower
+/// half of the switch, to move it.
+struct BatToggle: View {
+    var title: String? = nil
     var positions: [(label: String, value: Int)]
     var value: Int?
     var onSelect: (Int) -> Void
 
+    private let nut: CGFloat = 30
+
     var body: some View {
-        VStack(spacing: 6) {
-            Text(title).font(Cockpit.label(10, weight: .heavy)).foregroundColor(Cockpit.engraving)
-                .multilineTextAlignment(.center).frame(height: 26, alignment: .bottom)
-            HStack(spacing: 8) {
-                lever
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(positions.indices, id: \.self) { i in
-                        let p = positions[i]
-                        Text(p.label)
-                            .font(Cockpit.label(10, weight: value == p.value ? .heavy : .semibold))
-                            .foregroundColor(value == p.value ? Cockpit.white : Cockpit.engraving.opacity(0.65))
-                            .frame(height: rowHeight, alignment: .center)
-                            .frame(minWidth: 40, alignment: .leading)
-                            .contentShape(Rectangle())
-                            .onTapGesture { select(p.value) }
-                    }
+        VStack(spacing: 3) {
+            if let title {
+                Engraved(title, size: 11, heavy: true).frame(height: 15)
+            }
+            legend(0)
+            HStack(spacing: 4) {
+                Color.clear.frame(width: middleLabel == nil ? 0 : middleWidth, height: 1)
+                toggle
+                if let m = middleLabel {
+                    legendText(m.label, value: m.value).frame(width: middleWidth, alignment: .leading)
                 }
             }
+            legend(positions.count - 1)
         }
-        .frame(minWidth: 82)
     }
 
-    private var rowHeight: CGFloat { 26 }
+    private var middleLabel: (label: String, value: Int)? { positions.count == 3 ? positions[1] : nil }
+    private var middleWidth: CGFloat { 34 }
 
-    private var lever: some View {
-        let idx = positions.firstIndex { $0.value == value }
-        let count = CGFloat(positions.count)
-        let h = rowHeight * count
-        let y = idx.map { CGFloat($0) * rowHeight + rowHeight / 2 } ?? h / 2
-        return ZStack(alignment: .top) {
-            Capsule().fill(Color.black.opacity(0.55)).frame(width: 12, height: h)
-            Circle().fill(RadialGradient(colors: [Color(white: 0.95), Color(white: 0.55)], center: .topLeading, startRadius: 1, endRadius: 16))
-                .frame(width: 20, height: 20)
-                .shadow(color: .black.opacity(0.6), radius: 2, y: 2)
-                .offset(y: y - 10)
-                .animation(.easeOut(duration: 0.15), value: value)
+    private func legend(_ i: Int) -> some View {
+        legendText(positions[i].label, value: positions[i].value)
+    }
+
+    private func legendText(_ s: String, value v: Int) -> some View {
+        Text(s).font(Cockpit.label(11, heavy: value == v))
+            .foregroundColor(value == v ? Cockpit.engraving : Cockpit.engraving.opacity(0.72))
+            .fixedSize()
+            .padding(.vertical, 1)
+            .contentShape(Rectangle())
+            .onTapGesture { select(v) }
+    }
+
+    private var index: Int? { positions.firstIndex { $0.value == value } }
+
+    private var toggle: some View {
+        // Lever direction: up, towards the viewer (middle), or down.
+        let dir: CGFloat = {
+            guard let i = index else { return 0 }
+            if positions.count == 3 && i == 1 { return 0 }
+            return i == 0 ? -1 : 1
+        }()
+        return ZStack {
+            // Chrome nut.
+            Circle().fill(LinearGradient(colors: [Color(white: 0.92), Color(white: 0.45)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                .frame(width: nut, height: nut)
+            Circle().fill(Color(white: 0.2)).frame(width: nut * 0.55, height: nut * 0.55)
+            // Bat handle.
+            if dir == 0 {
+                Circle().fill(RadialGradient(colors: [Color(hex: 0x4A4E54), Color.black], center: .topLeading, startRadius: 1, endRadius: 14))
+                    .frame(width: nut * 0.62, height: nut * 0.62)
+            } else {
+                Capsule()
+                    .fill(LinearGradient(colors: [Color(hex: 0x50555B), Color(hex: 0x0E0F10)], startPoint: .leading, endPoint: .trailing))
+                    .frame(width: nut * 0.42, height: nut * 0.95)
+                    .offset(y: dir * nut * 0.42)
+                    .shadow(color: .black.opacity(0.6), radius: 2, y: dir * 2)
+            }
         }
-        .frame(width: 22, height: h)
+        .frame(width: nut + 6, height: nut + 20)
+        .animation(.easeOut(duration: 0.12), value: value)
         .contentShape(Rectangle())
-        .onTapGesture {
-            // Tapping the lever steps it to the next position, like flicking a switch.
-            let next = ((idx ?? -1) + 1) % positions.count
-            select(positions[next].value)
-        }
+        .simultaneousGesture(TapWithLocation { p in
+            let h = nut + 20
+            if positions.count == 3, abs(p.y - h / 2) < h * 0.17 { select(positions[1].value) }
+            else { select(p.y < h / 2 ? positions[0].value : positions[positions.count - 1].value) }
+        })
     }
 
     private func select(_ v: Int) {
@@ -285,47 +433,48 @@ struct ToggleSwitch: View {
     }
 }
 
-/// Rotary selector with a pointer and legends around it (transponder/TCAS mode knobs).
-struct RotarySelector: View {
-    var title: String
+/// Grey pointer knob with legends around it (transponder and TCAS mode selectors).
+struct PointerSelector: View {
+    var title: String? = nil
     var positions: [(label: String, value: Int)]
     var value: Int?
     var onSelect: (Int) -> Void
-    var size: CGFloat = 58
+    var size: CGFloat = 44
 
     private var sweep: Double { positions.count > 3 ? 120 : 90 }
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 2) {
             ZStack {
                 ForEach(positions.indices, id: \.self) { i in
                     let p = positions[i]
-                    let a = angle(i)
+                    let a = angle(i) * .pi / 180
                     Text(p.label)
-                        .font(Cockpit.label(9, weight: value == p.value ? .heavy : .semibold))
-                        .foregroundColor(value == p.value ? Cockpit.white : Cockpit.engraving.opacity(0.65))
+                        .font(Cockpit.label(11, heavy: value == p.value))
+                        .foregroundColor(value == p.value ? Cockpit.engraving : Cockpit.engraving.opacity(0.72))
                         .fixedSize()
-                        .offset(x: sin(a * .pi / 180) * (size * 0.5 + 18), y: -cos(a * .pi / 180) * (size * 0.5 + 12))
+                        .offset(x: sin(a) * (size * 0.5 + 20), y: -cos(a) * (size * 0.5 + 12))
                         .onTapGesture { select(p.value) }
                 }
                 ZStack {
-                    Circle().fill(RadialGradient(colors: [Color(hex: 0x50565D), Color(hex: 0x16181B)], center: .topLeading, startRadius: 2, endRadius: size))
-                    Capsule().fill(Color(hex: 0x24282C)).frame(width: size * 0.26, height: size * 0.92)
-                    Rectangle().fill(Color.white).frame(width: 2.5, height: size * 0.3).offset(y: -size * 0.3)
+                    Circle().fill(RadialGradient(colors: [Color(white: 0.86), Color(white: 0.5)], center: UnitPoint(x: 0.35, y: 0.3), startRadius: 1, endRadius: size))
+                    Capsule().fill(LinearGradient(colors: [Color(white: 0.95), Color(white: 0.7)], startPoint: .leading, endPoint: .trailing))
+                        .frame(width: size * 0.28, height: size * 0.95)
+                        .shadow(color: .black.opacity(0.35), radius: 1.5)
+                    Rectangle().fill(Color.black).frame(width: 2, height: size * 0.36).offset(y: -size * 0.26)
                 }
                 .frame(width: size, height: size)
-                .rotationEffect(.degrees(positions.firstIndex { $0.value == value }.map(angle) ?? 0))
+                .rotationEffect(.degrees(index.map(angle) ?? 0))
                 .animation(.easeOut(duration: 0.15), value: value)
                 .shadow(color: .black.opacity(0.6), radius: 3, y: 2)
-                .onTapGesture {
-                    let idx = positions.firstIndex { $0.value == value } ?? -1
-                    select(positions[(idx + 1) % positions.count].value)
-                }
+                .onTapGesture { select(positions[((index ?? -1) + 1) % positions.count].value) }
             }
-            .frame(width: size + 70, height: size + 44)
-            Text(title).font(Cockpit.label(10, weight: .heavy)).foregroundColor(Cockpit.engraving)
+            .frame(width: size + 84, height: size + 40)
+            if let title { Engraved(title, size: 11, heavy: true) }
         }
     }
+
+    private var index: Int? { positions.firstIndex { $0.value == value } }
 
     private func angle(_ i: Int) -> Double {
         guard positions.count > 1 else { return 0 }

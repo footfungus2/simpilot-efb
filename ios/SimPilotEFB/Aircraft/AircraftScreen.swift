@@ -128,12 +128,14 @@ struct FenixActions {
     return v > 0.5
 }
 
-private func engraved(_ s: String, size: CGFloat = 10) -> some View {
-    Text(s).font(Cockpit.label(size, weight: .heavy)).foregroundColor(Cockpit.engraving).tracking(0.8)
+@MainActor private func int(_ vars: AircraftVars, _ name: String) -> Int? {
+    vars[name].map { Int($0.rounded()) }
 }
 
-// MARK: - RMP
+// MARK: - RMP (pedestal)
 
+/// Radio management panel as on the A320 pedestal: ACTIVE and STBY/CRS windows with the green transfer key
+/// between them, VHF/HF/AM keys with lights above, the STBY NAV row, the dual knob and the ON/OFF switch.
 private struct RMPPanel: View {
     let rmp: FenixA320.RMP
     @ObservedObject var vars: AircraftVars
@@ -142,93 +144,158 @@ private struct RMPPanel: View {
     private var powered: Bool { (vars[rmp.power] ?? 1) > 0.5 }
 
     var body: some View {
-        PanelPlate(title: "RMP \(rmp.n)") {
-            HStack(alignment: .bottom, spacing: 18) {
-                VStack(spacing: 4) {
-                    engraved("ACTIVE")
-                    SegmentDisplay(text: powered ? FenixA320.frequency(vars[rmp.active]) : "", ghost: "888.888", size: 34)
-                }
-                AirbusButton(label: "⇆", width: 62, height: 50, fontSize: 24) { fenix.press(rmp.transfer) }
-                    .overlay(engraved("TRANSFER", size: 8).offset(y: -36))
-                VStack(spacing: 4) {
-                    engraved("STBY/CRS")
-                    SegmentDisplay(text: powered ? FenixA320.frequency(vars[rmp.standby]) : "", ghost: "888.888", size: 34)
-                }
-            }
-            HStack(alignment: .center, spacing: 22) {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 8) {
-                        VStack(spacing: 3) {
-                            engraved("SEL", size: 9)
-                            RoundedRectangle(cornerRadius: 2).fill(lit(vars, rmp.selLight) ? Cockpit.white : Color.black.opacity(0.5))
-                                .frame(width: 26, height: 14)
-                        }
-                        ForEach(rmp.comKeys, id: \.label) { k in
-                            AirbusButton(label: k.label, lit: lit(vars, k.light)) { fenix.press(k.sw, counter: k.counter) }
-                        }
+        PanelPlate(area: .pedestal) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .bottom, spacing: 14) {
+                    VStack(spacing: 4) {
+                        Engraved("ACTIVE", size: 13, heavy: true)
+                        BezelLCD(text: powered ? FenixA320.frequency(vars[rmp.active]) : "", ghost: "888.888", size: 30)
                     }
-                    HStack(spacing: 8) {
-                        Color.clear.frame(width: 26, height: 1)
-                        ForEach(rmp.navKeys, id: \.label) { k in
-                            AirbusButton(label: k.label, lit: lit(vars, k.light)) { fenix.press(k.sw, counter: k.counter) }
-                        }
+                    transferKey
+                    VStack(spacing: 4) {
+                        Engraved("STBY/CRS", size: 13, heavy: true)
+                        BezelLCD(text: powered ? FenixA320.frequency(vars[rmp.standby]) : "", ghost: "888.888", size: 30)
                     }
                 }
-                RotaryKnob(size: 84, onStep: { fenix.step(rmp.outer, $0) }, inner: { fenix.step(rmp.inner, $0) }, caption: "OUTER MHz · INNER kHz")
-                ToggleSwitch(title: "RMP", positions: [("ON", 1), ("OFF", 0)], value: vars[rmp.power].map { Int($0.rounded()) }) {
-                    fenix.set(rmp.power, $0)
+                HStack(alignment: .top, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 10) {
+                            key(rmp.comKeys[0]); key(rmp.comKeys[1]); key(rmp.comKeys[2])
+                        }
+                        HStack(alignment: .bottom, spacing: 10) {
+                            key(rmp.comKeys[3])
+                            // SEL light: lit when this RMP tunes a radio normally tuned by another one.
+                            Circle().fill(lit(vars, rmp.selLight) ? Cockpit.engraving : Color.black.opacity(0.65))
+                                .frame(width: 26, height: 26)
+                                .overlay(Engraved("SEL", size: 9, heavy: true, color: lit(vars, rmp.selLight) ? .black : Cockpit.engraving.opacity(0.4)))
+                                .frame(width: 54)
+                            key(rmp.comKeys[4]); key(rmp.comKeys[5])
+                        }
+                        HStack(spacing: 8) {
+                            Rectangle().fill(Cockpit.engraving.opacity(0.8)).frame(width: 90, height: 1.2)
+                            Engraved("STBY NAV", size: 12, heavy: true)
+                            Rectangle().fill(Cockpit.engraving.opacity(0.8)).frame(height: 1.2)
+                        }
+                        .frame(width: 400)
+                        HStack(spacing: 10) {
+                            ForEach(Array(rmp.navKeys.enumerated()), id: \.offset) { i, k in
+                                key(k, guarded: i == 0)
+                            }
+                        }
+                    }
+                    VStack(spacing: 18) {
+                        KnurledKnob(size: 84, onStep: { fenix.step(rmp.outer, $0) }, inner: { fenix.step(rmp.inner, $0) })
+                            .padding(.top, 4)
+                        BatToggle(positions: [("ON", 1), ("OFF", 0)], value: int(vars, rmp.power)) { fenix.set(rmp.power, $0) }
+                    }
                 }
             }
         }
+        .overlay(alignment: .topLeading) {
+            Engraved("RMP \(rmp.n)", size: 10, heavy: true, color: Cockpit.engraving.opacity(0.55)).padding(.leading, 24).padding(.top, 6)
+        }
+    }
+
+    private var transferKey: some View {
+        VStack(spacing: 4) {
+            Circle().fill(Color(white: 0.85)).frame(width: 8, height: 8).opacity(0.8)
+            Button {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                fenix.press(rmp.transfer)
+            } label: {
+                Image(systemName: "arrow.left.and.right").font(.system(size: 22, weight: .heavy))
+                    .foregroundColor(powered ? Cockpit.green : Cockpit.green.opacity(0.15))
+                    .shadow(color: powered ? Cockpit.green.opacity(0.7) : .clear, radius: 4)
+                    .frame(width: 58, height: 40)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Cockpit.key))
+                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(0.1)))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.bottom, 10)
+    }
+
+    private func key(_ k: (label: String, sw: String, light: String, counter: Bool), guarded: Bool = false) -> some View {
+        BlackKey(label: k.label, width: 54, height: 30, led: lit(vars, k.light)) { fenix.press(k.sw, counter: k.counter) }
+            .overlay(guarded ? guardCover : nil, alignment: .bottom)
+    }
+
+    /// Clear guard over the NAV key.
+    private var guardCover: some View {
+        RoundedRectangle(cornerRadius: 4)
+            .fill(LinearGradient(colors: [Color.white.opacity(0.32), Color.white.opacity(0.08)], startPoint: .top, endPoint: .bottom))
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.white.opacity(0.45)))
+            .frame(width: 62, height: 38)
+            .allowsHitTesting(false)
     }
 }
 
-// MARK: - ATC / TCAS
+// MARK: - ATC / TCAS (pedestal)
 
 private struct ATCPanel: View {
     @ObservedObject var vars: AircraftVars
     let fenix: FenixActions
     typealias A = FenixA320.ATC
 
-    private func int(_ v: String) -> Int? { vars[v].map { Int($0.rounded()) } }
-
     var body: some View {
-        PanelPlate(title: "ATC / TCAS") {
-            HStack(alignment: .top, spacing: 34) {
-                VStack(spacing: 18) {
-                    RotarySelector(title: "XPDR", positions: [("STBY", 0), ("AUTO", 1), ("ON", 2)], value: int(A.operation)) { fenix.set(A.operation, $0) }
-                    HStack(spacing: 18) {
-                        ToggleSwitch(title: "ALT RPTG", positions: [("ON", 1), ("OFF", 0)], value: int(A.altReporting)) { fenix.set(A.altReporting, $0) }
-                        ToggleSwitch(title: "SYS", positions: [("1", 0), ("2", 1)], value: int(A.system)) { fenix.set(A.system, $0) }
+        PanelPlate(area: .pedestal) {
+            HStack(alignment: .center, spacing: 24) {
+                // Transponder mode, altitude reporting and system selection.
+                VStack(spacing: 10) {
+                    PointerSelector(title: "XPDR", positions: [("STBY", 0), ("AUTO", 1), ("ON", 2)], value: int(vars, A.operation)) { fenix.set(A.operation, $0) }
+                    HStack(spacing: 22) {
+                        BatToggle(title: "ALT RPTG", positions: [("ON", 1), ("OFF", 0)], value: int(vars, A.altReporting)) { fenix.set(A.altReporting, $0) }
+                        BatToggle(title: "SYS", positions: [("1", 0), ("2", 1)], value: int(vars, A.system)) { fenix.set(A.system, $0) }
                     }
                 }
-                VStack(spacing: 14) {
-                    HStack(spacing: 10) {
-                        SegmentDisplay(text: code, ghost: "8888", size: 40)
-                        VStack(spacing: 3) {
-                            engraved("ATC", size: 9)
-                            Text("FAIL").font(Cockpit.label(10, weight: .heavy))
-                                .foregroundColor(lit(vars, A.fail) ? Cockpit.amber : Color.black.opacity(0.55))
-                                .frame(width: 44, height: 20)
-                                .background(RoundedRectangle(cornerRadius: 2).fill(Color.black.opacity(0.6)))
+                // Keypad 1 2 3 / 4 5 6 / 7 0 CLR, as on the panel.
+                VStack(spacing: 10) {
+                    ForEach([[1, 2, 3], [4, 5, 6]], id: \.self) { row in
+                        HStack(spacing: 12) {
+                            ForEach(row, id: \.self) { d in digit(d) }
                         }
                     }
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(58), spacing: 8), count: 4), spacing: 8) {
-                        ForEach([1, 2, 3, 4, 5, 6, 7, 0], id: \.self) { d in
-                            AirbusButton(label: "\(d)", width: 58, height: 44) { fenix.press(A.digit(d)) }
-                        }
-                    }
-                    HStack(spacing: 8) {
-                        AirbusButton(label: "CLR", width: 92, height: 44) { fenix.press(A.clear) }
-                        AirbusButton(label: "IDENT", width: 140, height: 44) { fenix.press(A.ident) }
+                    HStack(spacing: 12) {
+                        digit(7); digit(0)
+                        BlackKey(label: "CLR", width: 50, height: 42, fontSize: 15) { fenix.press(A.clear) }
                     }
                 }
-                VStack(spacing: 18) {
-                    RotarySelector(title: "TRAFFIC", positions: [("THRT", 0), ("ALL", 1), ("ABV", 2), ("BLW", 3)], value: int(A.traffic)) { fenix.set(A.traffic, $0) }
-                    RotarySelector(title: "TCAS", positions: [("STBY", 0), ("TA", 1), ("TA/RA", 2)], value: int(A.tcasMode)) { fenix.set(A.tcasMode, $0) }
+                // Code window, ATC FAIL light and IDENT.
+                VStack(alignment: .trailing, spacing: 14) {
+                    HStack(alignment: .top, spacing: 14) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Engraved("ATC", size: 10, heavy: true, color: Cockpit.amber)
+                            LCDText(text: code, ghost: "8888", size: 38)
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Cockpit.lcd))
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.black.opacity(0.8), lineWidth: 2))
+                        RoundButton(label: "IDENT", size: 34) { fenix.press(A.ident) }
+                    }
+                    HStack(spacing: 6) {
+                        Circle().fill(lit(vars, A.fail) ? Cockpit.amber : Color(hex: 0x3A2A16))
+                            .frame(width: 14, height: 14)
+                            .shadow(color: lit(vars, A.fail) ? Cockpit.amber : .clear, radius: 4)
+                        VStack(alignment: .leading, spacing: 0) {
+                            Engraved("ATC", size: 10, heavy: true)
+                            Engraved("FAIL", size: 10, heavy: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                Rectangle().fill(Cockpit.engraving.opacity(0.7)).frame(width: 1.2, height: 210)
+                // TCAS.
+                VStack(spacing: 6) {
+                    Engraved("TCAS", size: 14, heavy: true)
+                    PointerSelector(positions: [("THRT", 0), ("ALL", 1), ("ABV", 2), ("BLW", 3)], value: int(vars, A.traffic)) { fenix.set(A.traffic, $0) }
+                    PointerSelector(positions: [("STBY", 0), ("TA", 1), ("TA/RA", 2)], value: int(vars, A.tcasMode)) { fenix.set(A.tcasMode, $0) }
                 }
             }
         }
+    }
+
+    private func digit(_ d: Int) -> some View {
+        BlackKey(label: "\(d)", width: 50, height: 42, fontSize: 20) { fenix.press(A.digit(d)) }
     }
 
     private var code: String {
@@ -237,52 +304,152 @@ private struct ATCPanel: View {
     }
 }
 
-// MARK: - FCU
+// MARK: - FCU (glareshield)
 
+/// Flight control unit as on the A320 glareshield: one long LCD across the top with amber legends, round
+/// SPD-MACH / HDG-V/S TRK-FPA / METRIC ALT buttons, silver knobs and green-lit AP/A-THR/LOC/EXPED/APPR keys,
+/// separated by white engraved lines.
 private struct FCUPanel: View {
     @ObservedObject var vars: AircraftVars
     let fenix: FenixActions
     typealias F = FenixA320.FCU
 
+    private let lcdHeight: CGFloat = 64
+
     var body: some View {
-        PanelPlate(title: "FLIGHT CONTROL UNIT") {
-            HStack(alignment: .top, spacing: 16) {
-                VStack(spacing: 10) {
-                    button("SPD MACH")
-                    button("LOC")
+        PanelPlate(area: .glareshield) {
+            HStack(alignment: .top, spacing: 0) {
+                column(width: 70, lcd: { Color.clear }) {
+                    RoundButton(label: "SPD\nMACH") { press("SPD MACH") }
                 }
-                .padding(.top, 26)
-                window(labels: [("SPD", !mach), ("MACH", mach)], text: speedText, ghost: "888", managed: F.speedManaged, knob: F.speedKnob)
-                window(labels: [("HDG", !trk), ("TRK", trk), ("LAT", true)], text: headingText, ghost: "888", managed: F.headingManaged, knob: F.headingKnob)
-                VStack(spacing: 10) {
-                    button("HDG V/S TRK FPA", width: 70)
+                column(width: 130, lcd: {
+                    field(labels: [("SPD", !mach), ("MACH", mach)], text: speedText, ghost: "888", managed: F.speedManaged)
+                }) { knob(F.speedKnob) }
+                column(width: 140, lcd: {
+                    field(labels: [("HDG", !trk), ("TRK", trk), ("LAT", powered)], text: headingText, ghost: "888", managed: F.headingManaged)
+                }) {
+                    knob(F.headingKnob)
+                    key("LOC").padding(.top, 6)
                 }
-                .padding(.top, 26)
-                VStack(spacing: 10) {
-                    HStack(spacing: 8) { button("AP1"); button("AP2") }
-                    button("A/THR", width: 116)
-                }
-                .padding(.top, 26)
-                VStack(spacing: 8) {
-                    window(labels: [("ALT", true), ("LVL/CH", true)], text: altitudeText, ghost: "88888", managed: F.altitudeManaged, knob: F.altitudeKnob)
-                    ToggleSwitch(title: "", positions: [("100", 0), ("1000", 1)], value: vars[F.altitudeScale].map { Int($0.rounded()) }) {
-                        fenix.set(F.altitudeScale, $0)
+                separator
+                column(width: 160, lcd: {
+                    VStack(spacing: 4) {
+                        HStack(spacing: 14) { legend("HDG", !trk); legend("V/S", !trk) }
+                        HStack(spacing: 14) { legend("TRK", trk); legend("FPA", trk) }
                     }
+                }) {
+                    HStack(spacing: 6) {
+                        Engraved("HDG\nTRK", size: 10, heavy: true).multilineTextAlignment(.trailing)
+                        RoundButton { press("HDG V/S TRK FPA") }
+                        Engraved("V/S\nFPA", size: 10, heavy: true)
+                    }
+                    HStack(spacing: 10) { key("AP1"); key("AP2") }.padding(.top, 8)
+                    key("A/THR").padding(.top, 8)
                 }
-                VStack(spacing: 10) {
-                    button("METRIC ALT", width: 62)
-                    button("EXPED", width: 62)
+                separator
+                column(width: 170, lcd: {
+                    field(labels: [("ALT", powered), ("LVL/CH", powered)], text: altitudeText, ghost: "88888", managed: F.altitudeManaged)
+                }) {
+                    HStack(alignment: .center, spacing: 6) {
+                        PointerSelector(positions: [("100", 0), ("1000", 1)], value: int(vars, F.altitudeScale), onSelect: { fenix.set(F.altitudeScale, $0) }, size: 26)
+                            .frame(width: 70, height: 60)
+                        knob(F.altitudeKnob)
+                    }
+                    key("EXPED").padding(.top, 6)
                 }
-                .padding(.top, 26)
-                window(labels: [("V/S", !trk), ("FPA", trk)], text: vsText, ghost: "+8888", managed: nil, knob: F.vsKnob)
-                VStack { button("APPR") }.padding(.top, 26)
+                column(width: 70, lcd: { Color.clear }) {
+                    RoundButton(label: "METRIC\nALT") { press("METRIC ALT") }
+                }
+                column(width: 150, lcd: {
+                    field(labels: [("V/S", !trk), ("FPA", trk)], text: vsText, ghost: "+8888", managed: nil)
+                }) {
+                    HStack(spacing: 4) {
+                        knob(F.vsKnob)
+                        VStack(alignment: .leading, spacing: 18) {
+                            Engraved("UP", size: 10, heavy: true)
+                            Engraved("DN", size: 10, heavy: true)
+                        }
+                    }
+                    key("APPR").padding(.top, 6)
+                }
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    // Layout helpers: each column contributes its slice of the shared LCD strip, then its controls.
+
+    private func column<L: View, C: View>(width: CGFloat, @ViewBuilder lcd: () -> L, @ViewBuilder controls: () -> C) -> some View {
+        VStack(spacing: 14) {
+            lcd()
+                .frame(width: width, height: lcdHeight)
+                .background(Cockpit.lcd)
+            VStack(spacing: 0) { controls() }
+                .frame(width: width)
+        }
+    }
+
+    private var separator: some View {
+        VStack(spacing: 0) {
+            Cockpit.lcd.frame(width: 1.5, height: lcdHeight)
+            Rectangle().fill(Cockpit.engraving.opacity(0.75)).frame(width: 1.5, height: 150).padding(.top, 20)
+        }
+    }
+
+    private func legend(_ s: String, _ on: Bool) -> some View {
+        Text(s).font(Cockpit.label(12, heavy: true)).foregroundColor(on && powered ? Cockpit.amber : Cockpit.amber.opacity(0.08)).fixedSize()
+    }
+
+    private func field(labels: [(String, Bool)], text: String, ghost: String, managed: String?) -> some View {
+        VStack(spacing: 2) {
+            HStack(spacing: 10) {
+                ForEach(labels.indices, id: \.self) { i in legend(labels[i].0, labels[i].1) }
+            }
+            HStack(spacing: 4) {
+                LCDText(text: text, ghost: ghost, size: 28)
+                if let managed {
+                    Circle().fill(lit(vars, managed) && powered ? Cockpit.amber : Cockpit.amber.opacity(0.06))
+                        .frame(width: 9, height: 9)
+                }
             }
         }
     }
 
+    private func knob(_ k: (String, String)) -> some View {
+        VStack(spacing: 6) {
+            KnurledKnob(size: 62, onStep: { fenix.step(k.0, $0) })
+            HStack(spacing: 6) {
+                pushPull("PUSH") { fenix.run(FenixA320.dec(k.1)) }
+                pushPull("PULL") { fenix.run(FenixA320.inc(k.1)) }
+            }
+        }
+    }
+
+    private func key(_ name: String) -> some View {
+        let b = F.buttons[name]
+        return BlackKey(label: name, width: name == "A/THR" ? 64 : 52, height: 34, fontSize: 12, bars: lit(vars, b?.light)) { press(name) }
+    }
+
+    private func press(_ name: String) {
+        if let b = F.buttons[name] { fenix.press(b.sw) }
+    }
+
+    private func pushPull(_ label: String, action: @escaping () -> Void) -> some View {
+        Button {
+            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+            action()
+        } label: {
+            Text(label).font(Cockpit.label(10, heavy: true)).foregroundColor(Cockpit.engraving.opacity(0.85))
+                .frame(width: 42, height: 20)
+                .background(Capsule().fill(Color.black.opacity(0.4)))
+                .overlay(Capsule().stroke(Color.white.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+    }
+
     private var mach: Bool { lit(vars, F.mach) }
     private var trk: Bool { lit(vars, F.trackFpa) }
-    private var powered: Bool { (vars[F.power] ?? 1) > 0.5 }
+    private var powered: Bool { (vars[F.power] ?? 1) > 0.5 && !vars.values.isEmpty }
 
     private var speedText: String {
         guard powered, let v = vars[F.speed] else { return "" }
@@ -307,68 +474,58 @@ private struct FCUPanel: View {
         let hundreds = Int((abs(v) / 100).rounded())
         return (v < 0 ? "-" : "+") + String(format: "%02doo", hundreds)
     }
-
-    private func button(_ key: String, width: CGFloat = 54) -> some View {
-        let b = F.buttons[key]
-        return AirbusButton(label: key, lit: lit(vars, b?.light), width: width) {
-            if let b { fenix.press(b.sw) }
-        }
-    }
-
-    private func window(labels: [(String, Bool)], text: String, ghost: String, managed: String?, knob: (String, String)) -> some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                ForEach(labels.indices, id: \.self) { i in
-                    Text(labels[i].0).font(Cockpit.label(9, weight: .heavy))
-                        .foregroundColor(labels[i].1 && powered ? Cockpit.amber : Color.black.opacity(0.5))
-                }
-            }
-            SegmentDisplay(text: text, ghost: ghost, size: 30, trailing: managed.flatMap { lit(vars, $0) ? "●" : " " })
-            RotaryKnob(size: 66, onStep: { fenix.step(knob.0, $0) })
-            HStack(spacing: 6) {
-                pushPull("PUSH") { fenix.run(FenixA320.dec(knob.1)) }
-                pushPull("PULL") { fenix.run(FenixA320.inc(knob.1)) }
-            }
-        }
-    }
-
-    private func pushPull(_ label: String, action: @escaping () -> Void) -> some View {
-        Button {
-            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
-            action()
-        } label: {
-            Text(label).font(Cockpit.label(9, weight: .heavy)).foregroundColor(Cockpit.white)
-                .frame(width: 46, height: 24)
-                .background(Capsule().fill(Color.black.opacity(0.45)))
-                .overlay(Capsule().stroke(Color.white.opacity(0.15)))
-        }
-        .buttonStyle(.plain)
-    }
 }
 
-// MARK: - Lights and signs
+// MARK: - Lights and signs (overhead)
 
+/// The overhead's EXT LT, INT LT and SIGNS areas, laid out as on the A320 panel.
 private struct LightsPanel: View {
     @ObservedObject var vars: AircraftVars
     let fenix: FenixActions
 
+    private func sw(_ title: String) -> FenixA320.Switch? {
+        (FenixA320.exteriorLights + FenixA320.signs + FenixA320.interiorLights).first { $0.title == title }
+    }
+
     var body: some View {
-        VStack(spacing: 22) {
-            PanelPlate(title: "EXT LT") { switches(FenixA320.exteriorLights) }
-            HStack(alignment: .top, spacing: 22) {
-                PanelPlate(title: "SIGNS") { switches(FenixA320.signs) }
-                PanelPlate(title: "INT LT") { switches(FenixA320.interiorLights) }
+        PanelPlate(area: .overhead) {
+            HStack(alignment: .top, spacing: 34) {
+                VStack(spacing: 16) {
+                    GroupHeading(title: "EXT LT")
+                    HStack(alignment: .top, spacing: 26) {
+                        toggle("STROBE"); toggle("BEACON"); toggle("WING"); toggle("NAV & LOGO")
+                    }
+                    HStack(alignment: .top, spacing: 26) {
+                        toggle("RWY TURN OFF")
+                        VStack(spacing: 4) {
+                            HStack(spacing: 6) {
+                                Rectangle().fill(Cockpit.engraving.opacity(0.8)).frame(height: 1.2)
+                                Engraved("LAND", size: 11, heavy: true)
+                                Rectangle().fill(Cockpit.engraving.opacity(0.8)).frame(height: 1.2)
+                            }
+                            HStack(alignment: .top, spacing: 22) {
+                                toggle("LAND L", title: "L"); toggle("LAND R", title: "R")
+                            }
+                        }
+                        .frame(width: 190)
+                        toggle("NOSE")
+                    }
+                }
+                Rectangle().fill(Cockpit.engraving.opacity(0.8)).frame(width: 1.4, height: 330)
+                VStack(spacing: 16) {
+                    GroupHeading(title: "INT LT")
+                    HStack(alignment: .top, spacing: 30) { toggle("DOME"); toggle("ANN LT") }
+                    GroupHeading(title: "SIGNS").padding(.top, 6)
+                    HStack(alignment: .top, spacing: 24) { toggle("SEAT BELTS"); toggle("NO SMOKING"); toggle("EMER EXIT LT") }
+                }
+                .frame(width: 330)
             }
         }
     }
 
-    private func switches(_ list: [FenixA320.Switch]) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            ForEach(list, id: \.v) { s in
-                ToggleSwitch(title: s.title, positions: s.positions, value: vars[s.v].map { Int($0.rounded()) }) {
-                    fenix.set(s.v, $0)
-                }
-            }
+    @ViewBuilder private func toggle(_ name: String, title: String? = nil) -> some View {
+        if let s = sw(name) {
+            BatToggle(title: title ?? s.title, positions: s.positions, value: int(vars, s.v)) { fenix.set(s.v, $0) }
         }
     }
 }
