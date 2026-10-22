@@ -1,5 +1,5 @@
-# Builds the unsigned SimPilotEFB.ipa on every push to main and publishes it as a GitHub release,
-# so it can be installed with TrollStore straight from the Releases page.
+# Builds the unsigned SimPilotEFB.ipa on every push to main and publishes it on the Releases page, so it can be
+# installed with TrollStore. There is one release per app version (v0.1.0, …); each build replaces it.
 name: Build IPA
 
 on:
@@ -20,6 +20,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 50 # for the "recent changes" list
 
       - name: Show Xcode
         run: xcodebuild -version
@@ -41,9 +43,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="$(grep -m1 'MARKETING_VERSION' ios/project.yml | sed -E 's/.*"([^"]+)".*/\1/')"
-          tag="v${version}-build.${GITHUB_RUN_NUMBER}"
+          tag="v${version}"
+          short="${GITHUB_SHA::7}"
+          {
+            echo "**Build ${GITHUB_RUN_NUMBER}** · \`${short}\` · $(date -u '+%-d %b %Y')"
+            echo
+            echo "### Install"
+            echo "1. On the iPad (iPadOS 15 or later with [TrollStore](https://github.com/opa334/TrollStore)), download **SimPilotEFB.ipa** below."
+            echo "2. Open it with TrollStore and tap **Install**. Updates install over the old version and keep your settings."
+            echo
+            echo "For the sim features (live aircraft, the sim's charts, Fenix A320 controls), run the PC bridge from this repository; see the [README](https://github.com/${GITHUB_REPOSITORY}#connect-to-msfs-2024)."
+            echo
+            echo "### Recent changes"
+            git log -15 --no-merges --format='%s' | grep -v '\[skip ci\]' | grep -v '^Initial commit$' | head -8 | sed 's/^/- /'
+            echo
+            echo "<sub>Unsigned build for TrollStore. Unofficial hobby project, not affiliated with Lufthansa Systems / Lido, Microsoft, Asobo, Fenix Simulations or VATSIM.</sub>"
+          } > notes.md
+          # One release per version: replace the previous build of this version.
+          gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
           gh release create "$tag" SimPilotEFB.ipa \
             --target "$GITHUB_SHA" \
-            --title "SimPilot EFB ${version} (build ${GITHUB_RUN_NUMBER})" \
-            --latest \
-            --notes "Unsigned build of ${GITHUB_SHA::7} for TrollStore (iPad, iOS 15+). Download SimPilotEFB.ipa below and open it with TrollStore."
+            --title "SimPilot EFB ${version}" \
+            --notes-file notes.md \
+            --latest
