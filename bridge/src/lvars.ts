@@ -4,7 +4,6 @@ import {
   SimConnectConstants,
   SimConnectDataType,
   SimConnectPeriod,
-  type SimConnectConnection,
 } from 'node-simconnect';
 import { logger } from './log.js';
 import { runRpn, rpnVars } from './rpn.js';
@@ -17,40 +16,65 @@ const FIRST_WRITE_DEF = 100;
 const READ_TIMEOUT_MS = 1500;
 const BROADCAST_MS = 50;
 
+/** The part of a SimConnect connection the L:var service uses (a fake implements it in tests). */
+export interface SimPort {
+  addToDataDefinition(def: number, name: string, unit: string | null, type?: SimConnectDataType): number;
+  clearDataDefinition(def: number): number;
+  requestDataOnSimObject(req: number, def: number, obj: number, period: SimConnectPeriod, flags?: DataRequestFlag): number;
+  setDataOnSimObject(def: number, obj: number, data: { buffer: RawBuffer; arrayCount: number; tagged: boolean }): number;
+}
+
 /**
- * Aircraft local variables (L:vars) over SimConnect: the app asks to watch a set of names and gets
- * their values as they change; commands are MSFS RPN snippets (HubHop presets) run against them.
+ * Aircraft local variables (L:vars) over SimConnect. The app asks to watch names and receives their values as the
+ * **sim** reports them (never our own writes), so a value on the iPad is always a readback. Commands are MSFS RPN
+ * snippets (HubHop presets); they run strictly one after another.
  */
 export class LVars {
-  private handle: SimConnectConnection | undefined;
+  private port: SimPort | undefined;
   private watched = new Set<string>();
   private order: string[] = [];
-  private values = new Map<string, number>();
+  /** Values RPN reads from: sim readbacks plus our own writes since. */
+  private working = new Map<string, number>();
+  /** Values as last reported by the sim. */
+  private sim = new Map<string, number>();
   private writeDefs = new Map<string, number>();
   private pending: Record<string, number> = {};
   private flushTimer: NodeJS.Timeout | undefined;
   private rebuildTimer: NodeJS.Timeout | undefined;
-  private waiters: (() => void)[] = [];
-  private queue: Promise<void> = Promise.resolve();
+  private listeners = new Set<() => void>();
+  private queue: Promise<unknown> = Promise.resolve();
 
-  constructor(private readonly emit: (values: Record<string, number>) => void) {}
+  constructor(
+    private readonly emit: (values: Record<string, number>) => void,
+    private readonly readTimeoutMs = READ_TIMEOUT_MS,
+  ) {}
 
-  attach(handle: SimConnectConnection): void {
-    this.handle = handle;
+  get connected(): boolean {
+    return this.port !== undefined;
+  }
+
+  attach(port: SimPort): void {
+    this.port = port;
     this.writeDefs.clear();
-    this.values.clear();
+    this.working.clear();
+    this.sim.clear();
     if (this.watched.size) this.scheduleRebuild();
   }
 
   detach(): void {
-    this.handle = undefined;
+    this.port = undefined;
   }
 
-  /** Current values of these names that are already known. */
+  /** Last value the sim reported. */
+  value(name: string): number | undefined {
+    return this.sim.get(name);
+  }
+
+  /** Current values of these names that the sim has reported. */
   snapshot(names: string[]): Record<string, number> {
     const out: Record<string, number> = {};
     for (const n of names) {
-      const v = this.values.get(n);
+      const v = this.sim.get(n);
       if (v !== undefined) out[n] = v;
     }
     return out;
@@ -68,68 +92,95 @@ export class LVars {
     if (added) this.scheduleRebuild();
   }
 
-  /** Runs a command; commands run one after another so a release sees the press's result. */
-  run(code: string, param = 0): Promise<void> {
-    this.queue = this.queue.then(() => this.runNow(code, param)).catch((err) => {
-      log.warn(`command failed: ${(err as Error).message} — ${code}`);
-    });
-    return this.queue;
+  /** Runs a command after the ones before it. Resolves with the variables written; rejects if it couldn't run. */
+  run(code: string, param = 0): Promise<string[]> {
+    const result = this.queue.then(() => this.runNow(code, param));
+    this.queue = result.catch(() => undefined);
+    return result;
   }
 
-  private async runNow(code: string, param: number): Promise<void> {
-    if (!this.handle) throw new Error('sim not connected');
+  private async runNow(code: string, param: number): Promise<string[]> {
+    if (!this.port) throw new Error('sim not connected');
     const { reads, writes } = rpnVars(code);
     this.watch([...reads, ...writes]);
     await this.whenKnown(reads);
-    runRpn(code, { read: (n) => this.values.get(n) ?? 0, write: (n, v) => this.set(n, v) }, param);
+    runRpn(code, { read: (n) => this.working.get(n) ?? 0, write: (n, v) => this.set(n, v) }, param);
+    return writes;
   }
 
   private set(name: string, value: number): void {
-    const handle = this.handle;
-    if (!handle) return;
+    const port = this.port;
+    if (!port) throw new Error('sim not connected');
     let def = this.writeDefs.get(name);
     if (def === undefined) {
       def = FIRST_WRITE_DEF + this.writeDefs.size;
       this.writeDefs.set(name, def);
-      handle.addToDataDefinition(def, `L:${name}`, 'number', SimConnectDataType.FLOAT64);
+      port.addToDataDefinition(def, `L:${name}`, 'number', SimConnectDataType.FLOAT64);
     }
     const buffer = new RawBuffer(8);
     buffer.writeFloat64(value);
-    handle.setDataOnSimObject(def, SimConnectConstants.OBJECT_ID_USER, { buffer, arrayCount: 0, tagged: false });
-    // Optimistic: the next command reads the new value even before the sim echoes it.
-    this.store(name, value);
+    port.setDataOnSimObject(def, SimConnectConstants.OBJECT_ID_USER, { buffer, arrayCount: 0, tagged: false });
+    // Later commands in this batch read the new value; the app only hears about it once the sim confirms it.
+    this.working.set(name, value);
   }
 
   /** Data for REQ_LVARS: values in watch order. */
   onData(data: RawBuffer): void {
-    for (const name of this.order) this.store(name, data.readFloat64());
-    const ws = this.waiters.splice(0);
-    for (const w of ws) w();
-  }
-
-  private store(name: string, value: number): void {
-    if (this.values.get(name) === value) return;
-    this.values.set(name, value);
-    this.pending[name] = value;
+    for (const name of this.order) {
+      const v = data.readFloat64();
+      this.working.set(name, v);
+      if (this.sim.get(name) !== v) {
+        this.sim.set(name, v);
+        this.pending[name] = v;
+      }
+    }
     this.flushTimer ??= setTimeout(() => {
       this.flushTimer = undefined;
       const out = this.pending;
       this.pending = {};
-      this.emit(out);
+      if (Object.keys(out).length) this.emit(out);
     }, BROADCAST_MS);
+    for (const l of [...this.listeners]) l();
+  }
+
+  /** Resolves with the sim's value once `test` passes; rejects after `timeoutMs`. */
+  waitFor(name: string, test: (v: number) => boolean, timeoutMs: number): Promise<number> {
+    this.watch([name]);
+    const now = this.sim.get(name);
+    if (now !== undefined && test(now)) return Promise.resolve(now);
+    return new Promise((resolve, reject) => {
+      const done = () => {
+        clearTimeout(timer);
+        this.listeners.delete(check);
+      };
+      const check = () => {
+        const v = this.sim.get(name);
+        if (v !== undefined && test(v)) {
+          done();
+          resolve(v);
+        }
+      };
+      const timer = setTimeout(() => {
+        done();
+        reject(new Error(`no readback for ${name}`));
+      }, timeoutMs);
+      this.listeners.add(check);
+    });
   }
 
   private whenKnown(names: string[]): Promise<void> {
-    if (names.every((n) => this.values.has(n))) return Promise.resolve();
+    if (names.every((n) => this.working.has(n))) return Promise.resolve();
     return new Promise((resolve) => {
-      const timer = setTimeout(resolve, READ_TIMEOUT_MS);
-      const check = () => {
-        if (names.every((n) => this.values.has(n))) {
-          clearTimeout(timer);
-          resolve();
-        } else this.waiters.push(check);
+      const done = () => {
+        clearTimeout(timer);
+        this.listeners.delete(check);
+        resolve();
       };
-      this.waiters.push(check);
+      const check = () => {
+        if (names.every((n) => this.working.has(n))) done();
+      };
+      const timer = setTimeout(done, this.readTimeoutMs);
+      this.listeners.add(check);
     });
   }
 
@@ -140,14 +191,14 @@ export class LVars {
 
   /** One data definition with every watched variable, sent whenever any of them changes. */
   private rebuild(): void {
-    const handle = this.handle;
-    if (!handle) return;
+    const port = this.port;
+    if (!port) return;
     this.order = [...this.watched];
-    handle.clearDataDefinition(DEF_LVARS);
+    port.clearDataDefinition(DEF_LVARS);
     for (const name of this.order) {
-      handle.addToDataDefinition(DEF_LVARS, `L:${name}`, 'number', SimConnectDataType.FLOAT64);
+      port.addToDataDefinition(DEF_LVARS, `L:${name}`, 'number', SimConnectDataType.FLOAT64);
     }
-    handle.requestDataOnSimObject(
+    port.requestDataOnSimObject(
       REQ_LVARS,
       DEF_LVARS,
       SimConnectConstants.OBJECT_ID_USER,

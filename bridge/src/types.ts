@@ -68,11 +68,17 @@ export type BridgeToApp =
   | { t: 'chartsReady'; icao: string }
   | { t: 'chartsProgress'; icao: string; done: number; total: number }
   | { t: 'chartsError'; icao: string; message: string }
-  | { t: 'lvars'; values: Record<string, number> };
+  | { t: 'lvars'; values: Record<string, number> }
+  /** Outcome of an app command that carried an `id`. */
+  | { t: 'commandResult'; id: string; ok: boolean; message?: string };
 
 export type AppToBridge =
   | { t: 'requestCharts'; icao: string }
   /** Start sending these aircraft L:vars (names without "L:") as they change. */
   | { t: 'lvarWatch'; names: string[] }
   /** Run an MSFS RPN snippet against the aircraft's L:vars; `@` in the code is `value`. */
-  | { t: 'lvarRun'; code: string; value?: number };
+  | { t: 'lvarRun'; code: string; value?: number; id?: string }
+  /** Fenix: type a squawk on the ATC keypad and check the result. */
+  | { t: 'fenixSquawk'; code: string; id?: string }
+  /** Fenix: turn an RMP's knobs until standby shows `khz` (121800 = 121.800). */
+  | { t: 'fenixTune'; rmp: number; khz: number; id?: string };

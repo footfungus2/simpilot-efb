@@ -20,7 +20,8 @@ Bridge → app:
 | `chartsReady` | `{ icao }`: the chart index and pages are now cached |
 | `chartsProgress` | `{ icao, done, total }` |
 | `chartsError` | `{ icao, message }` |
-| `lvars` | `{ values: { [name]: number } }`: watched aircraft L:vars that changed (names without `L:`) |
+| `lvars` | `{ values: { [name]: number } }`: watched aircraft L:vars that changed, **as read back from the sim** (the bridge never echoes its own writes) |
+| `commandResult` | `{ id, ok, message? }`: outcome of an app command that carried an `id` |
 
 App → bridge:
 
@@ -28,7 +29,9 @@ App → bridge:
 |---|---|
 | `requestCharts` | `{ icao }`: queues a link job unless the airport is already cached |
 | `lvarWatch` | `{ names: string[] }`: start sending these L:vars (e.g. `N_PED_RMP1_ACTIVE`) as they change |
-| `lvarRun` | `{ code, value? }`: run an MSFS RPN snippet (HubHop preset syntax) on the aircraft's L:vars; `@` = `value`. Commands run in order |
+| `lvarRun` | `{ code, value?, id? }`: run an MSFS RPN snippet (HubHop preset syntax) on the aircraft's L:vars; `@` = `value`. Commands run in order; with an `id` the bridge answers `commandResult` once it has written the values |
+| `fenixSquawk` | `{ code, id? }`: Fenix only. Clears a half-typed entry, types the code key by key (waiting for each key in the sim) and checks the final code; one at a time |
+| `fenixTune` | `{ rmp, khz, id? }`: Fenix only. Turns RMP `rmp`'s knobs until its standby window reads `khz` (121800 = 121.800), reading it back after every click |
 
 ## App → bridge: HTTP
 

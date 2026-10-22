@@ -1,30 +1,36 @@
 import SwiftUI
 
-/// VATSIM assistant: what ATC has given your flight (assigned squawk, flight-plan amendments) and who to talk to,
-/// from your callsign's entry in the public VATSIM data feed.
+/// VATSIM assistant: what's on your flight plan (assigned squawk, cruise level, route), how it changed, and which
+/// controllers probably cover you, from your callsign's entry in the public VATSIM data feed.
 struct VatsimAssistantPage: View {
     @EnvironmentObject private var app: AppState
-    @EnvironmentObject private var bridge: BridgeClient
     @Environment(\.theme) private var theme
     @ObservedObject var assistant: VatsimAssistant
     @ObservedObject var vars: AircraftVars
+    @ObservedObject var commander: FenixCommander
+    let fenixLive: Bool
+    let compact: Bool
     @State private var draft = ""
 
     var body: some View {
         VStack(spacing: 16) {
             callsignCard
             if let f = assistant.flight {
-                HStack(alignment: .top, spacing: 16) {
-                    squawkCard(f)
-                    levelCard(f)
+                if assistant.isStale { staleBanner }
+                Group {
+                    AdaptiveStack(compact: compact) {
+                        squawkCard(f)
+                        levelCard(f)
+                    }
+                    AdaptiveStack(compact: compact) {
+                        controllersCard
+                        changesCard
+                    }
+                    routeCard(f)
                 }
-                HStack(alignment: .top, spacing: 16) {
-                    controllersCard
-                    changesCard
-                }
-                routeCard(f)
+                .opacity(assistant.isStale ? 0.5 : 1)
             }
-            Text("From the public VATSIM data feed, using only your callsign's entry. Shows what controllers save to your flight: the assigned squawk and flight-plan amendments. Spoken instructions such as headings and levels aren't published by VATSIM.")
+            Text("From the public VATSIM data feed, using only your callsign's entry. It shows what's saved on your flight plan: the assigned squawk, cruise level and route, and when they change. Spoken instructions such as headings and levels aren't published by VATSIM.")
                 .font(.system(size: 12)).foregroundColor(theme.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -40,22 +46,25 @@ struct VatsimAssistantPage: View {
 
     private var callsignCard: some View {
         Card(title: "Your flight") {
-            HStack(spacing: 14) {
-                TextField("Callsign", text: $draft, onCommit: { assistant.callsign = draft.uppercased() })
-                    .textInputAutocapitalization(.characters)
-                    .disableAutocorrection(true)
-                    .font(.system(size: 22, weight: .semibold, design: .rounded))
-                    .foregroundColor(theme.text)
-                    .padding(.horizontal, 12).frame(width: 200, height: 44)
-                    .background(RoundedRectangle(cornerRadius: 9).fill(theme.pill))
-                if let cs = app.ofp?.callsign, cs != assistant.callsign {
-                    ActionButton(label: "Use \(cs)") { draft = cs; assistant.callsign = cs }
+            AdaptiveStack(compact: compact, spacing: 12) {
+                HStack(spacing: 12) {
+                    TextField("Callsign", text: $draft, onCommit: { assistant.callsign = draft.uppercased() })
+                        .textInputAutocapitalization(.characters)
+                        .disableAutocorrection(true)
+                        .font(.system(size: 22, weight: .semibold, design: .rounded))
+                        .foregroundColor(theme.text)
+                        .padding(.horizontal, 12).frame(maxWidth: 220, minHeight: 48)
+                        .background(RoundedRectangle(cornerRadius: 9).fill(theme.pill))
+                        .accessibilityLabel("VATSIM callsign")
+                    if let cs = app.ofp?.callsign, cs != assistant.callsign {
+                        ActionButton(label: "Use \(cs)") { draft = cs; assistant.callsign = cs }
+                    }
                 }
-                Spacer()
+                Spacer(minLength: 0)
                 status
             }
             if let f = assistant.flight {
-                HStack(spacing: 28) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), alignment: .leading), count: compact ? 2 : 4), alignment: .leading, spacing: 12) {
                     Readout(caption: "Route", value: "\(f.departure ?? "–") → \(f.arrival ?? "–")", size: 20)
                     Readout(caption: "Altitude", value: "\(Int(f.altitudeFt.rounded())) ft", size: 20)
                     Readout(caption: "Ground speed", value: "\(Int(f.groundspeed.rounded())) kt", size: 20)
@@ -68,6 +77,10 @@ struct VatsimAssistantPage: View {
     private var status: some View {
         let (text, color): (String, Color) = {
             if assistant.callsign.isEmpty { return ("Enter your VATSIM callsign", theme.textSecondary) }
+            if assistant.isStale {
+                if assistant.online == false { return ("\(assistant.callsign) isn't in the VATSIM feed now", Theme.warnOrange) }
+                return (assistant.error ?? "VATSIM data is out of date", Theme.warnOrange)
+            }
             if let e = assistant.error { return (e, Theme.warnOrange) }
             switch assistant.online {
             case nil: return ("Looking for \(assistant.callsign)…", theme.textSecondary)
@@ -79,11 +92,25 @@ struct VatsimAssistantPage: View {
             Circle().fill(color).frame(width: 8, height: 8)
             Text(text).font(.system(size: 13, weight: .medium)).foregroundColor(theme.textSecondary)
         }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var staleBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "clock.badge.exclamationmark").foregroundColor(Theme.warnOrange)
+            Text("Old data: \(assistant.callsign) was last seen in the feed \(assistant.lastSeen.map(time) ?? "earlier"). Nothing below is applied to the aircraft.")
+                .font(.system(size: 14, weight: .medium)).foregroundColor(theme.text)
+            Spacer()
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Theme.warnOrange.opacity(0.15)))
+        .accessibilityElement(children: .combine)
     }
 
     private func squawkCard(_ f: VatsimAssistant.Flight) -> some View {
-        let fenixCode = vars[FenixA320.ATC.code].map { String(format: "%04d", Int($0.rounded())) }
+        let fenixCode = fenixLive ? vars[FenixA320.ATC.code].map { String(format: "%04d", Int($0.rounded())) } : nil
         let current = fenixCode ?? f.transponder
+        let busy = commander.isPending("squawk")
         return Card(title: "Assigned squawk") {
             if let sq = f.assignedSquawk {
                 HStack(alignment: .firstTextBaseline) {
@@ -98,14 +125,19 @@ struct VatsimAssistantPage: View {
                     HStack(spacing: 10) {
                         Text("You're squawking \(current ?? "–")").font(.system(size: 14)).foregroundColor(theme.textSecondary)
                         Spacer()
-                        ActionButton(label: "Set in Fenix", prominent: true) { FenixActions(bridge: bridge).squawk(sq) }
-                            .disabled(!bridge.isConnected)
-                            .opacity(bridge.isConnected ? 1 : 0.5)
+                        let canSet = fenixLive && !assistant.isStale && !busy
+                        ActionButton(label: busy ? "Setting…" : "Set in Fenix", prominent: true, pending: busy,
+                                     accessibilityName: "Set squawk \(sq) in the Fenix") { commander.squawk(sq) }
+                            .disabled(!canSet)
+                            .opacity(canSet || busy ? 1 : 0.5)
+                    }
+                    if !fenixLive {
+                        Text("Connect the Fenix to set it from here.").font(.system(size: 12)).foregroundColor(theme.textSecondary)
                     }
                 }
             } else {
                 Text("No squawk assigned yet").font(.system(size: 17)).foregroundColor(theme.textSecondary)
-                Text("It appears here once a controller assigns one (usually with your clearance).")
+                Text("It appears here once a controller assigns one, usually with your clearance.")
                     .font(.system(size: 13)).foregroundColor(theme.textSecondary)
             }
         }
@@ -116,20 +148,20 @@ struct VatsimAssistantPage: View {
             Text(VatsimAssistant.level(f.cruise) ?? "–")
                 .font(.system(size: 48, weight: .semibold, design: .rounded)).monospacedDigit().foregroundColor(theme.text)
             if let filed = app.ofp?.cruiseFl, let now = VatsimAssistant.level(f.cruise), now != "FL\(filed)" {
-                Text("Filed FL\(filed) in SimBrief").font(.system(size: 13)).foregroundColor(Theme.warnOrange)
+                Text("Your SimBrief plan says FL\(filed)").font(.system(size: 13)).foregroundColor(Theme.warnOrange)
             } else {
-                Text("Controllers amend this when they change your cruise level.").font(.system(size: 13)).foregroundColor(theme.textSecondary)
+                Text("As saved on your VATSIM flight plan.").font(.system(size: 13)).foregroundColor(theme.textSecondary)
             }
         }
     }
 
     private var controllersCard: some View {
-        Card(title: "Controllers") {
+        Card(title: "Likely ATC (estimate)") {
             if assistant.covering.isEmpty && assistant.departureStations.isEmpty && assistant.arrivalStations.isEmpty {
-                Text("No ATC online for your position or airports — UNICOM 122.800").font(.system(size: 15)).foregroundColor(theme.textSecondary)
+                Text("No ATC online for your position or airports. UNICOM 122.800").font(.system(size: 15)).foregroundColor(theme.textSecondary)
             }
             if !assistant.covering.isEmpty {
-                section("Covering your position", assistant.covering)
+                section("Probably covering your position", assistant.covering)
             }
             if !assistant.departureStations.isEmpty {
                 section("Departure \(assistant.flight?.departure ?? "")", assistant.departureStations)
@@ -137,29 +169,55 @@ struct VatsimAssistantPage: View {
             if !assistant.arrivalStations.isEmpty {
                 section("Arrival \(assistant.flight?.arrival ?? "")", assistant.arrivalStations)
             }
+            Text("Estimated from published sector boundaries. The controller actually working you can differ; follow handoffs on frequency.")
+                .font(.system(size: 12)).foregroundColor(theme.textSecondary)
         }
     }
 
     private func section(_ title: String, _ list: [VatsimAssistant.Contact]) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title.uppercased()).font(.system(size: 11, weight: .semibold)).foregroundColor(theme.textSecondary)
             ForEach(list) { c in
                 HStack(spacing: 10) {
                     Text(c.role).font(.system(size: 13, weight: .medium)).foregroundColor(theme.textSecondary).frame(width: 74, alignment: .leading)
                     Text(c.controller.callsign).font(.system(size: 15, weight: .semibold)).foregroundColor(theme.text)
+                        .lineLimit(1).minimumScaleFactor(0.8)
                     Spacer()
-                    Text(c.controller.frequency).font(.system(size: 17, weight: .semibold, design: .rounded)).monospacedDigit()
-                        .foregroundColor(Theme.okGreen)
+                    frequency(c.controller.frequency, station: c.controller.callsign)
                 }
-                .padding(.vertical, 4)
+                .frame(minHeight: 44)
             }
         }
     }
 
+    /// Tap a controller's frequency to load it into a radio's standby window.
+    @ViewBuilder private func frequency(_ text: String, station: String) -> some View {
+        let khz = FrequencyInput.khz(vatsim: text)
+        let label = Text(text).font(.system(size: 17, weight: .semibold, design: .rounded)).monospacedDigit()
+        if let khz, fenixLive, !assistant.isStale {
+            Menu {
+                Button("Radio 1 standby") { commander.tune(rmp: 1, khz: khz) }
+                Button("Radio 2 standby") { commander.tune(rmp: 2, khz: khz) }
+            } label: {
+                HStack(spacing: 6) {
+                    label.foregroundColor(Theme.ownshipBlue)
+                    Image(systemName: "arrow.down.to.line.compact").font(.system(size: 12, weight: .semibold)).foregroundColor(Theme.ownshipBlue)
+                }
+                .padding(.horizontal, 10).frame(minHeight: 44)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.ownshipBlue.opacity(0.12)))
+            }
+            .accessibilityLabel("\(station) \(text)")
+            .accessibilityHint("Load into a radio's standby frequency")
+        } else {
+            label.foregroundColor(Theme.okGreen)
+                .accessibilityLabel("\(station) \(text)")
+        }
+    }
+
     private var changesCard: some View {
-        Card(title: "Changes from ATC") {
+        Card(title: "Flight-plan changes") {
             if assistant.changes.isEmpty {
-                Text("Nothing yet. Squawk, level and route changes made by controllers show up here while this page is open.")
+                Text("Nothing yet. Changes to your squawk, cruise level, route, destination or alternate show up here while this page is open, whether a controller or you made them.")
                     .font(.system(size: 14)).foregroundColor(theme.textSecondary)
             } else {
                 ForEach(assistant.changes) { c in
@@ -170,6 +228,7 @@ struct VatsimAssistantPage: View {
                             Text(c.detail).font(.system(size: 14)).foregroundColor(Theme.ownshipBlue).lineLimit(3)
                         }
                     }
+                    .accessibilityElement(children: .combine)
                 }
             }
         }

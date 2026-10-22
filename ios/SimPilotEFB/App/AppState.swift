@@ -14,6 +14,7 @@ final class AppState: ObservableObject {
     let bridge = BridgeClient()
     let vatsim = VatsimStore()
     let vatsimAssistant = VatsimAssistant()
+    private(set) lazy var fenixCommander = FenixCommander(bridge: bridge)
     let chartPack = ChartPack()
     lazy var chartsModel = ChartsModel(bridge: bridge, pack: chartPack)
 

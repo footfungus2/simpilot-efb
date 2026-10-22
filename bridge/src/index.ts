@@ -4,6 +4,7 @@ import { ChartStore } from './charts/store.js';
 import { config } from './config.js';
 import { Hub } from './hub.js';
 import { logger } from './log.js';
+import { FenixProcedures } from './fenix.js';
 import { LVars } from './lvars.js';
 import { createServer } from './server.js';
 import { startSim } from './sim.js';
@@ -13,7 +14,7 @@ const log = logger('bridge');
 const hub = new Hub();
 const store = new ChartStore(config.cacheDir);
 const lvars = new LVars((values) => hub.broadcast({ t: 'lvars', values }));
-const server = createServer(hub, store, lvars);
+const server = createServer(hub, store, lvars, new FenixProcedures(lvars));
 
 server.listen(config.port, '0.0.0.0', () => {
   log.info(`SimPilot EFB bridge ${config.bridgeVersion} listening on port ${config.port}`);

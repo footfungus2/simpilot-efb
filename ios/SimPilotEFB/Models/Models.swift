@@ -175,6 +175,7 @@ enum BridgeMessage {
     case chartsProgress(icao: String, done: Int, total: Int)
     case chartsError(icao: String, message: String)
     case lvars([String: Double])
+    case commandResult(id: String, ok: Bool, message: String?)
 
     private struct Envelope: Decodable { var t: String }
     private struct Hello: Decodable { var status: BridgeStatus }
@@ -182,6 +183,7 @@ enum BridgeMessage {
     private struct Progress: Decodable { var icao: String; var done: Int; var total: Int }
     private struct ErrorMsg: Decodable { var icao: String; var message: String }
     private struct LVarsMsg: Decodable { var values: [String: Double] }
+    private struct ResultMsg: Decodable { var id: String; var ok: Bool; var message: String? }
 
     static func decode(_ data: Data) -> BridgeMessage? {
         let dec = JSONDecoder()
@@ -194,6 +196,7 @@ enum BridgeMessage {
         case "chartsProgress": return (try? dec.decode(Progress.self, from: data)).map { .chartsProgress(icao: $0.icao, done: $0.done, total: $0.total) }
         case "chartsError": return (try? dec.decode(ErrorMsg.self, from: data)).map { .chartsError(icao: $0.icao, message: $0.message) }
         case "lvars": return (try? dec.decode(LVarsMsg.self, from: data)).map { .lvars($0.values) }
+        case "commandResult": return (try? dec.decode(ResultMsg.self, from: data)).map { .commandResult(id: $0.id, ok: $0.ok, message: $0.message) }
         default: return nil
         }
     }

@@ -52,6 +52,8 @@ final class VatsimAssistant: ObservableObject {
     /// nil until the first fetch for this callsign.
     @Published private(set) var online: Bool?
     @Published private(set) var updated: Date?
+    /// When your callsign was last in the feed.
+    @Published private(set) var lastSeen: Date?
     @Published private(set) var error: String?
     @Published private(set) var changes: [Change] = []
     @Published private(set) var covering: [Contact] = []
@@ -82,9 +84,18 @@ final class VatsimAssistant: ObservableObject {
         task = nil
     }
 
+    /// The flight shown is from an earlier feed: you're no longer connected, or the feed couldn't be loaded for a while.
+    var isStale: Bool {
+        guard flight != nil else { return false }
+        if online == false { return true }
+        guard let seen = lastSeen else { return true }
+        return Date().timeIntervalSince(seen) > 90
+    }
+
     private func reset() {
         flight = nil
         online = nil
+        lastSeen = nil
         changes = []
         covering = []
         departureStations = []
@@ -111,8 +122,10 @@ final class VatsimAssistant: ObservableObject {
             if let new = parsed.0 {
                 if let old = flight { logChanges(from: old, to: new) }
                 flight = new
+                lastSeen = Date()
                 findControllers(for: new, in: parsed.1)
             } else {
+                // Keep the last known flight for reference; the page marks it as old and won't apply its squawk.
                 covering = []
                 departureStations = []
                 arrivalStations = []
@@ -131,11 +144,11 @@ final class VatsimAssistant: ObservableObject {
             out.append(Change(time: now, title: "Squawk assigned", detail: sq))
         }
         if new.cruise != old.cruise {
-            out.append(Change(time: now, title: "Cruise level amended",
+            out.append(Change(time: now, title: "Cruise level changed",
                               detail: "\(Self.level(old.cruise) ?? "–") → \(Self.level(new.cruise) ?? "–")"))
         }
         if new.route != old.route {
-            out.append(Change(time: now, title: "Route amended", detail: new.route ?? ""))
+            out.append(Change(time: now, title: "Route changed", detail: new.route ?? ""))
         }
         if new.arrival != old.arrival {
             out.append(Change(time: now, title: "Destination changed", detail: "\(old.arrival ?? "–") → \(new.arrival ?? "–")"))
@@ -144,13 +157,13 @@ final class VatsimAssistant: ObservableObject {
             out.append(Change(time: now, title: "Alternate changed", detail: "\(old.alternate ?? "–") → \(new.alternate ?? "–")"))
         }
         if out.isEmpty, new.revision != old.revision, new.revision != nil {
-            out.append(Change(time: now, title: "Flight plan amended", detail: "Revision \(new.revision ?? 0)"))
+            out.append(Change(time: now, title: "Flight plan updated", detail: "Revision \(new.revision ?? 0)"))
         }
         changes.insert(contentsOf: out, at: 0)
     }
 
     /// "35000" → "FL350", "FL320" stays, "5000" → "5000 ft".
-    static func level(_ raw: String?) -> String? {
+    nonisolated static func level(_ raw: String?) -> String? {
         guard let raw, !raw.isEmpty else { return nil }
         let s = raw.uppercased()
         if s.hasPrefix("FL") { return s }

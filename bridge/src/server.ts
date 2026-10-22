@@ -4,6 +4,7 @@ import { WebSocketServer } from 'ws';
 import { ChartLink } from './charts/link.js';
 import { type ChartStore, safeIcao } from './charts/store.js';
 import { HttpError, readJson, Router, sendJson, setCors } from './http.js';
+import type { FenixProcedures } from './fenix.js';
 import type { LVars } from './lvars.js';
 import type { Hub } from './hub.js';
 import { logger } from './log.js';
@@ -12,7 +13,7 @@ import { metars, metarsInBox, parseIds, sigmets, tafs } from './weather.js';
 
 const log = logger('http');
 
-export function createServer(hub: Hub, store: ChartStore, lvars?: LVars): http.Server {
+export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?: FenixProcedures): http.Server {
   const link = new ChartLink(store, hub);
   const router = new Router();
 
@@ -22,8 +23,26 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars): http.S
       lvars?.watch(msg.names);
       const known = lvars?.snapshot(msg.names) ?? {};
       if (Object.keys(known).length) hub.broadcast({ t: 'lvars', values: known });
-    } else if (msg.t === 'lvarRun' && typeof msg.code === 'string') void lvars?.run(msg.code, Number(msg.value ?? 0));
+    } else if (msg.t === 'lvarRun' && typeof msg.code === 'string') {
+      reply(msg.id, lvars ? lvars.run(msg.code, Number(msg.value ?? 0)).then(() => undefined) : undefined);
+    } else if (msg.t === 'fenixSquawk') {
+      reply(msg.id, fenix?.setSquawk(String(msg.code)));
+    } else if (msg.t === 'fenixTune') {
+      reply(msg.id, fenix?.tuneStandby(Number(msg.rmp), Number(msg.khz)));
+    }
   });
+
+  /** Reports how a command went to the app (only when it sent an id). */
+  function reply(id: string | undefined, work: Promise<string | undefined> | undefined): void {
+    if (!work) {
+      if (id) hub.broadcast({ t: 'commandResult', id, ok: false, message: 'sim not connected' });
+      return;
+    }
+    work.then(
+      (message) => id && hub.broadcast({ t: 'commandResult', id, ok: true, message }),
+      (err: Error) => id && hub.broadcast({ t: 'commandResult', id, ok: false, message: err.message }),
+    );
+  }
 
   /** Queues a chart download unless the airport is already cached. */
   async function requestCharts(icaoRaw: string): Promise<'cached' | 'queued'> {

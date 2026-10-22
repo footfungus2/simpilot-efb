@@ -60,6 +60,7 @@ final class BridgeClient: ObservableObject {
     let chartEvents = PassthroughSubject<ChartEvent, Never>()
     let aircraft = AircraftVars()
     private var watchedVars = Set<String>()
+    private var results: [String: CheckedContinuation<String?, Error>] = [:]
 
     private(set) var host: String?
     private var manualHost: String?
@@ -112,6 +113,30 @@ final class BridgeClient: ObservableObject {
     /// Runs an MSFS RPN snippet (HubHop preset syntax) on the aircraft; `@` in the code is `value`.
     func run(_ code: String, value: Double = 0) {
         send(json: ["t": "lvarRun", "code": code, "value": value])
+    }
+
+    struct CommandFailure: LocalizedError {
+        var message: String
+        var errorDescription: String? { message }
+    }
+
+    /// Sends a command with an id and waits for the bridge's `commandResult` (or a timeout).
+    @discardableResult
+    func command(_ object: [String: Any], timeout: TimeInterval = 8) async throws -> String? {
+        guard isConnected else { throw CommandFailure(message: "PC bridge not connected") }
+        let id = UUID().uuidString
+        var msg = object
+        msg["id"] = id
+        return try await withCheckedThrowingContinuation { cont in
+            results[id] = cont
+            send(json: msg)
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                if let c = self?.results.removeValue(forKey: id) {
+                    c.resume(throwing: CommandFailure(message: "No answer from the PC bridge"))
+                }
+            }
+        }
     }
 
     // MARK: HTTP
@@ -187,6 +212,9 @@ final class BridgeClient: ObservableObject {
             if !watchedVars.isEmpty { send(json: ["t": "lvarWatch", "names": Array(watchedVars)]) }
         case let .status(s): status = s
         case let .lvars(values): aircraft.merge(values)
+        case let .commandResult(id, ok, message):
+            guard let c = results.removeValue(forKey: id) else { return }
+            if ok { c.resume(returning: message) } else { c.resume(throwing: CommandFailure(message: message ?? "Command failed")) }
         case let .ownship(o): ownship.update(o)
         case let .chartsReady(icao): chartEvents.send(.ready(icao: icao))
         case let .chartsProgress(icao, done, total): chartEvents.send(.progress(icao: icao, done: done, total: total))
@@ -210,6 +238,8 @@ final class BridgeClient: ObservableObject {
         status = nil
         ownship.update(nil)
         aircraft.reset()
+        for (_, c) in results { c.resume(throwing: CommandFailure(message: "Lost the connection to the PC bridge")) }
+        results = [:]
         reconnectTask?.cancel()
         let target = manualHost
         state = target.map { .connecting($0) } ?? .searching
@@ -227,5 +257,8 @@ final class BridgeClient: ObservableObject {
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         state = .idle
+        aircraft.reset()
+        for (_, c) in results { c.resume(throwing: CommandFailure(message: "Disconnected from the PC bridge")) }
+        results = [:]
     }
 }
