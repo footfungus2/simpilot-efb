@@ -13,6 +13,7 @@ enum Module: Equatable {
 final class AppState: ObservableObject {
     let bridge = BridgeClient()
     let vatsim = VatsimStore()
+    let vatsimAssistant = VatsimAssistant()
     let chartPack = ChartPack()
     lazy var chartsModel = ChartsModel(bridge: bridge, pack: chartPack)
 
