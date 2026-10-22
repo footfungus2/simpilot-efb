@@ -4,6 +4,7 @@ import { WebSocketServer } from 'ws';
 import { ChartLink } from './charts/link.js';
 import { type ChartStore, safeIcao } from './charts/store.js';
 import { HttpError, readJson, Router, sendJson, setCors } from './http.js';
+import type { LVars } from './lvars.js';
 import type { Hub } from './hub.js';
 import { logger } from './log.js';
 import { fetchOfp } from './simbrief.js';
@@ -11,12 +12,17 @@ import { metars, metarsInBox, parseIds, sigmets, tafs } from './weather.js';
 
 const log = logger('http');
 
-export function createServer(hub: Hub, store: ChartStore): http.Server {
+export function createServer(hub: Hub, store: ChartStore, lvars?: LVars): http.Server {
   const link = new ChartLink(store, hub);
   const router = new Router();
 
   hub.onMessage((msg) => {
     if (msg.t === 'requestCharts') void requestCharts(msg.icao);
+    else if (msg.t === 'lvarWatch' && Array.isArray(msg.names)) {
+      lvars?.watch(msg.names);
+      const known = lvars?.snapshot(msg.names) ?? {};
+      if (Object.keys(known).length) hub.broadcast({ t: 'lvars', values: known });
+    } else if (msg.t === 'lvarRun' && typeof msg.code === 'string') void lvars?.run(msg.code, Number(msg.value ?? 0));
   });
 
   /** Queues a chart download unless the airport is already cached. */

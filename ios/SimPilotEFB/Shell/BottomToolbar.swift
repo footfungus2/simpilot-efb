@@ -13,11 +13,13 @@ struct BottomToolbar: View {
             switch app.module {
             case .map: mapLeft
             case .charts: chartsLeft
+            case .aircraft: EmptyView()
             }
             Spacer()
             switch app.module {
             case .map: mapTools
             case .charts: chartTools
+            case .aircraft: EmptyView()
             }
             Spacer()
             PillGroup {
@@ -26,6 +28,7 @@ struct BottomToolbar: View {
                     app.module = .charts
                 }
                 PillIcon(systemName: "map", selected: app.module == .map) { app.module = .map }
+                PillIcon(systemName: "airplane", selected: app.module == .aircraft) { app.module = .aircraft }
                 PillIcon(systemName: "pencil.tip", selected: app.annotating) {
                     if app.module != .charts {
                         if app.chartsAirport == nil { app.chartsAirport = app.ofp?.origin.icao }

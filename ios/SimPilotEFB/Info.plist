@@ -35,6 +35,10 @@
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>SimPilot EFB connects to the bridge on your flight simulator PC.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string>DSEG7Classic-Bold.ttf</string>
+	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UIIdleTimerDisabled</key>

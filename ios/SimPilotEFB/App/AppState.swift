@@ -5,6 +5,7 @@ import SwiftUI
 enum Module: Equatable {
     case map
     case charts
+    case aircraft
 }
 
 /// App-wide state: settings, the loaded flight, and what's on screen.

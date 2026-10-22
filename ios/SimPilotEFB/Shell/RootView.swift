@@ -18,6 +18,7 @@ struct RootView: View {
                     switch app.module {
                     case .map: EnrouteMapScreen()
                     case .charts: ChartsScreen(navigation: $chartNav)
+                    case .aircraft: AircraftScreen()
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

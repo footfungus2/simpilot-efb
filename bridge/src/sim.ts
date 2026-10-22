@@ -8,6 +8,7 @@ import {
 } from 'node-simconnect';
 import { config } from './config.js';
 import type { Hub } from './hub.js';
+import { REQ_LVARS, type LVars } from './lvars.js';
 import { logger } from './log.js';
 
 const log = logger('sim');
@@ -21,7 +22,7 @@ const EVT_AIRCRAFT_LOADED = 1;
 const RETRY_MS = 5000;
 
 /** Keeps a SimConnect connection alive and publishes ownship state to the hub. */
-export function startSim(hub: Hub): void {
+export function startSim(hub: Hub, lvars: LVars): void {
   let lastSent = 0;
   const minIntervalMs = 1000 / config.ownshipHz;
 
@@ -39,6 +40,7 @@ export function startSim(hub: Hub): void {
     }
 
     hub.setSim(true);
+    lvars.attach(handle);
 
     // Order matters: values are read back in the same order.
     const vars: [string, string][] = [
@@ -68,6 +70,10 @@ export function startSim(hub: Hub): void {
     });
 
     handle.on('simObjectData', (rx) => {
+      if (rx.requestID === REQ_LVARS) {
+        lvars.onData(rx.data);
+        return;
+      }
       if (rx.requestID === REQ_TITLE) {
         const title = rx.data.readString256();
         log.info(`aircraft: ${title}`);
@@ -112,6 +118,7 @@ export function startSim(hub: Hub): void {
       // 'quit' is usually followed by 'close'; only schedule one reconnect.
       if (gone) return;
       gone = true;
+      lvars.detach();
       log.warn(`SimConnect ${why}; reconnecting in ${RETRY_MS / 1000}s`);
       hub.setSim(false);
       setTimeout(connect, RETRY_MS);

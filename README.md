@@ -65,6 +65,14 @@ weather, VATSIM and the maps all load directly on the iPad.
 - Loads your latest **SimBrief** OFP: route, navlog, fuel, alternates and the full OFP document
 - Route notes, extra alternates and a demo flight mode for testing without the sim
 
+### Fenix A320 cockpit panels
+- An **Aircraft** tab with the Fenix A320's panels drawn like the real hardware, live in both directions:
+  - **Radios**: RMP 1 and 2 with active/standby windows, transfer, VHF/HF/NAV keys and the dual frequency knob
+  - **ATC / TCAS**: squawk keypad, IDENT, transponder mode, ALT RPTG, TCAS mode and traffic selector
+  - **FCU**: speed, heading, altitude and V/S windows with push/pull knobs, AP1/AP2, A/THR, LOC, APPR, EXPED
+  - **Lights and signs**: exterior lights, seat belts, no smoking, emergency exit, dome and annunciator lights
+- Runs through the PC bridge (SimConnect L:vars), using the community HubHop presets for the Fenix
+
 ### VATSIM layer
 - Live pilots and controllers, styled after VATSIM Radar
 - **Real sector ownership** from VATGlasses at the flight level you choose, with approach areas and traffic counts
@@ -222,6 +230,8 @@ Issues and pull requests are welcome.
 | Live traffic | [VATSIM](https://vatsim.net) data feed | |
 | Weather | [aviationweather.gov](https://aviationweather.gov) | |
 | Map rendering | [MapLibre Native](https://github.com/maplibre/maplibre-native) | BSD-2-Clause |
+| Fenix A320 control presets | [HubHop](https://hubhop.mobiflight.com) community presets (MobiFlight) | |
+| 7-segment display font | [DSEG](https://github.com/keshikan/DSEG) by keshikan | SIL Open Font License 1.1 |
 
 **Debug charts:** UK AIP charts are © NATS / Crown copyright, so the PDFs are not included. Only their georeferencing is in
 [`manifest.json`](ios/SimPilotEFB/Resources/TestCharts/manifest.json). To use them, download the EGSS SIDs *CLN 5S/9R* and

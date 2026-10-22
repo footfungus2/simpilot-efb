@@ -21,6 +21,23 @@ final class OwnshipStore: ObservableObject {
     }
 }
 
+/// Aircraft L:vars the bridge is watching (e.g. the Fenix A320 cockpit), kept separate so their updates only
+/// redraw the cockpit panels.
+@MainActor
+final class AircraftVars: ObservableObject {
+    @Published private(set) var values: [String: Double] = [:]
+
+    subscript(_ name: String) -> Double? { values[name] }
+
+    func merge(_ changed: [String: Double]) {
+        values.merge(changed) { $1 }
+    }
+
+    func reset() {
+        if !values.isEmpty { values = [:] }
+    }
+}
+
 enum ChartEvent {
     case ready(icao: String)
     case progress(icao: String, done: Int, total: Int)
@@ -41,6 +58,8 @@ final class BridgeClient: ObservableObject {
     @Published private(set) var status: BridgeStatus?
     let ownship = OwnshipStore()
     let chartEvents = PassthroughSubject<ChartEvent, Never>()
+    let aircraft = AircraftVars()
+    private var watchedVars = Set<String>()
 
     private(set) var host: String?
     private var manualHost: String?
@@ -80,6 +99,19 @@ final class BridgeClient: ObservableObject {
 
     func send(requestCharts icao: String) {
         send(["t": "requestCharts", "icao": icao])
+    }
+
+    /// Asks the bridge to stream these aircraft L:vars (names without "L:"); remembered across reconnects.
+    func watch(_ names: [String]) {
+        let new = Set(names).subtracting(watchedVars)
+        guard !new.isEmpty else { return }
+        watchedVars.formUnion(new)
+        send(json: ["t": "lvarWatch", "names": Array(new)])
+    }
+
+    /// Runs an MSFS RPN snippet (HubHop preset syntax) on the aircraft; `@` in the code is `value`.
+    func run(_ code: String, value: Double = 0) {
+        send(json: ["t": "lvarRun", "code": code, "value": value])
     }
 
     // MARK: HTTP
@@ -150,7 +182,11 @@ final class BridgeClient: ObservableObject {
     private func handle(_ data: Data) {
         guard let msg = BridgeMessage.decode(data) else { return }
         switch msg {
-        case let .hello(s), let .status(s): status = s
+        case let .hello(s):
+            status = s
+            if !watchedVars.isEmpty { send(json: ["t": "lvarWatch", "names": Array(watchedVars)]) }
+        case let .status(s): status = s
+        case let .lvars(values): aircraft.merge(values)
         case let .ownship(o): ownship.update(o)
         case let .chartsReady(icao): chartEvents.send(.ready(icao: icao))
         case let .chartsProgress(icao, done, total): chartEvents.send(.progress(icao: icao, done: done, total: total))
@@ -159,6 +195,10 @@ final class BridgeClient: ObservableObject {
     }
 
     private func send(_ object: [String: String]) {
+        send(json: object)
+    }
+
+    private func send(json object: [String: Any]) {
         guard let socket, let data = try? JSONSerialization.data(withJSONObject: object),
               let text = String(data: data, encoding: .utf8) else { return }
         socket.send(.string(text)) { _ in }
@@ -169,6 +209,7 @@ final class BridgeClient: ObservableObject {
         socket = nil
         status = nil
         ownship.update(nil)
+        aircraft.reset()
         reconnectTask?.cancel()
         let target = manualHost
         state = target.map { .connecting($0) } ?? .searching

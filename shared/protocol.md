@@ -20,12 +20,15 @@ Bridge → app:
 | `chartsReady` | `{ icao }`: the chart index and pages are now cached |
 | `chartsProgress` | `{ icao, done, total }` |
 | `chartsError` | `{ icao, message }` |
+| `lvars` | `{ values: { [name]: number } }`: watched aircraft L:vars that changed (names without `L:`) |
 
 App → bridge:
 
 | `t` | payload |
 |---|---|
 | `requestCharts` | `{ icao }`: queues a link job unless the airport is already cached |
+| `lvarWatch` | `{ names: string[] }`: start sending these L:vars (e.g. `N_PED_RMP1_ACTIVE`) as they change |
+| `lvarRun` | `{ code, value? }`: run an MSFS RPN snippet (HubHop preset syntax) on the aircraft's L:vars; `@` = `value`. Commands run in order |
 
 ## App → bridge: HTTP
 
