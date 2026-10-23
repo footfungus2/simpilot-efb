@@ -135,7 +135,7 @@ The iPad and the sim PC must be on the **same Wi-Fi network**.
 
 **1. Start the bridge on the sim PC**
 
-1. Install [Node.js 20+](https://nodejs.org) (LTS).
+1. Install [Node.js 20+](https://nodejs.org) (LTS). The bridge launcher opens the download page if Node is missing or too old.
 2. Download this repository ([ZIP](https://github.com/footfungus2/simpilot-efb/archive/refs/heads/main.zip)) and unzip it.
 3. Start MSFS 2024, then double-click **`bridge/start-bridge.bat`**. If Windows Firewall asks, allow **private networks**.
 4. The window shows the PC's address, for example `192.168.1.20:8380`.
@@ -146,9 +146,10 @@ the live aircraft position on the map, the vertical profile and the charts.
 **2. Optional: enable chart export from the sim**
 
 1. In MSFS 2024, enable *Developer Mode*, then **Help → SDK Installer** and install the SDK.
-2. In PowerShell, inside the `sim-package` folder, run
-   `powershell -ExecutionPolicy Bypass -File .\build.ps1`. This builds the panel and copies it into your Community folder.
-   If it picks the wrong folder, add yours: `... -File .\build.ps1 -Community "D:\MSFS\Community"`.
+2. Open the downloaded repository folder and double-click **`sim-package/install.bat`**. It builds the panel and finds
+   your MSFS package location from `UserCfg.opt`. If it cannot find it, choose the MSFS **Packages** folder in the
+   folder picker; the installer places this 2024-only panel in `Community2024` and creates that folder if needed.
+   For a manual override, run `build.ps1 -Community "D:\MSFS\Packages\Community2024"` from PowerShell.
 3. Start a **Free Flight**, open the toolbar's **gear icon** and switch **SimPilot Link** on (MSFS 2024 hides add-on panels
    until you do), then open it. It shows *Bridge: connected* and exports charts when the iPad asks for them.
 

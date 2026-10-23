@@ -42,4 +42,17 @@ final class ServiceRobustnessTests: XCTestCase {
             XCTAssertNil(metar)
         }
     }
+
+    func testInvalidAirportIdentifiersAreRejectedBeforeMapCacheOrRequest() async {
+        for icao in ["", "ABCDE", "????", "A&B?", "ＥＧＳＳ", "../EGSS"] {
+            do {
+                _ = try await AirportMapService.features(icao: icao)
+                XCTFail("Accepted invalid ICAO: \(icao)")
+            } catch let error as AirportMapService.Failure {
+                XCTAssertEqual(error.message, "Enter a valid four-character airport ICAO.")
+            } catch {
+                XCTFail("Unexpected error for \(icao): \(error)")
+            }
+        }
+    }
 }

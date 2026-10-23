@@ -59,6 +59,7 @@ final class FenixCommander: ObservableObject {
     private let bridge: BridgeClient
     private var vars: AircraftVars { bridge.aircraft }
     private let confirmTimeout: TimeInterval = 3
+    private var stepTasks: [String: Task<Void, Never>] = [:]
 
     init(bridge: BridgeClient) {
         self.bridge = bridge
@@ -79,13 +80,16 @@ final class FenixCommander: ObservableObject {
     /// Momentary pushbutton (press + release); confirmed when its press counter (or state) changes in the sim.
     func press(_ v: String, counter: Bool = true, label: String) {
         guard !pending.contains(v) else { return }
-        let before = vars[v]
         let c = counter ? FenixA320.counterPress(v) : FenixA320.holdPress(v)
         track(v, label: label) {
+            let before = counter ? self.vars[v] : nil
+            guard !counter || before != nil else {
+                throw BridgeClient.CommandFailure(message: "\(label): waiting for simulator readback")
+            }
             try await self.bridge.command(["t": "lvarRun", "code": c.press])
             try? await Task.sleep(nanoseconds: 120_000_000)
             try await self.bridge.command(["t": "lvarRun", "code": c.release])
-            if counter {
+            if let before {
                 try await self.readback(v, label: label) { $0 != before }
             }
             return nil
@@ -94,15 +98,21 @@ final class FenixCommander: ObservableObject {
 
     /// One knob click. Not shown as pending (knobs are clicked quickly), but reported if the sim never reacts.
     func step(_ v: String, _ dir: Int, label: String) {
-        let before = vars[v]
-        Task {
+        let previous = stepTasks[v]
+        let task = Task { [weak self] in
+            await previous?.value
+            guard let self else { return }
             do {
+                guard let before = vars[v] else {
+                    throw BridgeClient.CommandFailure(message: "\(label): waiting for simulator readback")
+                }
                 try await bridge.command(["t": "lvarRun", "code": dir > 0 ? FenixA320.inc(v) : FenixA320.dec(v)])
                 try await readback(v, label: label) { $0 != before }
             } catch {
                 show(error.localizedDescription, isError: true)
             }
         }
+        stepTasks[v] = task
     }
 
     /// Push or pull of an FCU knob (no readable state of its own, so only the bridge's acknowledgement is checked).

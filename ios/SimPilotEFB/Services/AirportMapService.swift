@@ -20,7 +20,12 @@ enum AirportMapService {
 
     /// GeoJSON features (as dictionaries) for one airport: fresh cache → Overpass (with mirrors) →
     /// any older cached copy, so a server outage never leaves the ground map empty.
-    static func features(icao: String) async throws -> [[String: Any]] {
+    static func features(icao rawIcao: String) async throws -> [[String: Any]] {
+        let icao = rawIcao.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard icao.utf8.count == 4,
+              icao.utf8.allSatisfy({ (65...90).contains($0) || (48...57).contains($0) }) else {
+            throw Failure(message: "Enter a valid four-character airport ICAO.")
+        }
         let file = cacheURL(icao)
         if let age = cacheAge(file), age < cacheTTL, let cached = readCache(file) { return fixStands(cached) }
         // Caches written before the move to Application Support (iOS may purge Caches when storage is low).

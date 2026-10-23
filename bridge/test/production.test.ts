@@ -43,6 +43,8 @@ describe('diagnostic retention', () => {
     expect(last.time).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(last.message).toContain('https://charts.example/page.png');
     expect(last.message).not.toMatch(/secret|hidden|ABC123|12345|Someone|signature|fragment|account:password/);
+    expect(last.message).not.toContain('C:\\Users\\');
+    expect(last.message).not.toContain('\\cache');
     expect(console.error).toHaveBeenLastCalledWith(expect.not.stringMatching(/secret|hidden|ABC123|12345|Someone|signature/));
     entries[0]!.message = 'changed by caller';
     expect(logEntries()[0]!.message).toBe('entry 6');

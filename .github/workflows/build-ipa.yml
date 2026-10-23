@@ -47,8 +47,24 @@ jobs:
           npm run typecheck
           npm run build
 
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check PowerShell installer syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PWD 'sim-package/build.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count) { throw ($errors | Out-String) }
+
   build:
-    needs: checks
+    needs: [checks, installer]
     runs-on: macos-latest
     timeout-minutes: 60
     permissions:
