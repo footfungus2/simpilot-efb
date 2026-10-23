@@ -1,6 +1,7 @@
 import CoreGraphics
 import UIKit
 
+#if DEBUG
 /// Georeferenced test charts generated from the airport-map data (OpenStreetMap), so the charts module —
 /// viewer, ownship-on-chart, chart-on-map — can be used without the sim. They're labelled as test charts and
 /// carry the same georeferencing as Lido pages, so everything downstream behaves exactly as with real charts.
@@ -377,3 +378,4 @@ enum BundledCharts {
         return Chart(detail: detail, imagePath: path, image: image)
     }
 }
+#endif

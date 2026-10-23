@@ -29,9 +29,12 @@ export function rpnVars(code: string): { reads: string[]; writes: string[] } {
 }
 
 export function runRpn(code: string, env: RpnEnv, param = 0): void {
+  if (!Number.isFinite(param)) throw new Error('RPN value must be finite');
   const tokens = tokenize(code);
   const stack: number[] = [];
   const regs: number[] = new Array(10).fill(0);
+  const writes: [string, number][] = [];
+  const values = new Map<string, number>();
   const pop = (): number => stack.pop() ?? 0;
   const top = (): number => stack[stack.length - 1] ?? 0;
 
@@ -55,8 +58,12 @@ export function runRpn(code: string, env: RpnEnv, param = 0): void {
       const v = VAR.exec(raw);
       if (v) {
         const name = v[2]!.trim();
-        if (v[1]) env.write(name, pop());
-        else stack.push(env.read(name));
+        if (v[1]) {
+          const value = pop();
+          if (!Number.isFinite(value)) throw new Error('RPN result must be finite');
+          values.set(name, value);
+          writes.push([name, value]);
+        } else stack.push(values.get(name) ?? env.read(name));
         continue;
       }
       if (t === 'if{') {
@@ -123,4 +130,6 @@ export function runRpn(code: string, env: RpnEnv, param = 0): void {
     }
   };
   exec(0, tokens.length);
+  // Validate the entire preset before any simulator write, while preserving write/read order within it.
+  for (const [name, value] of writes) env.write(name, value);
 }

@@ -15,13 +15,26 @@ enum SimBriefService {
         let key = trimmed.allSatisfy(\.isNumber) ? "userid" : "username"
         comps.queryItems = [URLQueryItem(name: key, value: trimmed), URLQueryItem(name: "json", value: "1")]
 
-        let (data, response) = try await URLSession.shared.data(from: comps.url!)
-        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        let status = (json?["fetch"] as? [String: Any])?["status"] as? String
-        guard let json, (response as? HTTPURLResponse)?.statusCode == 200, status == nil || status == "Success" else {
-            throw Failure(message: status ?? "SimBrief returned HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+        do {
+            let (data, response) = try await URLSession.shared.data(from: comps.url!)
+            let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            let status = (json?["fetch"] as? [String: Any])?["status"] as? String
+            guard let json, (response as? HTTPURLResponse)?.statusCode == 200, status == nil || status == "Success" else {
+                throw Failure(message: status ?? "SimBrief returned HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+            }
+            let ofp = normalize(json)
+            guard !ofp.origin.icao.isEmpty, !ofp.destination.icao.isEmpty else {
+                throw Failure(message: "SimBrief did not return a flight plan. Generate one in SimBrief and try again.")
+            }
+            try Task.checkCancellation()
+            DiagnosticLog.record(.info, "SimBrief", "Flight plan downloaded")
+            return ofp
+        } catch {
+            if !Task.isCancelled, (error as? URLError)?.code != .cancelled {
+                DiagnosticLog.record(.warning, "SimBrief", "Flight plan download failed", error: error)
+            }
+            throw error
         }
-        return normalize(json)
     }
 
     static func normalize(_ raw: [String: Any]) -> Ofp {
@@ -57,7 +70,7 @@ enum SimBriefService {
             alternates: list(raw["alternate"]).map(airport).filter { !$0.icao.isEmpty },
             route: str(general["route"]),
             distanceNm: distance > 0 ? distance : num(general["gc_distance"]),
-            cruiseFl: Int((num(general["initial_altitude"]) / 100).rounded()),
+            cruiseFl: Int(exactly: (num(general["initial_altitude"]) / 100).rounded()) ?? 0,
             costIndex: str(general["costindex"]),
             times: .init(schedOut: num(times["sched_out"]), schedOff: num(times["sched_off"]),
                          schedOn: num(times["sched_on"]), schedIn: num(times["sched_in"]), eteSec: num(times["est_time_enroute"])),
@@ -93,7 +106,7 @@ enum SimBriefService {
     }
 
     private static func num(_ any: Any?) -> Double {
-        if let n = any as? NSNumber { return n.doubleValue }
-        return Double(str(any).trimmingCharacters(in: .whitespaces)) ?? 0
+        let value = (any as? NSNumber)?.doubleValue ?? Double(str(any).trimmingCharacters(in: .whitespaces)) ?? 0
+        return value.isFinite && abs(value) < Double(Int.max) ? value : 0
     }
 }

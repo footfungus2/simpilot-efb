@@ -1,6 +1,7 @@
 import CoreLocation
 import Foundation
 
+#if DEBUG
 /// Flies a simulated aircraft along the loaded SimBrief route, for testing without the sim or the bridge.
 @MainActor
 final class DemoFlight {
@@ -105,3 +106,4 @@ final class DemoFlight {
         return (atan2(y, x) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
     }
 }
+#endif

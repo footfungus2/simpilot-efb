@@ -412,6 +412,11 @@ struct ChartPackSheet: View {
             }
         }
         .navigationViewStyle(.stack)
+        .alert("Flight Charts", isPresented: Binding(get: { pack.error != nil }, set: { if !$0 { pack.error = nil } })) {
+            Button("OK", role: .cancel) { pack.error = nil }
+        } message: {
+            Text(pack.error ?? "")
+        }
     }
 
     private func open(_ item: ChartPack.Item) {

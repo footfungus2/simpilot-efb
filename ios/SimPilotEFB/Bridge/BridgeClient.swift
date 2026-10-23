@@ -56,6 +56,7 @@ final class BridgeClient: ObservableObject {
 
     @Published private(set) var state: State = .idle
     @Published private(set) var status: BridgeStatus?
+    @Published private(set) var lastError: String?
     let ownship = OwnshipStore()
     let chartEvents = PassthroughSubject<ChartEvent, Never>()
     let aircraft = AircraftVars()
@@ -66,6 +67,8 @@ final class BridgeClient: ObservableObject {
     private var manualHost: String?
     private var socket: URLSessionWebSocketTask?
     private var reconnectTask: Task<Void, Never>?
+    private var handshakeTask: Task<Void, Never>?
+    private var reportedInvalidMessage = false
     private let discovery = BridgeDiscovery()
     private let session: URLSession = {
         let cfg = URLSessionConfiguration.default
@@ -84,13 +87,20 @@ final class BridgeClient: ObservableObject {
 
     /// Connects to `manualHost` ("192.168.1.20:8380"), or discovers the bridge if it's empty.
     func start(manualHost: String?) {
-        let trimmed = manualHost?.trimmingCharacters(in: .whitespaces) ?? ""
-        self.manualHost = trimmed.isEmpty ? nil : (trimmed.contains(":") ? trimmed : "\(trimmed):8380")
+        let trimmed = manualHost?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         disconnect()
+        lastError = nil
+        self.manualHost = trimmed.isEmpty ? nil : BridgeAddress.normalize(trimmed)
+        if !trimmed.isEmpty, self.manualHost == nil {
+            lastError = "Enter the PC's hostname or address, optionally followed by its port (for example 192.168.1.20:8380)."
+            DiagnosticLog.record(.warning, "Bridge", "Invalid bridge address; connection not started")
+            return
+        }
         if let h = self.manualHost {
             connect(to: h)
         } else {
             state = .searching
+            DiagnosticLog.record(.info, "Bridge", "Searching for the PC bridge on the local network")
             discovery.start { [weak self] found in
                 self?.discovery.stop()
                 self?.connect(to: found)
@@ -133,6 +143,7 @@ final class BridgeClient: ObservableObject {
             Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
                 if let c = self?.results.removeValue(forKey: id) {
+                    DiagnosticLog.record(.error, "Aircraft", "Command timed out waiting for the PC bridge")
                     c.resume(throwing: CommandFailure(message: "No answer from the PC bridge"))
                 }
             }
@@ -177,11 +188,19 @@ final class BridgeClient: ObservableObject {
     private func connect(to host: String) {
         self.host = host
         state = .connecting(host)
+        DiagnosticLog.record(.info, "Bridge", "Connecting to the PC bridge")
         guard let url = URL(string: "ws://\(host)/ws") else { return }
         let task = session.webSocketTask(with: url)
         socket = task
         task.resume()
         receive(on: task)
+        handshakeTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 15_000_000_000)
+            guard !Task.isCancelled, let self, self.socket === task, !self.isConnected else { return }
+            self.lastError = "The PC bridge did not answer. Check its address, firewall and Wi-Fi connection."
+            DiagnosticLog.record(.warning, "Bridge", "Connection timed out before the bridge handshake")
+            self.scheduleReconnect()
+        }
     }
 
     private func receive(on task: URLSessionWebSocketTask) {
@@ -190,14 +209,15 @@ final class BridgeClient: ObservableObject {
                 guard let self, self.socket === task else { return }
                 switch result {
                 case let .success(message):
-                    if case .connecting = self.state, let h = self.host { self.state = .connected(h) }
                     switch message {
                     case let .string(text): self.handle(Data(text.utf8))
                     case let .data(data): self.handle(data)
                     @unknown default: break
                     }
                     self.receive(on: task)
-                case .failure:
+                case let .failure(error):
+                    self.lastError = "Lost the PC bridge connection. Retrying automatically."
+                    DiagnosticLog.record(.warning, "Bridge", "WebSocket connection failed; retrying", error: error)
                     self.scheduleReconnect()
                 }
             }
@@ -205,20 +225,52 @@ final class BridgeClient: ObservableObject {
     }
 
     private func handle(_ data: Data) {
-        guard let msg = BridgeMessage.decode(data) else { return }
+        guard let msg = BridgeMessage.decode(data) else {
+            if !reportedInvalidMessage {
+                DiagnosticLog.record(.warning, "Bridge", "Ignored an unsupported or malformed bridge message; check bridge version")
+                reportedInvalidMessage = true
+            }
+            return
+        }
         switch msg {
         case let .hello(s):
+            handshakeTask?.cancel()
+            if let host { state = .connected(host) }
+            lastError = nil
+            DiagnosticLog.record(.info, "Bridge", "PC bridge connected")
+            logStatus(s)
             status = s
             if !watchedVars.isEmpty { send(json: ["t": "lvarWatch", "names": Array(watchedVars)]) }
-        case let .status(s): status = s
+        case let .status(s):
+            guard isConnected else { return }
+            if status != s { logStatus(s) }
+            if status?.sim.aircraftTitle != s.sim.aircraftTitle || !s.sim.connected {
+                aircraft.reset()
+                ownship.update(nil)
+            }
+            status = s
         case let .lvars(values): aircraft.merge(values)
         case let .commandResult(id, ok, message):
             guard let c = results.removeValue(forKey: id) else { return }
+            DiagnosticLog.record(ok ? .info : .error, "Aircraft", ok ? "Bridge confirmed command execution" : "Bridge rejected an aircraft command")
             if ok { c.resume(returning: message) } else { c.resume(throwing: CommandFailure(message: message ?? "Command failed")) }
         case let .ownship(o): ownship.update(o)
-        case let .chartsReady(icao): chartEvents.send(.ready(icao: icao))
+        case let .chartsReady(icao):
+            DiagnosticLog.record(.info, "Charts", "Bridge finished exporting charts")
+            chartEvents.send(.ready(icao: icao))
         case let .chartsProgress(icao, done, total): chartEvents.send(.progress(icao: icao, done: done, total: total))
-        case let .chartsError(icao, message): chartEvents.send(.error(icao: icao, message: message))
+        case let .chartsError(icao, message):
+            DiagnosticLog.record(.error, "Charts", "PC bridge reported a chart export failure; load PC logs for details")
+            chartEvents.send(.error(icao: icao, message: message))
+        }
+    }
+
+    private func logStatus(_ value: BridgeStatus) {
+        if status?.sim.connected != value.sim.connected {
+            DiagnosticLog.record(value.sim.connected ? .info : .warning, "Simulator", value.sim.connected ? "MSFS connected" : "MSFS not connected")
+        }
+        if status?.link.connected != value.link.connected {
+            DiagnosticLog.record(value.link.connected ? .info : .warning, "Charts", value.link.connected ? "SimPilot Link panel connected" : "SimPilot Link panel not connected")
         }
     }
 
@@ -229,10 +281,19 @@ final class BridgeClient: ObservableObject {
     private func send(json object: [String: Any]) {
         guard let socket, let data = try? JSONSerialization.data(withJSONObject: object),
               let text = String(data: data, encoding: .utf8) else { return }
-        socket.send(.string(text)) { _ in }
+        socket.send(.string(text)) { [weak self, weak socket] error in
+            guard let error else { return }
+            Task { @MainActor in
+                guard let self, let socket, self.socket === socket else { return }
+                DiagnosticLog.record(.error, "Bridge", "Couldn't send a message to the PC bridge", error: error)
+                self.lastError = "Couldn't send to the PC bridge. Retrying automatically."
+                self.scheduleReconnect()
+            }
+        }
     }
 
     private func scheduleReconnect() {
+        handshakeTask?.cancel()
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         status = nil
@@ -251,11 +312,17 @@ final class BridgeClient: ObservableObject {
     }
 
     private func disconnect() {
+        handshakeTask?.cancel()
+        handshakeTask = nil
         reconnectTask?.cancel()
         reconnectTask = nil
         discovery.stop()
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
+        host = nil
+        status = nil
+        ownship.update(nil)
+        reportedInvalidMessage = false
         state = .idle
         aircraft.reset()
         for (_, c) in results { c.resume(throwing: CommandFailure(message: "Disconnected from the PC bridge")) }

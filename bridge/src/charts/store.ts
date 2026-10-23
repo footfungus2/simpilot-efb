@@ -1,12 +1,13 @@
 import fs from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type { ChartIndex, ChartMeta, ChartPage } from '../types.js';
 import type { StoredPage } from './normalize.js';
 
-const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 export function isPng(buf: Buffer): boolean {
-  return buf.length > 8 && buf.subarray(0, 4).equals(PNG_MAGIC);
+  return buf.length > 8 && buf.subarray(0, 8).equals(PNG_MAGIC);
 }
 
 /** Chart GUIDs come from the sim; keep only filesystem-safe characters. */
@@ -107,7 +108,11 @@ async function readJson<T>(file: string): Promise<T | undefined> {
 }
 
 async function writeAtomic(file: string, data: string | Buffer): Promise<void> {
-  const tmp = `${file}.${process.pid}.tmp`;
-  await fs.writeFile(tmp, data);
-  await fs.rename(tmp, file);
+  const tmp = `${file}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(tmp, data);
+    await fs.rename(tmp, file);
+  } finally {
+    await fs.rm(tmp, { force: true });
+  }
 }

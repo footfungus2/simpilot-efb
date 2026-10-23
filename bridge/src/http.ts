@@ -43,7 +43,11 @@ export class Router {
       const m = r.pattern.exec(pathname);
       if (!m) continue;
       const params: Params = {};
-      r.keys.forEach((k, i) => (params[k] = decodeURIComponent(m[i + 1] ?? '')));
+      try {
+        r.keys.forEach((k, i) => (params[k] = decodeURIComponent(m[i + 1] ?? '')));
+      } catch {
+        throw new HttpError(400, 'invalid URL encoding');
+      }
       return { handler: r.handler, params };
     }
     return undefined;
@@ -52,21 +56,24 @@ export class Router {
 
 const MAX_BODY = 32 * 1024 * 1024; // chart PNGs arrive base64-encoded
 
-export async function readJson(req: IncomingMessage): Promise<any> {
+export async function readJson(req: IncomingMessage, limit = MAX_BODY): Promise<Record<string, any>> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     size += (chunk as Buffer).length;
-    if (size > MAX_BODY) throw new HttpError(413, 'body too large');
+    if (size > limit) throw new HttpError(413, 'body too large');
     chunks.push(chunk as Buffer);
   }
   const text = Buffer.concat(chunks).toString('utf8');
   if (!text) return {};
+  let body: unknown;
   try {
-    return JSON.parse(text);
+    body = JSON.parse(text);
   } catch {
     throw new HttpError(400, 'invalid JSON');
   }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new HttpError(400, 'JSON object required');
+  return body;
 }
 
 export function sendJson(res: ServerResponse, status: number, body: unknown): void {

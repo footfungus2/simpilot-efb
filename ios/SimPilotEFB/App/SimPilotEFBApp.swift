@@ -11,7 +11,10 @@ struct SimPilotEFBApp: App {
                 .environmentObject(app.bridge)
                 .environment(\.theme, app.theme)
                 .preferredColorScheme(app.night ? .dark : .light)
-                .onAppear { app.connect() }
+                .onAppear {
+                    DiagnosticLog.record(.info, "App", "App session started")
+                    app.connect()
+                }
         }
     }
 }

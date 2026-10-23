@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import UIKit
 
 /// The flight's chart pack: charts pinned in the order you'll use them (departure, SID, STAR, approach, taxi…),
@@ -12,6 +13,8 @@ final class ChartPack: ObservableObject {
     }
 
     @Published private(set) var items: [Item] = []
+    @Published var error: String?
+    private let directory: URL
 
     private static var folder: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -19,11 +22,16 @@ final class ChartPack: ObservableObject {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
-    private static var indexFile: URL { folder.appendingPathComponent("pack.json") }
+    private var indexFile: URL { directory.appendingPathComponent("pack.json") }
 
-    init() {
-        if let data = try? Data(contentsOf: Self.indexFile), let saved = try? JSONDecoder().decode([Item].self, from: data) {
-            items = saved
+    init(directory: URL? = nil) {
+        self.directory = directory ?? Self.folder
+        guard FileManager.default.fileExists(atPath: indexFile.path) else { return }
+        do {
+            items = try JSONDecoder().decode([Item].self, from: Data(contentsOf: indexFile))
+        } catch {
+            self.error = "Saved flight charts could not be opened."
+            DiagnosticLog.record(.error, "Charts", "Saved flight chart index could not be opened.", error: error)
         }
     }
 
@@ -31,51 +39,75 @@ final class ChartPack: ObservableObject {
 
     func item(_ guid: String) -> Item? { items.first { $0.detail.chart.guid == guid } }
 
-    /// Pins a chart with whatever page images are available (missing pages stay unavailable offline).
+    /// Pins a chart only after every page and the updated index have been saved.
     func add(icao: String, detail: ChartDetail, images: [Int: UIImage]) {
         guard !contains(detail.chart.guid) else { return }
         var pages = detail.pages
-        for (i, page) in pages.enumerated() {
-            guard let image = images[page.index], let png = image.pngData() else {
-                pages[i].image = nil
-                continue
+        do {
+            guard !pages.isEmpty else { throw CocoaError(.fileWriteUnknown) }
+            for (i, page) in pages.enumerated() {
+                guard let image = images[page.index], let png = image.pngData() else {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                let name = Self.fileName(guid: detail.chart.guid, page: page.index)
+                try png.write(to: directory.appendingPathComponent(name), options: .atomic)
+                pages[i].image = "pack:" + name
             }
-            let name = Self.fileName(guid: detail.chart.guid, page: page.index)
-            try? png.write(to: Self.folder.appendingPathComponent(name), options: .atomic)
-            pages[i].image = "pack:" + name
+            save(items + [Item(icao: icao, detail: ChartDetail(chart: detail.chart, pages: pages))])
+        } catch {
+            reportSaveError(error)
         }
-        items.append(Item(icao: icao, detail: ChartDetail(chart: detail.chart, pages: pages)))
-        save()
     }
 
     func remove(_ guid: String) {
         guard let item = item(guid) else { return }
+        guard save(items.filter { $0.detail.chart.guid != guid }) else { return }
         for page in item.detail.pages {
-            if let path = page.image, path.hasPrefix("pack:") {
-                try? FileManager.default.removeItem(at: Self.folder.appendingPathComponent(String(path.dropFirst(5))))
+            if let path = page.image, let name = Self.imageName(path) {
+                try? FileManager.default.removeItem(at: directory.appendingPathComponent(name))
             }
         }
-        items.removeAll { $0.detail.chart.guid == guid }
-        save()
     }
 
     func move(from source: IndexSet, to destination: Int) {
-        items.move(fromOffsets: source, toOffset: destination)
-        save()
+        var updated = items
+        updated.move(fromOffsets: source, toOffset: destination)
+        save(updated)
     }
 
     static func image(_ path: String) -> UIImage? {
-        guard path.hasPrefix("pack:") else { return nil }
-        return UIImage(contentsOfFile: folder.appendingPathComponent(String(path.dropFirst(5))).path)
+        guard let name = imageName(path) else { return nil }
+        return UIImage(contentsOfFile: folder.appendingPathComponent(name).path)
     }
 
-    private func save() {
-        if let data = try? JSONEncoder().encode(items) { try? data.write(to: Self.indexFile, options: .atomic) }
+    @discardableResult
+    private func save(_ updated: [Item]) -> Bool {
+        do {
+            try JSONEncoder().encode(updated).write(to: indexFile, options: .atomic)
+            items = updated
+            error = nil
+            return true
+        } catch {
+            reportSaveError(error)
+            return false
+        }
+    }
+
+    private func reportSaveError(_ error: Error) {
+        self.error = "Flight charts could not be saved. Check available storage and try again."
+        DiagnosticLog.record(.error, "Charts", "Flight charts could not be saved.", error: error)
+    }
+
+    private static func imageName(_ path: String) -> String? {
+        guard path.hasPrefix("pack:") else { return nil }
+        let name = String(path.dropFirst(5))
+        guard !name.isEmpty, name != ".", name != "..", !name.contains("/"), !name.contains("\\") else { return nil }
+        return name
     }
 
     private static func fileName(guid: String, page: Int) -> String {
-        let safe = guid.map { $0.isLetter || $0.isNumber || "-_".contains($0) ? $0 : "_" }
-        return "\(String(safe))-\(page).png"
+        let hash = SHA256.hash(data: Data(guid.utf8)).map { String(format: "%02x", $0) }.joined()
+        return "\(hash)-\(page).png"
     }
 }
 

@@ -63,7 +63,7 @@ weather, VATSIM and the maps all load directly on the iPad.
 
 ### Flight folder
 - Loads your latest **SimBrief** OFP: route, navlog, fuel, alternates and the full OFP document
-- Route notes, extra alternates and a demo flight mode for testing without the sim
+- Route notes and extra alternates. Developer builds also include a demo flight mode.
 
 ### Fenix A320 cockpit panels
 - An **Aircraft** tab with the Fenix A320's controls in a clean EFB layout, live in both directions:
@@ -102,16 +102,32 @@ weather, VATSIM and the maps all load directly on the iPad.
 
 ## Install on the iPad
 
-**Requirements:** an iPad on iPadOS 15 or later with [TrollStore](https://github.com/opa334/TrollStore) installed.
+**Requirements:** an iPad on iPadOS 15 or later with a compatible [TrollStore](https://github.com/opa334/TrollStore) or [SideStore](https://sidestore.io) installation.
 
 1. On the iPad, open the **[latest release](https://github.com/footfungus2/simpilot-efb/releases/latest)**.
 2. Download **`SimPilotEFB.ipa`**.
-3. Open it with **TrollStore** and tap *Install*.
+3. Open it with **TrollStore** and tap *Install*, or import the IPA into **SideStore** to sign and install it. SideStore must be set up on the iPad first; see the [official install guide](https://docs.sidestore.io/docs/installation/install).
 
-Updates install the same way, over the old version, and keep your settings. Every push to `main` is built automatically by
-GitHub Actions and published as a new release.
+The app checks for updates on launch. Tap **Update** in the optional banner or **Settings → Updates** to open
+the detected installer (TrollStore or SideStore) with the latest IPA. Tap **Later** to dismiss the banner and keep using the installed version.
+Detection checks this app's installation markers. If the installer is unknown, choose it in **Settings → Updates → Update with**;
+you can also override detection there. Settings has a manual check, release notes and a download link. The installer may ask you to confirm installation.
+Keep the same installer and signing identity when updating to retain app data. Every push to `main` is checked by
+GitHub Actions; a complete, tested build is published under its own version/build tag. Update metadata comes from
+the packaged app, so newer builds within the same app version are detected too.
 
-On first launch, open **Settings** and enter your SimBrief username, then tap **Load latest OFP**.
+On first launch, a short walkthrough covers SimBrief, the PC bridge and the main app sections. Tap **Skip** at any time. To load a flight, open **Settings**, enter your SimBrief username or pilot ID, then tap **Load latest OFP**.
+
+### Diagnostics
+
+Open **Settings → Help → Diagnostics / debug console** for bridge, simulator and chart-link status, the age of
+aircraft data, and recent app errors. Reproduce a problem, then tap **Copy diagnostic report** to copy the current
+status and the last 300 events. **Load PC bridge logs** includes up to 200 events from the connected PC. Logs stay
+in memory for the session and are not sent to a reporting service. URLs, credentials and account paths are redacted;
+flight plans and account details are not logged. Review copied reports before sharing them.
+
+Release builds exclude demo flight and bundled/generated test charts. To use charts without the PC connection,
+save real charts to the **FLIGHT** pack first. Failed saves now show an error instead of claiming the chart is available offline.
 
 ## Connect to MSFS 2024
 
@@ -215,11 +231,15 @@ python3 -I scripts/build-basemap.py
 
 ## Project status
 
-Early development (`0.1.x`). It works today without the sim (SimBrief, maps, weather, VATSIM, demo flight).
+Release candidate (`0.1.x`). SimBrief, maps, weather and VATSIM work independently of the simulator.
+Build/test and packaging checks run before publication; the remaining device checks are tracked in
+[release validation](docs/release-validation.md).
 
 - [ ] First end-to-end test of the bridge and chart export in MSFS 2024
 - [ ] Confirm the globe build of MapLibre on iPadOS 15.3
-- [ ] Airways, enroute intersections from sim navigation data, grid MORA
+- [ ] Verify Fenix controls and installer updates on physical devices
+
+Future features: airways, enroute intersections from sim navigation data, grid MORA.
 
 Issues and pull requests are welcome.
 

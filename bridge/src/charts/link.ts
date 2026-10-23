@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { Hub } from '../hub.js';
 import { HttpError } from '../http.js';
 import { logger } from '../log.js';
+import type { ChartIndex } from '../types.js';
 import { icaoIdent, normalizeIndex, normalizePages, pickImageUrl } from './normalize.js';
 import { type ChartStore, isPng, safeIcao } from './store.js';
 
@@ -12,6 +13,7 @@ const log = logger('link');
 
 /** A handed-out job that hasn't finished in this time is offered again (e.g. the panel was reloaded). */
 const JOB_RETRY_MS = 5 * 60_000;
+const MAX_IMAGE_BYTES = 24 * 1024 * 1024;
 
 interface Job {
   id: string;
@@ -21,6 +23,9 @@ interface Job {
   handedAt?: number;
   total: number;
   done: number;
+  index?: ChartIndex;
+  pages: Map<string, { count: number; saved: boolean }>;
+  images: Set<string>;
 }
 
 export class ChartLink {
@@ -36,7 +41,8 @@ export class ChartLink {
     const icao = safeIcao(icaoRaw);
     const existing = [...this.jobs.values()].find((j) => j.icao === icao && j.provider === provider);
     if (existing) return existing;
-    const job: Job = { id: randomUUID(), type: 'charts', icao, provider, total: 0, done: 0 };
+    if (this.jobs.size >= 32) throw new HttpError(429, 'too many pending chart airports');
+    const job: Job = { id: randomUUID(), type: 'charts', icao, provider, total: 0, done: 0, pages: new Map(), images: new Set() };
     this.jobs.set(job.id, job);
     log.info(`queued ${provider} charts for ${icao}`);
     return job;
@@ -62,21 +68,32 @@ export class ChartLink {
   async onIndex(body: any): Promise<void> {
     const job = this.job(body.jobId);
     const icao = safeIcao(icaoIdent(body.index?.airportIcao) || job.icao);
+    if (icao !== job.icao || !Array.isArray(body.index?.charts)) throw new HttpError(400, 'chart index does not match requested airport');
     const index = normalizeIndex(body.index, icao, String(body.provider ?? job.provider));
-    await this.store.saveIndex(index);
+    job.index = index;
     const n = index.categories.reduce((s, c) => s + c.charts.length, 0);
     log.info(`${icao}: index with ${index.categories.length} categories / ${n} charts`);
   }
 
   async onPages(body: any): Promise<void> {
     const job = this.job(body.jobId);
-    const pages = normalizePages(body.pages);
-    await this.store.savePages(job.icao, String(body.guid), pages);
-    job.total += pages.length;
-    if (job.total === pages.length && pages[0]) {
-      // First chart of the job: log URL shapes once, that's the main unknown of the spike.
-      log.info(`${job.icao}: first page URLs`, pages[0].urls);
+    const guid = String(body.guid);
+    if (!job.index?.categories.some((c) => c.charts.some((chart) => chart.guid === guid)) || !Array.isArray(body.pages)) {
+      throw new HttpError(400, 'chart pages do not match the index');
     }
+    const pages = normalizePages(body.pages);
+    if (!pages.length || pages.some((p) => !Number.isFinite(p.width) || !Number.isFinite(p.height) || p.width <= 0 || p.height <= 0)) {
+      throw new HttpError(400, 'chart pages require positive image dimensions');
+    }
+    const previous = job.pages.get(guid);
+    if (previous !== undefined && previous.count !== pages.length) throw new HttpError(409, 'chart page count changed during export');
+    const metadata = previous ?? { count: pages.length, saved: false };
+    if (!previous) {
+      job.total += pages.length;
+      job.pages.set(guid, metadata);
+    }
+    await this.store.savePages(job.icao, guid, pages);
+    metadata.saved = true;
     this.progress(job);
   }
 
@@ -85,6 +102,8 @@ export class ChartLink {
     const job = this.job(body.jobId);
     const guid = String(body.guid);
     const page = Number(body.page);
+    const metadata = job.pages.get(guid);
+    if (!Number.isInteger(page) || page < 0 || !metadata?.saved || page >= metadata.count) throw new HttpError(400, 'image page does not match chart metadata');
     let png: Buffer | undefined;
 
     if (typeof body.pngBase64 === 'string' && body.pngBase64.length > 0) {
@@ -103,22 +122,31 @@ export class ChartLink {
 
     if (!png) return false;
     await this.store.saveImage(job.icao, guid, page, png);
-    job.done += 1;
+    job.images.add(`${guid}#${page}`);
+    job.done = job.images.size;
     this.progress(job);
     return true;
   }
 
-  onDone(body: any): void {
+  async onDone(body: any): Promise<void> {
     const job = this.jobs.get(String(body.jobId));
     if (!job) return;
-    this.jobs.delete(job.id);
-    if (body.error) {
-      log.warn(`${job.icao}: link reported error: ${body.error}`);
-      this.hub.broadcast({ t: 'chartsError', icao: job.icao, message: String(body.error) });
+    const charts = new Set(job.index?.categories.flatMap((c) => c.charts.map((chart) => chart.guid)));
+    const incomplete = !job.index || [...charts].some((guid) => {
+      const pages = job.pages.get(guid);
+      return !pages?.saved || Array.from({ length: pages.count }, (_, page) => `${guid}#${page}`).some((key) => !job.images.has(key));
+    });
+    const error = body.error ? String(body.error) : incomplete ?
+      `Incomplete chart export (${job.done}/${job.total} pages); request the airport again to retry` : undefined;
+    if (error) {
+      log.warn(`${job.icao}: link reported error: ${error}`);
+      this.hub.broadcast({ t: 'chartsError', icao: job.icao, message: error });
     } else {
+      await this.store.saveIndex(job.index!);
       log.info(`${job.icao}: done (${job.done}/${job.total} pages)`);
       this.hub.broadcast({ t: 'chartsReady', icao: job.icao });
     }
+    this.jobs.delete(job.id);
   }
 
   private progress(job: Job): void {
@@ -143,7 +171,30 @@ async function download(url: string, what: string): Promise<Buffer | undefined> 
       log.warn(`${what}: download failed HTTP ${res.status} for ${url.slice(0, 120)}`);
       return undefined;
     }
-    const buf = Buffer.from(await res.arrayBuffer());
+    if (Number(res.headers.get('content-length')) > MAX_IMAGE_BYTES || !res.body) {
+      await res.body?.cancel();
+      log.warn(`${what}: image exceeds download limit or has no body`);
+      return undefined;
+    }
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > MAX_IMAGE_BYTES) {
+          await reader.cancel();
+          log.warn(`${what}: image exceeds download limit`);
+          return undefined;
+        }
+        chunks.push(value);
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const buf = Buffer.concat(chunks);
     if (!isPng(buf)) {
       log.warn(`${what}: downloaded ${buf.length} bytes of ${res.headers.get('content-type')}, not a PNG`);
       return undefined;

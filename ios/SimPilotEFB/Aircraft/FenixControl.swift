@@ -178,10 +178,10 @@ enum FrequencyInput {
         guard !s.isEmpty else { return nil }
         let value: Int
         if s.contains(".") {
-            guard let d = Double(s) else { return nil }
+            guard let d = Double(s), d.isFinite, (118...136.99).contains(d) else { return nil }
             value = Int((d * 1000).rounded())
         } else {
-            guard let n = Int(s) else { return nil }
+            guard let n = Int(s), n > 0 else { return nil }
             value = n < 1000 ? n * 1000 : n
         }
         return (118_000...136_990).contains(value) ? value : nil

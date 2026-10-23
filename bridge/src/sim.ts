@@ -41,6 +41,7 @@ export function startSim(hub: Hub, lvars: LVars): void {
 
     hub.setSim(true);
     lvars.attach(handle);
+    let gone = false;
 
     // Order matters: values are read back in the same order.
     const vars: [string, string][] = [
@@ -66,10 +67,15 @@ export function startSim(hub: Hub, lvars: LVars): void {
     handle.subscribeToSystemEvent(EVT_AIRCRAFT_LOADED, 'AircraftLoaded');
 
     handle.on('event', (ev) => {
-      if (ev.clientEventId === EVT_AIRCRAFT_LOADED) requestTitle();
+      if (!gone && ev.clientEventId === EVT_AIRCRAFT_LOADED) {
+        hub.setSim(true);
+        lvars.attach(handle);
+        requestTitle();
+      }
     });
 
     handle.on('simObjectData', (rx) => {
+      if (gone) return;
       if (rx.requestID === REQ_LVARS) {
         lvars.onData(rx.data);
         return;
@@ -113,7 +119,6 @@ export function startSim(hub: Hub, lvars: LVars): void {
 
     handle.on('exception', (ex) => log.warn(`SimConnect exception ${ex.exception} (packet ${ex.sendId})`));
 
-    let gone = false;
     const lost = (why: string) => {
       // 'quit' is usually followed by 'close'; only schedule one reconnect.
       if (gone) return;
@@ -125,6 +130,10 @@ export function startSim(hub: Hub, lvars: LVars): void {
     };
     handle.once('quit', () => lost('quit'));
     handle.once('close', () => lost('closed'));
+    handle.on('error', (err) => {
+      lost(`error: ${err.message}`);
+      handle.close();
+    });
   };
 
   void connect();

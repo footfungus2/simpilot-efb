@@ -66,4 +66,14 @@ describe('RPN presets (Fenix A320 / HubHop)', () => {
       writes: ['S_FCU_ATHR'],
     });
   });
+
+  it('validates a whole preset before writing and preserves reads of earlier writes', () => {
+    const invalid = env();
+    expect(() => runRpn('1 (>L:A) unsupported', invalid)).toThrow();
+    expect(invalid.writes).toEqual([]);
+    expect(() => runRpn('Infinity (>L:A)', invalid)).toThrow('finite');
+    const valid = env();
+    runRpn('1 (>L:A) (L:A) ++ (>L:A)', valid);
+    expect(valid.writes).toEqual([['A', 1], ['A', 2]]);
+  });
 });

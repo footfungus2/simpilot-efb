@@ -151,6 +151,36 @@ describe('press/release ordering', () => {
 });
 
 describe('reconnect', () => {
+  it('clears values and cancels readback waits as soon as the simulator disconnects', async () => {
+    const { lv } = setup({ S_OH_SIGNS: 1 });
+    lv.watch(['S_OH_SIGNS']);
+    await settle();
+    const wait = lv.waitFor('S_OH_SIGNS', (v) => v === 2, 1000);
+    const failed = expect(wait).rejects.toThrow('session changed');
+    lv.detach();
+    expect(lv.value('S_OH_SIGNS')).toBeUndefined();
+    await failed;
+  });
+
+  it('does not send queued commands to a newly connected simulator session', async () => {
+    const { lv } = setup();
+    const queued = lv.run('1 (>L:S_OH_SIGNS)');
+    const failed = expect(queued).rejects.toThrow('session changed');
+    lv.detach();
+    const sim = new FakeFenix().connect(lv);
+    await failed;
+    expect(sim.writes).toEqual([]);
+  });
+
+  it('refuses to calculate a counter from zero if the sim never supplies its initial value', async () => {
+    const lv = new LVars(() => {}, 30);
+    const sim = new FakeFenix().connect(lv);
+    sim.latencyMs = 1000;
+    await expect(lv.run('(L:S_FCU_AP1) ++ (>L:S_FCU_AP1)')).rejects.toThrow('No aircraft data');
+    expect(sim.writes).toEqual([]);
+    lv.detach();
+  });
+
   it('forgets old values and watches again on the new connection', async () => {
     const { lv, sim } = setup({ S_OH_SIGNS: 1 });
     lv.watch(['S_OH_SIGNS']);
@@ -171,6 +201,20 @@ describe('reconnect', () => {
 });
 
 describe('squawk entry', () => {
+  it('does not release or continue a procedure into another session after reconnecting during a held key', async () => {
+    const { lv, sim } = setup({ [XPDR_CODE]: 2000, [XPDR_CHARS]: 0 });
+    const fenix = new FenixProcedures(lv, { ...fast, holdMs: 150 });
+    const command = fenix.setSquawk('4521');
+    const failed = expect(command).rejects.toThrow('Simulator session changed');
+    for (let i = 0; i < 100 && !sim.writes.length; i++) await settle(5);
+    expect(sim.writes).toHaveLength(1);
+    lv.detach();
+    const next = new FakeFenix().connect(lv);
+    await failed;
+    expect(next.writes).toEqual([]);
+    lv.detach();
+  });
+
   it('types the code key by key and verifies it', async () => {
     const { fenix, sim } = setup({ [XPDR_CODE]: 2000, [XPDR_CHARS]: 0 });
     await expect(fenix.setSquawk('4521')).resolves.toBe('Squawk 4521 set');

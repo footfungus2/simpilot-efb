@@ -1,27 +1,63 @@
-# Builds the unsigned SimPilotEFB.ipa on every push to main and publishes it on the Releases page, so it can be
-# installed with TrollStore. There is one release per app version (v0.1.0, …); each build replaces it.
+# Validate changes before publishing an unsigned IPA for TrollStore or SideStore.
+# Pull requests build without a write token; publishing runs separately on trusted main pushes.
 name: Build IPA
 
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: build-ipa
+  group: build-ipa-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
-    runs-on: macos-latest
-    timeout-minutes: 60
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 50 # for the "recent changes" list
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            bridge/package-lock.json
+            sim-package/package-lock.json
+      - name: Check release packaging
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Check bridge
+        working-directory: bridge
+        run: |
+          npm ci
+          npm test
+          npm run build
+      - name: Check simulator panel
+        working-directory: sim-package
+        run: |
+          npm ci
+          npm test
+          npm run typecheck
+          npm run build
+
+  build:
+    needs: checks
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 50
+          persist-credentials: false
 
       - name: Show Xcode
         run: xcodebuild -version
@@ -32,37 +68,99 @@ jobs:
       - name: Build IPA
         run: ./scripts/build-ipa.sh
 
+      - name: Test iPad app
+        run: |
+          device="$(xcrun simctl list devices available --json | python3 -c 'import json,sys; devices=json.load(sys.stdin)["devices"]; print(next(d["udid"] for group in devices.values() for d in group if d["name"].startswith("iPad")))')"
+          xcodebuild test \
+            -project ios/SimPilotEFB.xcodeproj \
+            -scheme SimPilotEFB \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "id=$device" \
+            -derivedDataPath ios/build/tests \
+            CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM=""
+
+      - name: Stage release files
+        run: |
+          mkdir -p release-artifact
+          cp SimPilotEFB.ipa ios/build/ipa/update.json release-artifact/
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: SimPilotEFB-ipa
-          path: SimPilotEFB.ipa
+          path: release-artifact/*
+          if-no-files-found: error
 
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 50
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: SimPilotEFB-ipa
+          path: artifact
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version="$(grep -m1 'MARKETING_VERSION' ios/project.yml | sed -E 's/.*"([^"]+)".*/\1/')"
-          tag="v${version}"
+          ipa="artifact/SimPilotEFB.ipa"
+          manifest="artifact/update.json"
+          version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$manifest")"
+          build="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["build"])' "$manifest")"
+          head="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
+          if [[ "${GITHUB_SHA}" != "$head" ]]; then
+            echo "Skipping publication: this commit is no longer the main branch head."
+            exit 0
+          fi
+          tag="v${version}-build.${build}"
           short="${GITHUB_SHA::7}"
           {
-            echo "**Build ${GITHUB_RUN_NUMBER}** · \`${short}\` · $(date -u '+%-d %b %Y')"
+            echo "## SimPilot EFB ${version} (build ${build})"
+            echo
+            echo "Commit \`${short}\` · $(date -u '+%-d %b %Y')"
             echo
             echo "### Install"
-            echo "1. On the iPad (iPadOS 15 or later with [TrollStore](https://github.com/opa334/TrollStore)), download **SimPilotEFB.ipa** below."
-            echo "2. Open it with TrollStore and tap **Install**. Updates install over the old version and keep your settings."
             echo
-            echo "For the sim features (live aircraft, the sim's charts, Fenix A320 controls), run the PC bridge from this repository; see the [README](https://github.com/${GITHUB_REPOSITORY}#connect-to-msfs-2024)."
+            echo "Requires iPadOS 15 or later and a compatible TrollStore or SideStore setup."
             echo
-            echo "### Recent changes"
-            git log -15 --no-merges --format='%s' | grep -v '\[skip ci\]' | grep -v '^Initial commit$' | head -8 | sed 's/^/- /'
+            echo "- **TrollStore:** download the IPA below, open it with TrollStore and tap **Install**."
+            echo "- **SideStore:** download the IPA on the iPad and import it into SideStore to sign and install it."
+            echo "  SideStore must be set up and able to install or refresh apps; see the [official guide](https://docs.sidestore.io/docs/installation/install)."
             echo
-            echo "<sub>Unsigned build for TrollStore. Unofficial hobby project, not affiliated with Lufthansa Systems / Lido, Microsoft, Asobo, Fenix Simulations or VATSIM.</sub>"
+            echo "Keep the same installer and signing identity when updating to retain app data."
+            echo
+            echo "Live aircraft, the sim's charts and Fenix A320 controls require the PC bridge and SimPilot Link panel."
+            echo "[Setup instructions](https://github.com/${GITHUB_REPOSITORY}#connect-to-msfs-2024)."
+            echo
+            echo "### Included"
+            echo
+            echo "- Enroute and airport maps, SimBrief flight planning, charts and annotations"
+            echo "- Weather and VATSIM information"
+            echo "- Optional updates and local diagnostics"
+            echo
+            echo "<sub>Unsigned build. Unofficial hobby project, not affiliated with Lufthansa Systems / Lido, Microsoft, Asobo, Fenix Simulations or VATSIM.</sub>"
           } > notes.md
-          # One release per version: replace the previous build of this version.
-          gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
-          gh release create "$tag" SimPilotEFB.ipa \
-            --target "$GITHUB_SHA" \
-            --title "SimPilot EFB ${version}" \
-            --notes-file notes.md \
-            --latest
+          draft="$(gh release view "$tag" --json isDraft --jq .isDraft 2>/dev/null || true)"
+          if [[ "$draft" == "false" ]]; then
+            echo "Build ${build} is already published; leaving its assets unchanged."
+            exit 0
+          fi
+          # Keep failed uploads hidden so the previous release remains available.
+          if [[ "$draft" == "true" ]]; then
+            gh release upload "$tag" "$ipa" "$manifest" --clobber
+          else
+            gh release create "$tag" "$ipa" "$manifest" \
+              --target "${GITHUB_SHA}" --title "SimPilot EFB ${version} (build ${build})" \
+              --notes-file notes.md --draft
+          fi
+          gh release edit "$tag" --title "SimPilot EFB ${version} (build ${build})" \
+            --notes-file notes.md --draft=false --latest

@@ -32,9 +32,11 @@ final class ChartsModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var imageCache = NSCache<NSString, UIImage>()
     private var loadTask: Task<Void, Never>?
+    #if DEBUG
     /// Generated test charts (used while no sim is connected), kept for the session.
     private var testDetails: [String: ChartDetail] = [:]
     private var testImages: [String: UIImage] = [:]
+    #endif
 
     /// Pinned charts for the flight, shown as the "FLIGHT" category.
     let pack: ChartPack
@@ -55,7 +57,7 @@ final class ChartsModel: ObservableObject {
         bridge.$state
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
-                guard let self, case .connected = state, self.isTestCharts else { return }
+                guard let self, case .connected = state, self.isTestCharts || self.isWaitingOrFailed else { return }
                 self.reloadIndex()
             }
             .store(in: &cancellables)
@@ -96,7 +98,13 @@ final class ChartsModel: ObservableObject {
     }
 
     /// True while showing generated test charts instead of the sim's Lido charts.
-    var isTestCharts: Bool { index?.provider == TestCharts.provider }
+    var isTestCharts: Bool {
+        #if DEBUG
+        return index?.provider == TestCharts.provider
+        #else
+        return false
+        #endif
+    }
 
     var categories: [String] {
         let names = index?.categories.filter { !$0.charts.isEmpty }.map(\.name) ?? []
@@ -150,27 +158,37 @@ final class ChartsModel: ObservableObject {
         state = .loading
         loadTask?.cancel()
         guard bridge.isConnected else {
+            #if DEBUG
             loadTestCharts(icao)
+            #else
+            state = .failed(pack.items.isEmpty
+                ? "Connect the PC bridge and open SimPilot Link in MSFS to load charts. Pin flight charts to keep them available offline."
+                : "PC bridge not connected. Saved charts are available in ★ FLIGHT.")
+            #endif
             return
         }
         loadTask = Task { [weak self] in
             guard let self else { return }
             do {
                 if let idx: ChartIndex = try await bridge.get("/api/charts/\(icao)") {
-                    guard self.icao == icao else { return }
+                    guard !Task.isCancelled, self.icao == icao else { return }
                     index = idx
                     state = idx.categories.allSatisfy(\.charts.isEmpty) ? .failed("No Lido charts for \(icao) in the sim.") : .ready
                     if selected == nil, let first = defaultChart() { select(first) }
                 } else {
+                    guard !Task.isCancelled, self.icao == icao else { return }
                     // 202: the bridge queued a job for the in-sim link; wait for chartsReady.
                     state = .waitingForSim(done: 0, total: 0)
                 }
             } catch {
+                guard !Task.isCancelled, self.icao == icao else { return }
                 state = .failed(error.localizedDescription)
+                DiagnosticLog.record(.error, "Charts", "Chart index could not be loaded.", error: error)
             }
         }
     }
 
+    #if DEBUG
     /// No sim connected: test charts generated from the airport map data, plus any bundled debug charts.
     private func loadTestCharts(_ icao: String) {
         loadTask = Task { [weak self] in
@@ -180,7 +198,7 @@ final class ChartsModel: ObservableObject {
             let result = await Task.detached(priority: .userInitiated) {
                 TestCharts.build(icao: icao, name: name, features: features)
             }.value
-            guard let self, self.icao == icao else { return }
+            guard !Task.isCancelled, let self, self.icao == icao else { return }
             guard let result else {
                 self.state = .failed("No sim connected, and no airport map data or bundled charts for \(icao).")
                 return
@@ -192,6 +210,7 @@ final class ChartsModel: ObservableObject {
             if self.selected == nil, let first = self.defaultChart() { self.select(first) }
         }
     }
+    #endif
 
     func select(_ chart: ChartMeta) {
         selected = chart
@@ -211,20 +230,28 @@ final class ChartsModel: ObservableObject {
             return
         }
         guard let icao else { return }
+        #if DEBUG
         if let test = testDetails[chart.guid] {
             detail = test
             Task { await loadPage() }
             return
         }
+        #endif
         Task { [weak self] in
             guard let self else { return }
             do {
                 let d: ChartDetail? = try await bridge.get("/api/charts/\(icao)/\(chart.guid.urlPathEncoded)")
-                guard selected?.guid == chart.guid else { return }
+                guard selected?.guid == chart.guid, self.icao == icao else { return }
+                guard let d else {
+                    imageError = "Chart details are not ready. Select the chart again after export finishes."
+                    return
+                }
                 detail = d
                 await loadPage()
             } catch {
+                guard selected?.guid == chart.guid, self.icao == icao else { return }
                 imageError = error.localizedDescription
+                DiagnosticLog.record(.error, "Charts", "Chart details could not be loaded.", error: error)
             }
         }
     }
@@ -242,6 +269,8 @@ final class ChartsModel: ObservableObject {
     func setPage(_ p: Int) {
         guard let pages = detail?.pages, pages.indices.contains(p) else { return }
         pageIndex = p
+        image = nil
+        imageError = nil
         Task { await loadPage() }
     }
 
@@ -258,14 +287,21 @@ final class ChartsModel: ObservableObject {
             let img = try await pageImage(path)
             if currentPage?.image == path { image = img; imageError = nil }
         } catch {
+            guard currentPage?.image == path else { return }
             imageError = error.localizedDescription
+            DiagnosticLog.record(.error, "Charts", "Chart page could not be loaded.", error: error)
         }
     }
 
     /// A page image from wherever it lives: pinned pack, generated test charts, memory, disk cache, then the bridge.
     private func pageImage(_ path: String) async throws -> UIImage {
         if let packed = ChartPack.image(path) { return packed }
+        if path.hasPrefix("pack:") {
+            throw BridgeClient.HTTPError(status: 0, message: "Saved chart image is missing. Connect to the sim and pin the chart again.")
+        }
+        #if DEBUG
         if let test = testImages[path] { return test }
+        #endif
         if let cached = imageCache.object(forKey: path as NSString) { return cached }
         if let data = ChartImageDiskCache.load(path), let img = UIImage(data: data) {
             imageCache.setObject(img, forKey: path as NSString)
@@ -290,10 +326,18 @@ final class ChartsModel: ObservableObject {
         }
         guard let detail, let icao else { return }
         var images: [Int: UIImage] = [:]
-        for page in detail.pages {
-            if let path = page.image, let img = try? await pageImage(path) { images[page.index] = img }
+        do {
+            for page in detail.pages {
+                guard let path = page.image else {
+                    throw BridgeClient.HTTPError(status: 0, message: "This chart has pages that have not been exported yet.")
+                }
+                images[page.index] = try await pageImage(path)
+            }
+            pack.add(icao: icao, detail: detail, images: images)
+        } catch {
+            pack.error = "The complete chart could not be downloaded. Keep SimPilot Link open and try again."
+            DiagnosticLog.record(.error, "Charts", "Flight chart could not be downloaded for offline use.", error: error)
         }
-        pack.add(icao: icao, detail: detail, images: images)
     }
 
     /// The current page cropped to its georeferenced area, with that area's corner coordinates,

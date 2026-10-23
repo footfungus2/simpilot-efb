@@ -7,7 +7,7 @@ import { HttpError, readJson, Router, sendJson, setCors } from './http.js';
 import type { FenixProcedures } from './fenix.js';
 import type { LVars } from './lvars.js';
 import type { Hub } from './hub.js';
-import { logger } from './log.js';
+import { logEntries, logger } from './log.js';
 import { fetchOfp } from './simbrief.js';
 import { metars, metarsInBox, parseIds, sigmets, tafs } from './weather.js';
 
@@ -18,7 +18,10 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
   const router = new Router();
 
   hub.onMessage((msg) => {
-    if (msg.t === 'requestCharts') void requestCharts(msg.icao);
+    if (msg.t === 'requestCharts') void requestCharts(msg.icao).catch((err) => {
+      log.error('chart request failed', err);
+      hub.broadcast({ t: 'chartsError', icao: msg.icao, message: 'Unable to load chart cache; check bridge diagnostics' });
+    });
     else if (msg.t === 'lvarWatch' && Array.isArray(msg.names)) {
       lvars?.watch(msg.names);
       const known = lvars?.snapshot(msg.names) ?? {};
@@ -58,6 +61,10 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
   // ---- app ----
   router
     .add('GET', '/api/status', (_req, res) => sendJson(res, 200, hub.status()))
+    .add('GET', '/api/diagnostics', (_req, res) => {
+      res.setHeader('cache-control', 'no-store');
+      sendJson(res, 200, { entries: logEntries() });
+    })
     .add('GET', '/api/ownship', (_req, res) => sendJson(res, hub.lastOwnship ? 200 : 204, hub.lastOwnship ?? null))
     .add('GET', '/api/charts/:icao', async (_req, res, p) => {
       const icao = safeIcao(p.icao!);
@@ -79,14 +86,22 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
         res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'public, max-age=86400' });
         stream.pipe(res);
       });
-      stream.on('error', () => sendJson(res, 404, { error: 'image not cached' }));
+      stream.on('error', () => {
+        if (!res.headersSent) sendJson(res, 404, { error: 'image not cached' });
+        else res.destroy();
+      });
+      res.on('close', () => stream.destroy());
     })
     .add('GET', '/api/ofp', async (_req, res, _p, url) => sendJson(res, 200, await fetchOfp(url.searchParams.get('user') ?? '')))
     .add('GET', '/api/wx/metar', async (_req, res, _p, url) => {
       const bbox = url.searchParams.get('bbox');
       if (bbox) {
-        const [a, b, c, d] = bbox.split(',').map(Number);
-        if ([a, b, c, d].some((n) => n === undefined || !Number.isFinite(n))) throw new HttpError(400, 'bbox=minLat,minLon,maxLat,maxLon');
+        const coords = bbox.split(',');
+        const [a, b, c, d] = coords.map(Number);
+        if (coords.length !== 4 || coords.some((n) => !n.trim()) || [a, b, c, d].some((n) => !Number.isFinite(n)) ||
+          Math.abs(a!) > 90 || Math.abs(c!) > 90 || Math.abs(b!) > 180 || Math.abs(d!) > 180 || a! > c!) {
+          throw new HttpError(400, 'bbox=minLat,minLon,maxLat,maxLon within valid latitude/longitude ranges');
+        }
         return sendJson(res, 200, await metarsInBox(a!, b!, c!, d!));
       }
       sendJson(res, 200, await metars(parseIds(url.searchParams.get('ids'))));
@@ -109,38 +124,48 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
       sendJson(res, 200, { ok: true, saved: await link.onImage(await readJson(req)) });
     })
     .add('POST', '/link/done', async (req, res) => {
-      link.onDone(await readJson(req));
+      await link.onDone(await readJson(req));
       sendJson(res, 200, { ok: true });
     })
     .add('POST', '/link/log', async (req, res) => {
-      const body = await readJson(req);
+      const body = await readJson(req, 8192);
+      if (typeof body.msg !== 'string') throw new HttpError(400, 'log message required');
       const linkLog = logger('in-sim');
-      (body.level === 'error' ? linkLog.error : body.level === 'warn' ? linkLog.warn : linkLog.info)(String(body.msg ?? ''));
+      (body.level === 'error' ? linkLog.error : body.level === 'warn' ? linkLog.warn : linkLog.info)(body.msg);
       sendJson(res, 200, { ok: true });
     });
 
   const server = http.createServer(async (req, res) => {
     setCors(res);
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204).end();
-      return;
-    }
-    const url = new URL(req.url ?? '/', 'http://bridge');
-    const m = router.match(req.method ?? 'GET', url.pathname);
-    if (!m) return sendJson(res, 404, { error: 'not found' });
     try {
+      // Native clients send no Origin; the in-sim Coherent panel uses coui://.
+      const origin = req.headers.origin;
+      if (origin && !origin.startsWith('coui://')) throw new HttpError(403, 'unsupported Origin; use the native app or coui:// in-sim panel');
+      const url = new URL(req.url ?? '/', 'http://bridge');
+      if (url.pathname.startsWith('/link/') && !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress ?? '')) {
+        throw new HttpError(403, 'in-sim link must run on the bridge PC');
+      }
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204).end();
+        return;
+      }
+      const m = router.match(req.method ?? 'GET', url.pathname);
+      if (!m) return sendJson(res, 404, { error: 'not found' });
       await m.handler(req, res, m.params, url);
     } catch (err) {
-      const status = err instanceof HttpError ? err.status : /^bad (ICAO|id|page)/.test((err as Error).message) ? 400 : 500;
-      if (status >= 500) log.error(`${req.method} ${url.pathname} failed`, err);
-      if (!res.headersSent) sendJson(res, status, { error: (err as Error).message });
+      const message = err instanceof Error ? err.message : 'bridge request failed';
+      const status = err instanceof HttpError ? err.status : /^bad (ICAO|id|page)/.test(message) ? 400 : 500;
+      if (status >= 500) log.error(`${req.method} request failed`, err);
+      else if (status === 403) log.warn(`Rejected HTTP request: ${message}`);
+      if (!res.headersSent) sendJson(res, status, { error: status >= 500 ? 'bridge request failed; check diagnostics' : message });
       else res.end();
     }
   });
 
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
   server.on('upgrade', (req, socket, head) => {
-    if (new URL(req.url ?? '/', 'http://bridge').pathname !== '/ws') {
+    if (req.headers.origin || req.url !== '/ws') {
+      if (req.headers.origin) log.warn('Rejected WebSocket Origin; use the native app');
       socket.destroy();
       return;
     }

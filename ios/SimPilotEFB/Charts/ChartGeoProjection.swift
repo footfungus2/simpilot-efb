@@ -21,6 +21,7 @@ struct ChartGeoProjection {
     private let translation: CGPoint
 
     init?(area: ChartArea) {
+        guard area.chartRect.upperLeft.count == 2, area.chartRect.lowerRight.count == 2 else { return nil }
         if let sim = area.similarity, sim.count == 4, let proj = area.projection, area.geoReferenced, sim[2] != 0 {
             let phi1 = proj.standardParallel1 * .pi / 180, phi2 = proj.standardParallel2 * .pi / 180
             n = abs(phi1 - phi2) < 1e-9 ? sin(phi1)

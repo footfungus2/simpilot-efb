@@ -3,6 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject private var app: AppState
     @EnvironmentObject private var bridge: BridgeClient
+    @EnvironmentObject private var updates: UpdateChecker
+    @Environment(\.openURL) private var openURL
     @Environment(\.presentationMode) private var presentationMode
     @State private var hostDraft = ""
     @State private var simbriefDraft = ""
@@ -18,6 +20,7 @@ struct SettingsView: View {
                         .onSubmit(applyHost)
                     Button("Reconnect", action: applyHost)
                     LabeledRow("Bridge", bridgeState)
+                    if let error = bridge.lastError { Text(error).foregroundColor(Theme.warnOrange) }
                     LabeledRow("Simulator", bridge.status.map { $0.sim.connected ? "Connected" : "Not running" } ?? "–")
                     if let title = bridge.status?.sim.aircraftTitle {
                         LabeledRow("Aircraft", title)
@@ -46,6 +49,7 @@ struct SettingsView: View {
                     }
                 }
 
+                #if DEBUG
                 Section(header: Text("Demo flight (no simulator)"),
                         footer: Text("Flies a simulated aircraft along your SimBrief route so you can test the map, vertical profile and charts without MSFS or the bridge.")) {
                     Toggle("Fly the loaded route", isOn: $app.demoEnabled)
@@ -61,8 +65,54 @@ struct SettingsView: View {
                         .disabled(!app.demoEnabled)
                 }
 
+                #endif
+
                 Section(header: Text("Display")) {
                     Toggle("Night mode", isOn: $app.night)
+                }
+
+                Section(header: Text("Help")) {
+                    NavigationLink("Diagnostics / debug console") {
+                        DiagnosticsView()
+                    }
+                }
+
+                Section(header: Text("Updates"), footer: Text("Updates are optional. Update opens your installer. If detection is unavailable, choose the installer you used for this app.")) {
+                    LabeledRow("Installed", updates.installed)
+                    LabeledRow("Detected installer", updates.detectedInstaller?.rawValue ?? "Unknown")
+                    Picker("Update with", selection: $updates.installerChoice) {
+                        Text("Automatic").tag("Automatic")
+                        ForEach(UpdateInstaller.allCases, id: \.rawValue) { installer in
+                            Text(installer.rawValue).tag(installer.rawValue)
+                        }
+                    }
+                    if let release = updates.available {
+                        if updates.installer == nil {
+                            Text("Choose SideStore or TrollStore above to update.").font(.footnote)
+                        }
+                        Button("Update to \(release.version) (\(release.build))") {
+                            guard let url = updates.installURL else { return }
+                            DiagnosticLog.record(.info, "Updates", "Opening the selected installer at the user's request")
+                            openURL(url) { accepted in
+                                if !accepted {
+                                    DiagnosticLog.record(.warning, "Updates", "Installer couldn't open; showing the manual download page")
+                                    openURL(AppRelease.page)
+                                }
+                            }
+                        }
+                        .disabled(updates.installer == nil)
+                    }
+                    Button {
+                        Task { await updates.check() }
+                    } label: {
+                        HStack {
+                            Text("Check for updates")
+                            if updates.checking { Spacer(); ProgressView() }
+                        }
+                    }
+                    .disabled(updates.checking)
+                    if let message = updates.message { Text(message).font(.footnote) }
+                    Link("Release notes / manual download", destination: AppRelease.page)
                 }
 
                 Section(header: Text("About"), footer: Text("SimPilot EFB is an unofficial flight-sim tool for personal use. Chart data comes from your own MSFS 2024 installation. FIR boundaries: VATSpy Data Project (CC BY-SA 4.0). Basemap: Natural Earth. Airports: OurAirports. Airport maps © OpenStreetMap contributors (ODbL). VATSIM data: data.vatsim.net, TRACONs: SimAware TRACON Project (CC BY-SA 4.0). Sector ownership: VATGlasses Data Project (CC BY-NC-SA 4.0).")) {

@@ -95,6 +95,8 @@ final class VatsimAssistant: ObservableObject {
     private func reset() {
         flight = nil
         online = nil
+        error = nil
+        updated = nil
         lastSeen = nil
         changes = []
         covering = []
@@ -109,13 +111,19 @@ final class VatsimAssistant: ObservableObject {
         do {
             var req = URLRequest(url: feedURL)
             req.setValue("SimPilotEFB/0.1", forHTTPHeaderField: "User-Agent")
-            let data = try await URLSession.shared.data(for: req).0
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard let response = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+            guard (200..<300).contains(response.statusCode) else { throw NSError(domain: "HTTP", code: response.statusCode) }
             let parsed = try await Task.detached(priority: .utility) { () -> (Flight?, [VatsimController]) in
                 let feed = try JSONDecoder().decode(SlimFeed.self, from: data)
                 let me = feed.pilots.first { $0.callsign.uppercased() == wanted }
                 return (me.map(Flight.init), feed.controllers + (feed.atis ?? []))
             }.value
+            try Task.checkCancellation()
             guard wanted == callsign.trimmingCharacters(in: .whitespaces).uppercased() else { return }
+            if updated == nil || error != nil {
+                DiagnosticLog.record(.info, "VATSIM", error == nil ? "Assistant feed loaded" : "Assistant feed recovered")
+            }
             error = nil
             updated = Date()
             online = parsed.0 != nil
@@ -131,6 +139,9 @@ final class VatsimAssistant: ObservableObject {
                 arrivalStations = []
             }
         } catch {
+            guard !Task.isCancelled, (error as? URLError)?.code != .cancelled,
+                  wanted == callsign.trimmingCharacters(in: .whitespaces).uppercased() else { return }
+            if self.error == nil { DiagnosticLog.record(.warning, "VATSIM", "Assistant feed unavailable", error: error) }
             self.error = "VATSIM data unavailable"
         }
     }
@@ -221,6 +232,7 @@ final class VatsimAssistant: ObservableObject {
         }
         let x = p.longitude, y = p.latitude
         return polygons.contains { ring in
+            guard ring.count >= 3, ring.allSatisfy({ $0.count >= 2 && $0[0].isFinite && $0[1].isFinite }) else { return false }
             var inside = false
             var j = ring.count - 1
             for i in 0..<ring.count {

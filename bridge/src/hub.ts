@@ -5,6 +5,20 @@ import type { AppToBridge, BridgeStatus, BridgeToApp, Ownship } from './types.js
 
 const log = logger('hub');
 
+function isAppMessage(value: unknown): value is AppToBridge {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const m = value as Record<string, unknown>;
+  if (m.id !== undefined && (typeof m.id !== 'string' || m.id.length > 128)) return false;
+  switch (m.t) {
+    case 'requestCharts': return typeof m.icao === 'string' && /^[A-Za-z0-9]{3,4}$/.test(m.icao);
+    case 'lvarWatch': return Array.isArray(m.names) && m.names.length <= 256 && m.names.every((n) => typeof n === 'string' && /^[A-Za-z0-9_:.-]{1,128}$/.test(n));
+    case 'lvarRun': return typeof m.code === 'string' && m.code.length <= 4096 && (m.value === undefined || typeof m.value === 'number' && Number.isFinite(m.value));
+    case 'fenixSquawk': return typeof m.code === 'string' && /^[0-7]{4}$/.test(m.code);
+    case 'fenixTune': return (m.rmp === 1 || m.rmp === 2) && typeof m.khz === 'number' && Number.isInteger(m.khz) && m.khz >= 118000 && m.khz <= 136990;
+    default: return false;
+  }
+}
+
 /** Shared state and fan-out to connected iPads. */
 export class Hub {
   private clients = new Set<WebSocket>();
@@ -48,14 +62,23 @@ export class Hub {
     if (this.lastOwnship) this.send(ws, { t: 'ownship', ...this.lastOwnship });
 
     ws.on('message', (data) => {
-      let msg: AppToBridge;
+      let msg: unknown;
       try {
         msg = JSON.parse(String(data));
       } catch {
         log.warn(`ignoring non-JSON message from ${remote}`);
         return;
       }
-      for (const h of this.messageHandlers) h(msg);
+      if (!isAppMessage(msg)) {
+        log.warn('ignoring invalid app message');
+        return;
+      }
+      try {
+        for (const h of this.messageHandlers) h(msg);
+      } catch (err) {
+        log.warn('app message failed', err);
+        if ('id' in msg && msg.id) this.send(ws, { t: 'commandResult', id: msg.id, ok: false, message: 'Invalid command' });
+      }
     });
     ws.on('close', () => {
       this.clients.delete(ws);
@@ -72,6 +95,7 @@ export class Hub {
     const changed = connected !== this.simConnected || aircraftTitle !== this.aircraftTitle;
     this.simConnected = connected;
     this.aircraftTitle = connected ? aircraftTitle : undefined;
+    if (!connected) this.lastOwnship = undefined;
     if (changed) this.broadcastStatus();
   }
 
@@ -96,7 +120,10 @@ export class Hub {
   broadcast(msg: BridgeToApp): void {
     const data = JSON.stringify(msg);
     for (const ws of this.clients) {
-      if (ws.readyState === ws.OPEN) ws.send(data);
+      if (ws.readyState === ws.OPEN) {
+        if (ws.bufferedAmount > 1024 * 1024) ws.terminate();
+        else ws.send(data);
+      }
     }
   }
 

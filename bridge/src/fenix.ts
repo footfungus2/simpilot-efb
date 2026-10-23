@@ -42,9 +42,15 @@ export class FenixProcedures {
     this.t = { ...DEFAULT_TIMING, ...timing };
   }
 
-  private async press(v: string): Promise<void> {
+  private checkSession(session: number): void {
+    if (!this.lv.connected || this.lv.session !== session) throw new Error('Simulator session changed; try the command again');
+  }
+
+  private async press(v: string, session: number): Promise<void> {
+    this.checkSession(session);
     await this.lv.run(pressCode(v));
     await sleep(this.t.holdMs);
+    this.checkSession(session);
     await this.lv.run(releaseCode(v));
   }
 
@@ -65,6 +71,8 @@ export class FenixProcedures {
   async setSquawk(code: string): Promise<string> {
     if (!/^[0-7]{4}$/.test(code)) throw new Error('A squawk is four digits from 0 to 7');
     if (this.squawkBusy) throw new Error('Already entering a squawk');
+    const session = this.lv.session;
+    this.checkSession(session);
     this.squawkBusy = true;
     try {
       const target = Number(code);
@@ -72,17 +80,18 @@ export class FenixProcedures {
       await this.lv.waitFor(XPDR_CODE, () => true, this.t.verifyTimeoutMs).catch(() => {
         throw new Error('No transponder data from the sim');
       });
+      this.checkSession(session);
       if (this.lv.value(XPDR_CODE) === target) return `Squawk ${code} already set`;
 
       // A partly typed code would swallow our first digits.
       const typed = this.lv.value(XPDR_CHARS) ?? 0;
       if (typed > 0) {
-        await this.press(XPDR_CLR);
+        await this.press(XPDR_CLR, session);
         await this.lv.waitFor(XPDR_CHARS, (v) => v === 0, this.t.stepTimeoutMs).catch(() => undefined);
       }
       for (const ch of code) {
         const before = this.lv.value(XPDR_CHARS);
-        await this.press(xpdrDigit(Number(ch)));
+        await this.press(xpdrDigit(Number(ch)), session);
         // Not every panel state reports progress; the final check decides.
         await this.changed(XPDR_CHARS, before);
       }
@@ -91,6 +100,7 @@ export class FenixProcedures {
       } catch {
         throw new Error(`Transponder shows ${fmtCode(this.lv.value(XPDR_CODE))}, not ${code}`);
       }
+      this.checkSession(session);
       return `Squawk ${code} set`;
     } finally {
       this.squawkBusy = false;
@@ -105,6 +115,8 @@ export class FenixProcedures {
     if (rmp !== 1 && rmp !== 2) throw new Error('Radio 1 or 2');
     if (!Number.isInteger(khz) || khz < 118000 || khz > 136990) throw new Error('VHF frequencies are 118.000 to 136.990');
     if (this.tuning.has(rmp)) throw new Error(`Radio ${rmp} is already being tuned`);
+    const session = this.lv.session;
+    this.checkSession(session);
     this.tuning.add(rmp);
     const stby = rmpVar(rmp, 'STDBY');
     try {
@@ -112,6 +124,7 @@ export class FenixProcedures {
       await this.lv.waitFor(stby, (v) => v > 0, this.t.verifyTimeoutMs).catch(() => {
         throw new Error(`No data from radio ${rmp} (is it switched on?)`);
       });
+      this.checkSession(session);
       const target = `${fmtFreq(khz)}`;
       let current = this.lv.value(stby)!;
       if (current === khz) return `${target} already in standby`;
@@ -119,6 +132,7 @@ export class FenixProcedures {
       // Whole MHz first.
       let mhzSteps = Math.floor(khz / 1000) - Math.floor(current / 1000);
       while (mhzSteps !== 0) {
+        this.checkSession(session);
         const before = this.lv.value(stby);
         await this.lv.run(mhzSteps > 0 ? inc(rmpVar(rmp, 'OUTER')) : dec(rmpVar(rmp, 'OUTER')));
         if (!(await this.changed(stby, before))) throw new Error(`Radio ${rmp} didn't react to the MHz knob`);
@@ -129,6 +143,7 @@ export class FenixProcedures {
       let lastDir = 0;
       let reversals = 0;
       for (let i = 0; i < 120; i++) {
+        this.checkSession(session);
         current = this.lv.value(stby)!;
         if (current === khz) return `${target} in standby`;
         const dir = khz > current ? 1 : -1;

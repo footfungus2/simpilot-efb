@@ -23,10 +23,12 @@ final class AppState: ObservableObject {
     @Published var simbriefUser: String { didSet { defaults.set(simbriefUser, forKey: "simbriefUser") } }
     @Published var night: Bool { didSet { defaults.set(night, forKey: "night") } }
 
+    #if DEBUG
     // Testing without the sim: fly the loaded SimBrief route with a simulated aircraft.
     @Published var demoEnabled = false { didSet { updateDemo() } }
     @Published var demoSpeed: Double = 8 { didSet { demo.speed = demoSpeed } }
     private lazy var demo = DemoFlight { [weak self] o in self?.bridge.ownship.updateFromDemo(o) }
+    #endif
 
     // Flight
     @Published private(set) var ofp: Ofp?
@@ -100,6 +102,7 @@ final class AppState: ObservableObject {
 
     /// Loads the latest SimBrief OFP directly from simbrief.com (works without the bridge).
     func loadOfp() async {
+        guard !ofpLoading else { return }
         ofpLoading = true
         defer { ofpLoading = false }
         do {
@@ -109,18 +112,25 @@ final class AppState: ObservableObject {
             if let data = try? JSONEncoder().encode(loaded) { defaults.set(data, forKey: "ofp") }
             // Pre-load charts for every airport of the flight while the sim is running.
             for icao in flightAirports.map(\.icao) { bridge.send(requestCharts: icao) }
+            #if DEBUG
             if demoEnabled { demo.start(ofp: loaded) }
+            #endif
+            DiagnosticLog.record(.info, "Flight", "SimBrief flight loaded.")
         } catch {
             ofpError = error.localizedDescription
+            DiagnosticLog.record(.error, "Flight", "SimBrief flight could not be loaded.", error: error)
         }
     }
 
     func clearFlight() {
         ofp = nil
         defaults.removeObject(forKey: "ofp")
+        #if DEBUG
         demoEnabled = false
+        #endif
     }
 
+    #if DEBUG
     func restartDemo() {
         demo.restart()
     }
@@ -135,6 +145,7 @@ final class AppState: ObservableObject {
             demo.stop()
         }
     }
+    #endif
 
     var flightAirports: [OfpAirport] {
         guard let ofp else { return [] }
@@ -165,7 +176,11 @@ final class AppState: ObservableObject {
 
     var routeSubtitle: String {
         guard let ofp else { return "No flight loaded" }
-        return "\(ofp.origin.icao)-\(ofp.destination.icao)" + (demoEnabled ? " · DEMO FLIGHT" : "")
+        var subtitle = "\(ofp.origin.icao)-\(ofp.destination.icao)"
+        #if DEBUG
+        if demoEnabled { subtitle += " · DEMO FLIGHT" }
+        #endif
+        return subtitle
     }
 }
 

@@ -5,7 +5,8 @@
   "description": "MSFS 2024 toolbar panel that exports the sim's built-in Lido charts to the SimPilot EFB bridge",
   "scripts": {
     "build": "esbuild src/link.ts --bundle --format=iife --target=es2017 --legal-comments=none --outfile=PackageSources/html_ui/InGamePanels/SimPilotLink/link.js",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node --test test/*.test.cjs"
   },
   "devDependencies": {
     "@microsoft/msfs-sdk": "^2.3.3",

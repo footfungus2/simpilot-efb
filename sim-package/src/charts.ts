@@ -59,6 +59,9 @@ function listener(): Promise<ViewListener> {
     l.on('SendChartPages', settle(true));
     l.on('SendChartPagesError', settle(false));
     return l;
+  }).catch((err) => {
+    listenerPromise = undefined;
+    throw err;
   });
   return listenerPromise;
 }
@@ -66,8 +69,12 @@ function listener(): Promise<ViewListener> {
 /** Request IDs come from the sim's shared atomic sequence so they never clash with other views (e.g. the EFB). */
 function nextId(): Promise<number> {
   nextIdPromise ??= withTimeout(
-    new Promise<() => number>((resolve) => {
-      RegisterViewListener('JS_LISTENER_ATOMIC', () => resolve(() => window.AtomicSequence!.getNext()));
+    new Promise<() => number>((resolve, reject) => {
+      RegisterViewListener('JS_LISTENER_ATOMIC', () => {
+        const sequence = window.AtomicSequence;
+        if (sequence) resolve(() => sequence.getNext());
+        else reject(new Error('Atomic sequence unavailable'));
+      });
     }),
     READY_TIMEOUT_MS,
     'JS_LISTENER_ATOMIC',
@@ -88,7 +95,11 @@ async function requestCharts<T>(call: string, ...args: unknown[]): Promise<T> {
       reject(new Error(`${call} timed out`));
     }, REQUEST_TIMEOUT_MS);
     pending.set(id, { resolve, reject, timer });
-    void l.call(call, id, ...args);
+    void Promise.resolve().then(() => l.call(call, id, ...args)).catch((err) => {
+      if (!pending.delete(id)) return;
+      clearTimeout(timer);
+      reject(err);
+    });
   });
 }
 
@@ -106,13 +117,24 @@ export function getChartPages(guid: string): Promise<SimChartPages> {
  */
 export async function loadChartLiveView(pageUrl: string): Promise<{ imageUrl: string; release: () => void }> {
   const l = await listener();
-  const viewId: string = await l.call('CREATE_CHART_VIEW');
+  const creating = Promise.resolve().then(() => l.call('CREATE_CHART_VIEW') as Promise<string>);
+  let viewId: string;
+  const destroy = (id: string) => Promise.resolve().then(() => l.call('DESTROY_CHART_VIEW', id)).catch(() => {});
+  try {
+    viewId = await withTimeout(creating, REQUEST_TIMEOUT_MS, 'CREATE_CHART_VIEW');
+  } catch (err) {
+    void creating.then(destroy).catch(() => {});
+    throw err;
+  }
   let onName: (guid: string, name: string, chartUrl: string) => void = () => {};
   let onError: (guid: string, code: number, chartUrl: string) => void = () => {};
+  let released = false;
   const release = () => {
+    if (released) return;
+    released = true;
     l.off('SendLiveViewName', onName);
     l.off('SendLiveViewError', onError);
-    void l.call('DESTROY_CHART_VIEW', viewId);
+    void destroy(viewId);
   };
   try {
     const imageUrl = await new Promise<string>((resolve, reject) => {
@@ -131,7 +153,10 @@ export async function loadChartLiveView(pageUrl: string): Promise<{ imageUrl: st
       };
       l.on('SendLiveViewName', onName);
       l.on('SendLiveViewError', onError);
-      void l.call('SET_CHART_VIEW_URL', viewId, pageUrl);
+      void Promise.resolve().then(() => l.call('SET_CHART_VIEW_URL', viewId, pageUrl)).catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
     });
     return { imageUrl, release };
   } catch (err) {

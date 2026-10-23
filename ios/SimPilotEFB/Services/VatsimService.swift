@@ -353,6 +353,7 @@ final class VatsimStore: ObservableObject {
     private(set) var geojson: Data?
     private var bookings: [VatsimBooking] = []
     private var bookingsFetched: Date?
+    private var bookingsFailed = false
     private var task: Task<Void, Never>?
     private let feedURL = URL(string: "https://data.vatsim.net/v3/vatsim-data.json")!
     private let bookingsURL = URL(string: "https://atc-bookings.vatsim.net/api/booking")!
@@ -385,23 +386,43 @@ final class VatsimStore: ObservableObject {
     func refresh() async {
         do {
             let decoded = try JSONDecoder().decode(VatsimFeed.self, from: try await get(feedURL))
+            try Task.checkCancellation()
+            if feed == nil || error != nil {
+                DiagnosticLog.record(.info, "VATSIM", error == nil ? "Map feed loaded" : "Map feed recovered")
+            }
             feed = decoded
             error = nil
             rebuild()
         } catch {
+            guard !Task.isCancelled, (error as? URLError)?.code != .cancelled else { return }
+            if self.error == nil { DiagnosticLog.record(.warning, "VATSIM", "Map feed unavailable", error: error) }
             self.error = "VATSIM data unavailable"
         }
-        if bookingsFetched.map({ Date().timeIntervalSince($0) > 300 }) ?? true,
-           let data = try? await get(bookingsURL), let list = try? JSONDecoder().decode([VatsimBooking].self, from: data) {
-            bookings = list
-            bookingsFetched = Date()
+        if bookingsFetched.map({ Date().timeIntervalSince($0) > 300 }) ?? true {
+            do {
+                let list = try JSONDecoder().decode([VatsimBooking].self, from: try await get(bookingsURL))
+                try Task.checkCancellation()
+                if bookingsFetched == nil || bookingsFailed {
+                    DiagnosticLog.record(.info, "VATSIM", bookingsFailed ? "ATC bookings recovered" : "ATC bookings loaded")
+                }
+                bookings = list
+                bookingsFetched = Date()
+                bookingsFailed = false
+            } catch {
+                guard !Task.isCancelled, (error as? URLError)?.code != .cancelled else { return }
+                if !bookingsFailed { DiagnosticLog.record(.warning, "VATSIM", "ATC bookings unavailable", error: error) }
+                bookingsFailed = true
+            }
         }
     }
 
     private func get(_ url: URL) async throws -> Data {
         var req = URLRequest(url: url)
         req.setValue("SimPilotEFB/0.1", forHTTPHeaderField: "User-Agent")
-        return try await URLSession.shared.data(for: req).0
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let response = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+        guard (200..<300).contains(response.statusCode) else { throw NSError(domain: "HTTP", code: response.statusCode) }
+        return data
     }
 
     private func rebuild() {

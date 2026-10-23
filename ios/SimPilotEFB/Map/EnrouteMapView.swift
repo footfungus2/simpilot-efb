@@ -96,6 +96,10 @@ struct EnrouteMapView: UIViewRepresentable {
 
         // MARK: Delegate
 
+        func mapViewDidFailLoadingMap(_ mapView: MLNMapView, withError error: Error) {
+            DiagnosticLog.record(.error, "Map", "Map could not be loaded.", error: error)
+        }
+
         // MapLibre calls its delegate on the main thread.
         func mapView(_ mapView: MLNMapView, didFinishLoading style: MLNStyle) {
             style.setImage(MapIcons.ownship(), forName: "ownship")
@@ -123,6 +127,7 @@ struct EnrouteMapView: UIViewRepresentable {
             lastVatsimVersion = -1
             shownOverlayID = nil
             styleLoaded = true
+            DiagnosticLog.record(.info, "Map", "Map loaded.")
             shownRouteStamp = nil
             sigmetsLoadedAt = nil
             apply()

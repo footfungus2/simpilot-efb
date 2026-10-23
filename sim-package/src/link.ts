@@ -40,7 +40,7 @@ function request(method: 'GET' | 'POST', path: string, body?: unknown, timeoutMs
         try {
           resolve(xhr.responseText ? JSON.parse(xhr.responseText) : {});
         } catch {
-          resolve({});
+          reject(new Error(`${method} ${path}: invalid JSON response`));
         }
       } else reject(new Error(`${method} ${path}: HTTP ${xhr.status}`));
     };
@@ -109,15 +109,22 @@ async function viaView(url: string): Promise<string> {
   try {
     const image = new Image();
     await new Promise<void>((resolve, reject) => {
-      image.onload = () => resolve();
-      image.onerror = () => reject(new Error(`could not load ${imageUrl}`));
+      const finish = (err?: Error) => {
+        clearTimeout(timer);
+        image.onload = image.onerror = null;
+        if (err) reject(err);
+        else resolve();
+      };
+      const timer = setTimeout(() => finish(new Error('Chart image timed out')), 20000);
+      image.onload = () => finish();
+      image.onerror = () => finish(new Error('Could not load chart image'));
       image.src = imageUrl;
     });
     const canvas = document.createElement('canvas');
     canvas.width = image.naturalWidth || image.width;
     canvas.height = image.naturalHeight || image.height;
     const ctx = canvas.getContext('2d');
-    if (!ctx || !canvas.width) throw new Error('canvas unavailable');
+    if (!ctx || !canvas.width || !canvas.height) throw new Error('canvas unavailable');
     ctx.drawImage(image, 0, 0);
     const dataUrl = canvas.toDataURL('image/png');
     if (!dataUrl.startsWith('data:image/png;base64,') || dataUrl.length < 100) throw new Error('canvas readback blocked');
@@ -138,9 +145,9 @@ async function exportPage(job: Job, guid: string, page: number, url: string): Pr
       else if (method === 'bridge') res = await request('POST', '/link/image', { ...base, url }, 30000);
       else res = await request('POST', '/link/image', { ...base, pngBase64: await viaView(url) }, 30000);
       if (res.saved) return method;
-      if (!preferred) log(`export '${method}' gave no image`, 'warn');
+      log(`chart page ${page + 1}: export '${method}' gave no image`, 'warn');
     } catch (err) {
-      if (!preferred) log(`export '${method}' failed: ${(err as Error).message}`, 'warn');
+      log(`chart page ${page + 1}: export '${method}' failed: ${(err as Error).message}`, 'warn');
     }
   }
   return undefined;
@@ -153,6 +160,7 @@ async function runJob(job: Job): Promise<void> {
   await request('POST', '/link/index', { jobId: job.id, icao: job.icao, provider: job.provider, index }, 30000);
 
   const charts = index.charts.flatMap((c) => c.charts);
+  if (!charts.length) throw new Error('No charts available for this airport');
   let pagesOk = 0;
   let pagesFailed = 0;
   for (let i = 0; i < charts.length; i++) {
@@ -160,7 +168,10 @@ async function runJob(job: Job): Promise<void> {
     setText('spl-job', `${job.icao}: ${i + 1}/${charts.length} charts`);
     const { pages } = await getChartPages(chart.guid);
     await request('POST', '/link/pages', { jobId: job.id, icao: job.icao, guid: chart.guid, pages }, 30000);
-    if (i === 0 && pages[0]) log(`page URL names: ${pages[0].urls.map((u) => u.name).join(', ') || '(none)'}`);
+    if (!pages.length) {
+      pagesFailed++;
+      log(`${job.icao}: chart ${i + 1} has no pages`, 'warn');
+    }
 
     for (let p = 0; p < pages.length; p++) {
       const url = pickPageUrl(pages[p]!.urls);
@@ -178,12 +189,12 @@ async function runJob(job: Job): Promise<void> {
     }
   }
   const summary = `${job.icao}: ${charts.length} charts, ${pagesOk} pages${pagesFailed ? `, ${pagesFailed} failed` : ''}`;
-  log(summary, pagesFailed && !pagesOk ? 'error' : 'info');
-  setText('spl-job', summary);
+  log(summary, pagesFailed ? 'error' : 'info');
+  setText('spl-job', summary, pagesFailed === 0);
   await request('POST', '/link/done', {
     jobId: job.id,
     icao: job.icao,
-    error: pagesOk === 0 && pagesFailed > 0 ? 'no export method could read chart images' : undefined,
+    error: pagesFailed ? `${pagesFailed} chart page(s) could not be exported; please retry` : undefined,
   });
 }
 

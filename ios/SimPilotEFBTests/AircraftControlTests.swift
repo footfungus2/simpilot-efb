@@ -52,6 +52,9 @@ final class FrequencyInputTests: XCTestCase {
         XCTAssertNil(FrequencyInput.khz("137.000"))
         XCTAssertNil(FrequencyInput.khz("abc"))
         XCTAssertNil(FrequencyInput.khz(vatsim: "199.998")) // VATSIM's "no frequency" placeholder
+        for input in ["1.0e300", "1.0e999", "-9223372036854775808", "nan", "inf"] {
+            XCTAssertNil(FrequencyInput.khz(input), input)
+        }
     }
 }
 

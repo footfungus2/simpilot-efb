@@ -46,6 +46,14 @@ final class ChartGeoProjectionTests: XCTestCase {
                           worldRect: nil, projection: nil)
         XCTAssertNil(ChartGeoProjection(area: a))
     }
+
+    func testRejectsIncompleteFittedChartRectangle() {
+        let a = ChartArea(layer: "plan", geoReferenced: true,
+                          chartRect: ChartRect(upperLeft: [], lowerRight: [1, 1], orientation: 0),
+                          worldRect: nil, projection: ChartProjection(standardParallel1: 49, standardParallel2: 51, centralMeridian: 8.6),
+                          similarity: [0, 0, 1, 0])
+        XCTAssertNil(ChartGeoProjection(area: a))
+    }
 }
 
 final class BridgeMessageTests: XCTestCase {
@@ -72,14 +80,18 @@ final class AiracTests: XCTestCase {
     }
 }
 
+#if DEBUG
 final class TestChartsTests: XCTestCase {
-    /// Generates the EGSS test charts from live OSM data and checks they georeference consistently.
+    /// Checks generated chart georeferencing without live map data or bundled airport charts.
     @MainActor
-    func testGeneratesGeoreferencedEGSSCharts() async throws {
-        let features = try await AirportMapService.features(icao: "EGSS")
-        let result = try XCTUnwrap(TestCharts.build(icao: "EGSS", name: "London Stansted", features: features))
+    func testGeneratesGeoreferencedCharts() throws {
+        let features: [[String: Any]] = [
+            ["properties": ["kind": "runway-area"], "geometry": ["type": "Polygon", "coordinates": [[[0.22, 51.88], [0.25, 51.88], [0.25, 51.89], [0.22, 51.89], [0.22, 51.88]]]]],
+            ["properties": ["kind": "stand"], "geometry": ["type": "Point", "coordinates": [0.235, 51.885]]]
+        ]
+        let result = try XCTUnwrap(TestCharts.build(icao: "ZZZZ", name: "Test Airport", features: features))
         XCTAssertEqual(Set(result.index.categories.map(\.name)), ["AGC", "APC"])
-        let agc = try XCTUnwrap(result.details["test-EGSS-AGC"])
+        let agc = try XCTUnwrap(result.details["test-ZZZZ-AGC"])
         let page = try XCTUnwrap(agc.pages.first)
         // EGSS reference point should land on the page, and the corners should round-trip.
         let p = try XCTUnwrap(page.position(lat: 51.885, lon: 0.235))
@@ -96,3 +108,4 @@ final class TestChartsTests: XCTestCase {
         }
     }
 }
+#endif

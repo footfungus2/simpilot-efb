@@ -43,6 +43,11 @@ private struct ChartsContent: View {
         .onChange(of: app.chartsAirport) { _ in sync() }
         .onChange(of: model.selected) { _ in updateNavigation() }
         .onChange(of: model.index) { _ in updateNavigation() }
+        .alert("Flight Charts", isPresented: Binding(get: { model.pack.error != nil }, set: { if !$0 { model.pack.error = nil } })) {
+            Button("OK", role: .cancel) { model.pack.error = nil }
+        } message: {
+            Text(model.pack.error ?? "")
+        }
     }
 
     @ViewBuilder private var viewer: some View {
@@ -162,6 +167,7 @@ private struct ChartListSidebar: View {
     @Environment(\.theme) private var theme
     @ObservedObject var model: ChartsModel
 
+    #if DEBUG
     /// Why the generated test charts are showing instead of the sim's charts.
     private var testChartsReason: String {
         guard bridge.isConnected else { return "Test charts — PC bridge not connected" }
@@ -171,6 +177,7 @@ private struct ChartListSidebar: View {
         }
         return "Test charts — open SimPilot Link from the MSFS toolbar to load the sim's charts"
     }
+    #endif
 
     var body: some View {
         VStack(spacing: 0) {
@@ -211,6 +218,7 @@ private struct ChartListSidebar: View {
             }
             .padding(.bottom, 10)
 
+            #if DEBUG
             if model.isTestCharts {
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "hammer.fill").font(.system(size: 11)).padding(.top, 2)
@@ -220,6 +228,7 @@ private struct ChartListSidebar: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
             }
+            #endif
 
             Rectangle().fill(theme.separator).frame(height: 1)
 

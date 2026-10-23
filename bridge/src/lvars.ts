@@ -43,6 +43,8 @@ export class LVars {
   private rebuildTimer: NodeJS.Timeout | undefined;
   private listeners = new Set<() => void>();
   private queue: Promise<unknown> = Promise.resolve();
+  private generation = 0;
+  private queued = 0;
 
   constructor(
     private readonly emit: (values: Record<string, number>) => void,
@@ -53,7 +55,15 @@ export class LVars {
     return this.port !== undefined;
   }
 
+  get session(): number {
+    return this.generation;
+  }
+
   attach(port: SimPort): void {
+    if (this.port === port) {
+      for (const def of this.writeDefs.values()) port.clearDataDefinition(def);
+    }
+    this.detach();
     this.port = port;
     this.writeDefs.clear();
     this.working.clear();
@@ -62,7 +72,16 @@ export class LVars {
   }
 
   detach(): void {
+    this.generation++;
     this.port = undefined;
+    this.working.clear();
+    this.sim.clear();
+    this.pending = {};
+    this.order = [];
+    clearTimeout(this.flushTimer);
+    clearTimeout(this.rebuildTimer);
+    this.flushTimer = undefined;
+    for (const listener of [...this.listeners]) listener();
   }
 
   /** Last value the sim reported. */
@@ -81,6 +100,8 @@ export class LVars {
   }
 
   watch(names: string[]): void {
+    if (names.some((n) => typeof n !== 'string' || !/^[A-Za-z0-9_:.-]{1,128}$/.test(n))) throw new Error('Invalid L:var name');
+    if (new Set([...this.watched, ...names]).size > 512) throw new Error('Too many watched L:vars');
     let added = false;
     for (const raw of names) {
       const n = raw.trim();
@@ -94,17 +115,22 @@ export class LVars {
 
   /** Runs a command after the ones before it. Resolves with the variables written; rejects if it couldn't run. */
   run(code: string, param = 0): Promise<string[]> {
-    const result = this.queue.then(() => this.runNow(code, param));
+    if (this.queued >= 256) return Promise.reject(new Error('Too many queued commands'));
+    const generation = this.generation;
+    this.queued++;
+    const result = this.queue.then(() => this.runNow(code, param, generation)).finally(() => this.queued--);
     this.queue = result.catch(() => undefined);
     return result;
   }
 
-  private async runNow(code: string, param: number): Promise<string[]> {
-    if (!this.port) throw new Error('sim not connected');
+  private async runNow(code: string, param: number, generation: number): Promise<string[]> {
+    if (!this.port || generation !== this.generation) throw new Error('sim not connected or session changed');
+    if (code.length > 4096 || !Number.isFinite(param)) throw new Error('Invalid RPN command');
     const { reads, writes } = rpnVars(code);
     this.watch([...reads, ...writes]);
     await this.whenKnown(reads);
-    runRpn(code, { read: (n) => this.working.get(n) ?? 0, write: (n, v) => this.set(n, v) }, param);
+    if (!this.port || generation !== this.generation) throw new Error('sim session changed');
+    runRpn(code, { read: (n) => this.working.get(n)!, write: (n, v) => this.set(n, v) }, param);
     return writes;
   }
 
@@ -126,8 +152,10 @@ export class LVars {
 
   /** Data for REQ_LVARS: values in watch order. */
   onData(data: RawBuffer): void {
+    if (!this.port || data.remaining() < this.order.length * 8) return;
     for (const name of this.order) {
       const v = data.readFloat64();
+      if (!Number.isFinite(v)) continue;
       this.working.set(name, v);
       if (this.sim.get(name) !== v) {
         this.sim.set(name, v);
@@ -145,6 +173,8 @@ export class LVars {
 
   /** Resolves with the sim's value once `test` passes; rejects after `timeoutMs`. */
   waitFor(name: string, test: (v: number) => boolean, timeoutMs: number): Promise<number> {
+    if (!this.port) return Promise.reject(new Error('sim not connected'));
+    const generation = this.generation;
     this.watch([name]);
     const now = this.sim.get(name);
     if (now !== undefined && test(now)) return Promise.resolve(now);
@@ -154,6 +184,11 @@ export class LVars {
         this.listeners.delete(check);
       };
       const check = () => {
+        if (!this.port || generation !== this.generation) {
+          done();
+          reject(new Error('sim session changed'));
+          return;
+        }
         const v = this.sim.get(name);
         if (v !== undefined && test(v)) {
           done();
@@ -169,17 +204,26 @@ export class LVars {
   }
 
   private whenKnown(names: string[]): Promise<void> {
+    const generation = this.generation;
     if (names.every((n) => this.working.has(n))) return Promise.resolve();
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const done = () => {
         clearTimeout(timer);
         this.listeners.delete(check);
-        resolve();
       };
       const check = () => {
-        if (names.every((n) => this.working.has(n))) done();
+        if (!this.port || generation !== this.generation) {
+          done();
+          reject(new Error('sim session changed'));
+        } else if (names.every((n) => this.working.has(n))) {
+          done();
+          resolve();
+        }
       };
-      const timer = setTimeout(done, this.readTimeoutMs);
+      const timer = setTimeout(() => {
+        done();
+        reject(new Error('No aircraft data for command'));
+      }, this.readTimeoutMs);
       this.listeners.add(check);
     });
   }
