@@ -134,11 +134,11 @@ async function exportJob(t, pages) {
   return { result: await done, released };
 }
 
-test('partial export fails the job and releases the ChartView', async (t) => {
+test('partial export fails the job and releases each ChartView', async (t) => {
   const pages = [0, 1].map((p) => ({ urls: [{ name: 'PNG', url: `https://charts.invalid/${p}.png` }] }));
   const { result, released } = await exportJob(t, pages);
   assert.match(result.error, /1 chart page\(s\) could not be exported/);
-  assert.equal(released, 1);
+  assert.equal(released, 2);
 });
 
 test('a chart with no pages fails the job', async (t) => {
