@@ -67,7 +67,7 @@ final class ChartsModel: ObservableObject {
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] linkUp in
-                guard let self, linkUp, self.isOfflineCharts || self.isWaitingOrFailed else { return }
+                guard let self, linkUp, self.isOfflineCharts || self.isWaitingForPanel else { return }
                 self.reloadIndex()
             }
             .store(in: &cancellables)
@@ -94,6 +94,12 @@ final class ChartsModel: ObservableObject {
         case .waitingForSim, .failed: return true
         default: return false
         }
+    }
+
+    /// A reconnect during or after page progress must not start the same failed export again.
+    private var isWaitingForPanel: Bool {
+        if case .waitingForSim(done: 0, total: 0) = state { return true }
+        return false
     }
 
     /// True while showing the offline charts bundled with debug builds instead of the sim's Lido charts.

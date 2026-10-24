@@ -101,12 +101,19 @@ async function exportJob(t, pages) {
       getChartPages: async () => ({ pages }),
       loadChartLiveView: async () => ({ imageUrl: 'live-view', release() { released++; } }),
     }),
-    document: { getElementById: () => null },
+    document: {
+      getElementById: () => null,
+      createElement: () => ({ getContext: () => ({ drawImage() {} }), toDataURL: () => `data:image/png;base64,${'A'.repeat(100)}` }),
+    },
     TemplateElement: class {},
     window: { customElements: { define() {} } },
     checkAutoload() {},
     setInterval() {},
-    Image: class {},
+    Image: class {
+      naturalWidth = 1;
+      naturalHeight = 1;
+      set src(_value) { queueMicrotask(() => this.onload?.()); }
+    },
     XMLHttpRequest: class {
       open(method, url) { this.url = url; }
       setRequestHeader() {}
@@ -127,7 +134,7 @@ async function exportJob(t, pages) {
   return { result: await done, released };
 }
 
-test('partial export fails the job and image loading is bounded', async (t) => {
+test('partial export fails the job and releases the ChartView', async (t) => {
   const pages = [0, 1].map((p) => ({ urls: [{ name: 'PNG', url: `https://charts.invalid/${p}.png` }] }));
   const { result, released } = await exportJob(t, pages);
   assert.match(result.error, /1 chart page\(s\) could not be exported/);

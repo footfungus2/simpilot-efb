@@ -1,11 +1,7 @@
 // SimPilot Link: runs inside MSFS 2024 as a toolbar panel. It polls the bridge on this PC for
 // chart jobs and exports the sim's built-in Lido charts (index, page metadata, page images).
 //
-// Getting page images out of the sim is the main unknown, so three methods are tried in order
-// and the first one that works is remembered:
-//   1. 'xhr'    – download the page URL from inside the sim and send the bytes to the bridge
-//   2. 'bridge' – send the URL to the bridge and let it download (works if URLs are public)
-//   3. 'view'   – render through a ChartView LiveView into a canvas and read back the PNG
+// Chart page URLs are simulator handles; MSFS ChartView is the supported way to load them.
 
 import { getChartPages, getIndexForAirport, loadChartLiveView } from './charts.js';
 
@@ -16,7 +12,6 @@ declare function checkAutoload(): void;
 const BRIDGE = 'http://127.0.0.1:8380';
 const POLL_MS = 2000;
 
-type Method = 'xhr' | 'bridge' | 'view';
 interface Job {
   id: string;
   type: 'charts';
@@ -24,7 +19,6 @@ interface Job {
   provider: string;
 }
 
-let preferred: Method | undefined;
 let busy = false;
 
 // ---------------------------------------------------------------- HTTP (XHR; fetch isn't reliable in Coherent)
@@ -47,28 +41,6 @@ function request(method: 'GET' | 'POST', path: string, body?: unknown, timeoutMs
     xhr.onerror = () => reject(new Error(`${method} ${path}: network error`));
     xhr.ontimeout = () => reject(new Error(`${method} ${path}: timeout`));
     xhr.send(body === undefined ? null : JSON.stringify(body));
-  });
-}
-
-/** Binary download via the classic x-user-defined trick, which works without responseType support. */
-function downloadBase64(url: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('GET', url, true);
-    xhr.timeout = 20000;
-    xhr.overrideMimeType('text/plain; charset=x-user-defined');
-    xhr.onload = () => {
-      if (xhr.status !== 200 && xhr.status !== 0) return reject(new Error(`HTTP ${xhr.status}`));
-      const text = xhr.responseText;
-      if (!text) return reject(new Error('empty response'));
-      let bin = '';
-      for (let i = 0; i < text.length; i++) bin += String.fromCharCode(text.charCodeAt(i) & 0xff);
-      if (!bin.startsWith('\x89PNG')) return reject(new Error(`not a PNG (${text.length} bytes)`));
-      resolve(btoa(bin));
-    };
-    xhr.onerror = () => reject(new Error('network error'));
-    xhr.ontimeout = () => reject(new Error('timeout'));
-    xhr.send();
   });
 }
 
@@ -108,6 +80,7 @@ async function viaView(url: string): Promise<string> {
   const { imageUrl, release } = await loadChartLiveView(url);
   try {
     const image = new Image();
+    image.crossOrigin = 'anonymous';
     await new Promise<void>((resolve, reject) => {
       const finish = (err?: Error) => {
         clearTimeout(timer);
@@ -117,7 +90,7 @@ async function viaView(url: string): Promise<string> {
       };
       const timer = setTimeout(() => finish(new Error('Chart image timed out')), 20000);
       image.onload = () => finish();
-      image.onerror = () => finish(new Error('Could not load chart image'));
+      image.onerror = () => finish(new Error('Could not load MSFS ChartView image (CORS or image error)'));
       image.src = imageUrl;
     });
     const canvas = document.createElement('canvas');
@@ -134,23 +107,19 @@ async function viaView(url: string): Promise<string> {
   }
 }
 
-/** Tries each export method (preferred one first). Returns the method that worked. */
-async function exportPage(job: Job, guid: string, page: number, url: string): Promise<Method | undefined> {
-  const order: Method[] = preferred ? [preferred, ...(['xhr', 'bridge', 'view'] as Method[]).filter((m) => m !== preferred)] : ['xhr', 'bridge', 'view'];
+async function exportPage(job: Job, guid: string, page: number, url: string): Promise<boolean> {
   const base = { jobId: job.id, icao: job.icao, guid, page };
-  for (const method of order) {
-    try {
-      let res: { saved?: boolean };
-      if (method === 'xhr') res = await request('POST', '/link/image', { ...base, pngBase64: await downloadBase64(url) }, 30000);
-      else if (method === 'bridge') res = await request('POST', '/link/image', { ...base, url }, 30000);
-      else res = await request('POST', '/link/image', { ...base, pngBase64: await viaView(url) }, 30000);
-      if (res.saved) return method;
-      log(`chart page ${page + 1}: export '${method}' gave no image`, 'warn');
-    } catch (err) {
-      log(`chart page ${page + 1}: export '${method}' failed: ${(err as Error).message}`, 'warn');
+  try {
+    const res = await request('POST', '/link/image', { ...base, pngBase64: await viaView(url) }, 30000) as { saved?: boolean };
+    if (res.saved) {
+      setText('spl-method', 'ChartView', true);
+      return true;
     }
+    log(`chart page ${page + 1}: ChartView returned no image`, 'warn');
+  } catch (err) {
+    log(`chart page ${page + 1}: ChartView export failed: ${(err as Error).message}`, 'warn');
   }
-  return undefined;
+  return false;
 }
 
 async function runJob(job: Job): Promise<void> {
@@ -178,14 +147,9 @@ async function runJob(job: Job): Promise<void> {
 
     for (let p = 0; p < pages.length; p++) {
       const url = pickPageUrl(pages[p]!.urls);
-      const method = url ? await exportPage(job, chart.guid, p, url) : undefined;
-      if (method) {
+      const exported = url ? await exportPage(job, chart.guid, p, url) : false;
+      if (exported) {
         pagesOk++;
-        if (preferred !== method) {
-          preferred = method;
-          setText('spl-method', method, true);
-          log(`chart images: using '${method}' export`);
-        }
       } else {
         pagesFailed++;
       }

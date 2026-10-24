@@ -33,7 +33,7 @@ export const config = {
   ownshipHz: envInt('SIMPILOT_OWNSHIP_HZ', 10, 60),
   /** The link panel counts as disconnected after this long without a poll. */
   linkTimeoutMs: 6000,
-  bridgeVersion: '0.1.3',
+  bridgeVersion: '0.1.4',
 };
 
 function parseHostPort(v: string | undefined): { host: string; port: number } | undefined {
