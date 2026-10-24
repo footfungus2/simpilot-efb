@@ -1,6 +1,6 @@
 {
   "name": "simpilot-link",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "license": "Zlib",
   "private": true,
   "description": "MSFS 2024 toolbar panel that exports the sim's built-in Lido charts to the SimPilot EFB bridge",

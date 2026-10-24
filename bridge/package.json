@@ -1,6 +1,6 @@
 {
   "name": "simpilot-bridge",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "license": "Zlib",
   "private": true,
   "description": "SimPilot EFB bridge: SimConnect + in-sim chart link + SimBrief/weather proxy for the iPad app",
