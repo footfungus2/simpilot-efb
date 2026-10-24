@@ -35,9 +35,9 @@ describe('simulator lifecycle', () => {
     const lv = { attach: vi.fn(), detach: vi.fn(), onData: vi.fn() };
     vi.mocked(open).mockResolvedValueOnce({ handle, recvOpen: { applicationName: 'Test simulator' } } as unknown as Awaited<ReturnType<typeof open>>);
     vi.mocked(open).mockRejectedValue(new Error('simulator off'));
-    startSim(hub as unknown as Hub, lv as unknown as LVars);
+    const stop = startSim(hub as unknown as Hub, lv as unknown as LVars);
     await vi.advanceTimersByTimeAsync(0);
-    return { handle, hub, lv };
+    return { handle, hub, lv, stop };
   }
 
   it('disconnects once on a socket error and schedules one reconnect even after close', async () => {
@@ -59,5 +59,35 @@ describe('simulator lifecycle', () => {
     handle.emit('quit');
     handle.emit('simObjectData', { requestID: 10, data: {} });
     expect(lv.onData).not.toHaveBeenCalled();
+  });
+
+  it('stops the connection and pending retries without reconnecting', async () => {
+    const { handle, hub, stop } = await start();
+    stop();
+    handle.emit('close');
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(handle.close).toHaveBeenCalledTimes(1);
+    expect(hub.setSim).toHaveBeenLastCalledWith(false);
+  });
+
+  it('closes a connection that finishes opening after shutdown', async () => {
+    const handle = fakeHandle();
+    let resolve!: (value: any) => void;
+    vi.mocked(open).mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+    const hub = { setSim: vi.fn() }, lv = { attach: vi.fn(), detach: vi.fn() };
+    const stop = startSim(hub as unknown as Hub, lv as unknown as LVars);
+    stop();
+    resolve({ handle, recvOpen: { applicationName: 'Late simulator' } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(handle.close).toHaveBeenCalledTimes(1);
+    expect(lv.attach).not.toHaveBeenCalled();
+  });
+
+  it('finishes shutdown even if closing a lost simulator socket throws', async () => {
+    const { handle, hub, stop } = await start();
+    handle.close.mockImplementationOnce(() => { throw new Error('socket gone'); });
+    expect(stop).not.toThrow();
+    expect(hub.setSim).toHaveBeenLastCalledWith(false);
   });
 });

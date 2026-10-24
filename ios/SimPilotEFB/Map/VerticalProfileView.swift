@@ -4,9 +4,29 @@ import SwiftUI
 /// mPilot-style vertical profile: FL axis, gold planned profile with waypoint triangles and
 /// slanted labels, and the ownship placed by along-track distance.
 struct VerticalProfileView: View {
+    @EnvironmentObject private var app: AppState
     @Environment(\.theme) private var theme
+    @State private var drawn: CGFloat = 0
     let ofp: Ofp
     let ownship: Ownship?
+
+    var body: some View {
+        ProfileCanvas(ofp: ofp, ownship: ownship, theme: theme, routeColor: app.routeColor.color, reveal: drawn)
+            .background(RoundedRectangle(cornerRadius: 6).fill(theme.overlay))
+            .onAppear { withAnimation(Motion.layout) { drawn = 1 } }
+    }
+}
+
+private struct ProfileCanvas: View, Animatable {
+    let ofp: Ofp
+    let ownship: Ownship?
+    let theme: Theme
+    let routeColor: Color
+    var reveal: CGFloat
+    var animatableData: CGFloat {
+        get { reveal }
+        set { reveal = newValue }
+    }
 
     private let levels = [100, 200, 300, 400, 500]
     private let maxFt = 52_000.0
@@ -37,7 +57,7 @@ struct VerticalProfileView: View {
             pts.append(CGPoint(x: x(total), y: y(ofp.destination.elevFt)))
             var profile = Path()
             profile.addLines(pts)
-            ctx.stroke(profile, with: .color(Theme.route), style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
+            ctx.stroke(profile.trimmedPath(from: 0, to: reveal), with: .color(routeColor), style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
 
             // Waypoints: triangle + slanted label, thinned so labels don't collide.
             var lastLabelX = -CGFloat.infinity
@@ -49,7 +69,7 @@ struct VerticalProfileView: View {
                 tri.addLine(to: CGPoint(x: p.x - 5, y: p.y + 3))
                 tri.closeSubpath()
                 ctx.fill(tri, with: .color(theme.sidebar))
-                ctx.stroke(tri, with: .color(Theme.route), lineWidth: 1.4)
+                ctx.stroke(tri, with: .color(routeColor), lineWidth: 1.4)
 
                 guard p.x - lastLabelX > 14 else { continue }
                 lastLabelX = p.x
@@ -77,7 +97,6 @@ struct VerticalProfileView: View {
                 ctx.stroke(vline, with: .color(Theme.ownshipBlue.opacity(0.6)), style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
             }
         }
-        .background(RoundedRectangle(cornerRadius: 6).fill(theme.overlay))
     }
 
 }

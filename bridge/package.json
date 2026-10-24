@@ -1,6 +1,6 @@
 {
   "name": "simpilot-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "Zlib",
   "private": true,
   "description": "SimPilot EFB bridge: SimConnect + in-sim chart link + SimBrief/weather proxy for the iPad app",
@@ -12,6 +12,7 @@
     "start": "node dist/index.js",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "package:exe": "node scripts/package-exe.mjs",
     "test": "vitest run"
   },
   "engines": {
@@ -25,6 +26,8 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.12",
+    "esbuild": "^0.28.2",
+    "postject": "^1.0.0-alpha.6",
     "tsx": "^4.23.15",
     "typescript": "^5.9.0",
     "vitest": "^5.0.0"

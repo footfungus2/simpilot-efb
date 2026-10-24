@@ -2,8 +2,10 @@ import SwiftUI
 import UIKit
 
 /// Colours measured from the mPilot screenshots (see docs/design-reference.md).
-struct Theme {
+struct Theme: Equatable {
     let night: Bool
+    /// Selected-control colour from Settings → Customization.
+    var accent: AccentChoice = AccentChoice.current
 
     // Chrome
     var bar: Color { night ? Color(hex: 0x22252B) : Color(hex: 0xF2F2F4) }
@@ -16,7 +18,10 @@ struct Theme {
     var overlay: Color { night ? Color(hex: 0x2A2D33).opacity(0.92) : Color.white.opacity(0.92) }
 
     // Accents
-    static let selectedBlue = Color(hex: 0x2F6FE4)
+    /// Selected controls (module switcher, segments, toggles): the accent chosen in Settings → Customization,
+    /// mPilot blue `#2F6FE4` by default.
+    static var selectedBlue: Color { AccentChoice.current.color }
+    var accentColor: Color { accent.color }
     static let ownshipBlue = Color(hex: 0x3D8BFF)
     static let okGreen = Color(hex: 0x2FB24F)
     static let warnOrange = Color(hex: 0xE8913A)
@@ -46,13 +51,24 @@ struct Theme {
 }
 
 private struct ThemeKey: EnvironmentKey {
-    static let defaultValue = Theme(night: true)
+    /// Computed, so it carries the accent chosen now rather than at first use.
+    static var defaultValue: Theme { Theme(night: true) }
 }
 
 extension EnvironmentValues {
     var theme: Theme {
         get { self[ThemeKey.self] }
         set { self[ThemeKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// The app theme, plus its accent for system controls (toggles, pickers, links, progress views, bar buttons).
+    /// Apply at the root and again on sheet content, which doesn't reliably inherit the environment on iOS 15.
+    func themed(_ theme: Theme) -> some View {
+        environment(\.theme, theme)
+            .accentColor(theme.accentColor)
+            .tint(theme.accentColor)
     }
 }
 

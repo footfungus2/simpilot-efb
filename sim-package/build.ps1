@@ -1,33 +1,55 @@
 # Builds the SimPilot Link toolbar panel and installs it into the MSFS 2024 Community2024 folder.
-# Requirements: Node.js 20+, and the MSFS 2024 SDK (Dev Mode > Help > SDK Installer), which sets MSFS2024_SDK.
-# Double-click install.bat, or run: powershell -ExecutionPolicy Bypass -File .\build.ps1
+# Needs the MSFS 2024 SDK (Settings > Advanced Options > Developer Mode, then Help > SDK Installer). The panel script comes prebuilt in
+# SimPilot-for-PC.zip; a source checkout builds it first, which needs Node.js 20+.
+# Double-click install.bat ("Install SimPilot Link.bat" in the zip), or run: powershell -ExecutionPolicy Bypass -File .\build.ps1
 # To override auto-detection: .\build.ps1 -Community "D:\MSFS\Packages\Community2024"
 param([string]$Community)
 
 $ErrorActionPreference = 'Stop'
+try {
 Set-Location $PSScriptRoot
-Write-Host "== 1/4 Building the panel script" -ForegroundColor Cyan
-if (-not (Get-Command node -ErrorAction SilentlyContinue) -or [int](node -p "process.versions.node.split('.')[0]") -lt 20) {
-  throw 'Node.js 20 or newer is required. Install the LTS version from https://nodejs.org, then run install.bat again.'
+Write-Host "== 1/4 Preparing the panel" -ForegroundColor Cyan
+$linkJs = Join-Path $PSScriptRoot 'PackageSources\html_ui\InGamePanels\SimPilotLink\link.js'
+$hasNode = [bool](Get-Command node -ErrorAction SilentlyContinue)
+if ($hasNode) { $hasNode = [int](node -p "process.versions.node.split('.')[0]") -ge 20 }
+if ((Test-Path (Join-Path $PSScriptRoot 'src\link.ts')) -and $hasNode) {
+  # Source checkout: bundle the panel script.
+  if (-not (Test-Path node_modules)) {
+    npm ci --no-audit --no-fund
+    if ($LASTEXITCODE -ne 0) { throw 'Could not prepare the panel. Check your internet connection and run the installer again.' }
+  }
+  npm run build
+  if ($LASTEXITCODE -ne 0) { throw 'Could not build the panel. Download SimPilot-for-PC.zip again and use its ready-made files.' }
+} elseif (Test-Path $linkJs) {
+  Write-Host "Using the ready-made panel files."
+} elseif (Test-Path (Join-Path $PSScriptRoot 'src\link.ts')) {
+  throw 'This is the source code version, which needs Node.js 20+ to build the panel. Easier: download SimPilot-for-PC.zip from the latest release and run "Install SimPilot Link.bat" from its "Chart panel (optional)" folder.'
+} else {
+  throw 'The panel files are incomplete. Download SimPilot-for-PC.zip again from the latest release and unzip all of it.'
 }
-
-# 1. Bundle the panel script.
-if (-not (Test-Path node_modules)) { npm ci --no-audit --no-fund }
-npm run build
 
 # 2. Package with the SDK's fspackagetool.
 Write-Host "== 2/4 Packaging with the MSFS 2024 SDK" -ForegroundColor Cyan
-$sdk = $env:MSFS2024_SDK
-if (-not $sdk) { $sdk = $env:MSFS_SDK }
-if (-not $sdk -or -not (Test-Path "$sdk\Tools\bin\fspackagetool.exe")) {
-  throw "MSFS 2024 SDK not found. Install it from Dev Mode (Help > SDK Installer) and reopen PowerShell so MSFS2024_SDK is set."
+# The SDK installer sets MSFS2024_SDK; a window opened before the install doesn't see it yet, so also read it from
+# the registry, then try the default install folders.
+$sdkCandidates = @(
+  $env:MSFS2024_SDK,
+  [Environment]::GetEnvironmentVariable('MSFS2024_SDK', 'User'),
+  [Environment]::GetEnvironmentVariable('MSFS2024_SDK', 'Machine'),
+  'C:\MSFS 2024 SDK',
+  (Join-Path $env:SystemDrive 'MSFS 2024 SDK')
+) | Where-Object { $_ }
+$sdk = $sdkCandidates | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'Tools\bin\fspackagetool.exe') } | Select-Object -First 1
+if (-not $sdk) {
+  throw 'The MSFS 2024 SDK is not installed yet (it is free and needed once to add the panel). In MSFS 2024 open Settings > Advanced Options and switch Developer Mode on, then choose Help > SDK Installer in the menu bar at the top and install it. Then double-click this installer again.'
 }
-& "$sdk\Tools\bin\fspackagetool.exe" "$PSScriptRoot\package.xml"
-if (-not (Test-Path "$PSScriptRoot\Packages\simpilot-link\layout.json")) {
-  # fspackagetool sometimes fails the very first build while it initialises; one retry is enough.
+$built = Join-Path $PSScriptRoot 'Packages\simpilot-link'
+for ($attempt = 0; $attempt -lt 2; $attempt++) {
+  if (Test-Path -LiteralPath $built) { Remove-Item -LiteralPath $built -Recurse -Force }
   & "$sdk\Tools\bin\fspackagetool.exe" "$PSScriptRoot\package.xml"
+  if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath (Join-Path $built 'layout.json')) -and (Test-Path -LiteralPath (Join-Path $built 'manifest.json'))) { break }
+  if ($attempt -eq 1) { throw 'The MSFS SDK could not build the chart panel. Close MSFS, check that the MSFS 2024 SDK is installed, then run this installer again.' }
 }
-if (-not (Test-Path "$PSScriptRoot\Packages\simpilot-link\layout.json")) { throw "fspackagetool did not produce Packages\simpilot-link" }
 Write-Host "Built $PSScriptRoot\Packages\simpilot-link"
 
 # 3. Find InstalledPackagesPath in UserCfg.opt (MS Store and Steam keep it in different places).
@@ -61,7 +83,7 @@ if (-not $community) {
 }
 
 if (-not $community) {
-  Write-Host "Couldn't find UserCfg.opt. Select the folder containing Community2024 (usually the MSFS Packages folder)." -ForegroundColor Yellow
+  Write-Host "Couldn't find the sim's package folder. Choose the MSFS Packages folder (the one containing Community2024)." -ForegroundColor Yellow
   $selected = $null
   try {
     Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
@@ -82,11 +104,11 @@ if (-not $community) {
   }
 }
 
-if (-not $community) { throw 'No MSFS 2024 package folder selected. Run install.bat again and choose the Packages folder.' }
+if (-not $community) { throw 'No MSFS 2024 package folder selected. Run Install SimPilot Link again and choose the Packages folder.' }
 $community = [System.IO.Path]::GetFullPath($community)
 $packagesPath = Split-Path -Parent $community
 if (-not (Test-Path -LiteralPath $packagesPath)) {
-  throw "Packages folder not found: $packagesPath. Choose the folder containing Community2024, or pass -Community with its full path."
+  throw "Packages folder not found: $packagesPath. Run Install SimPilot Link again and choose the folder containing Community2024."
 }
 if (-not (Test-Path -LiteralPath $community)) {
   New-Item -ItemType Directory -Path $community -Force | Out-Null
@@ -115,5 +137,9 @@ try {
   throw
 }
 Write-Host "Installed SimPilot Link to $dest" -ForegroundColor Green
-Write-Host "In a Free Flight: toolbar > gear icon > switch 'SimPilot Link' on, then open it."
-Write-Host "Restart MSFS (or the flight) and open 'SimPilot Link' from the toolbar once per session."
+Write-Host 'Next: start MSFS 2024 (restart it if it is open; new panels load only when the sim starts).'
+Write-Host "In a flight: toolbar > gear icon > switch 'SimPilot Link' on, then open it once per flight."
+} catch {
+  Write-Host "SimPilot Link was not installed: $($_.Exception.Message)" -ForegroundColor Red
+  exit 1
+}

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 afterEach(() => {
@@ -13,6 +14,25 @@ describe('runtime configuration', () => {
     vi.resetModules();
     const { config } = await import('../src/config.js');
     expect(config).toMatchObject({ port: 8381, ownshipHz: 20, simconnect: { host: '192.168.1.20', port: 5111 } });
+  });
+
+  it('keeps the packaged app\'s chart cache in local app data, wherever the exe was unzipped', async () => {
+    vi.stubEnv('SIMPILOT_PACKAGED', '1');
+    vi.stubEnv('LOCALAPPDATA', '/tmp/LocalAppData');
+    vi.stubEnv('SIMPILOT_CACHE_DIR', undefined);
+    vi.resetModules();
+    const { config, packaged } = await import('../src/config.js');
+    expect(packaged).toBe(true);
+    expect(config.cacheDir).toBe(path.join('/tmp/LocalAppData', 'SimPilot Bridge', 'cache'));
+  });
+
+  it('caches next to the source checkout when run with npm start', async () => {
+    vi.stubEnv('SIMPILOT_PACKAGED', undefined);
+    vi.stubEnv('SIMPILOT_CACHE_DIR', undefined);
+    vi.resetModules();
+    const { config, packaged } = await import('../src/config.js');
+    expect(packaged).toBe(false);
+    expect(config.cacheDir).toBe(path.resolve(__dirname, '..', 'cache'));
   });
 
   it.each([

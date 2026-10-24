@@ -11,7 +11,7 @@
 ![iPadOS 15+](https://img.shields.io/badge/iPadOS-15%2B-black?logo=apple)
 ![MSFS 2024](https://img.shields.io/badge/MSFS-2024-0b5cad)
 ![Swift](https://img.shields.io/badge/Swift-SwiftUI-F05138?logo=swift&logoColor=white)
-![Node](https://img.shields.io/badge/bridge-Node.js%2020-339933?logo=node.js&logoColor=white)
+![PC: Windows](https://img.shields.io/badge/PC-Windows%2010%2F11-0078D6)
 
 [**Download**](https://github.com/footfungus2/simpilot-efb/releases/latest) · [Features](#features) · [Screenshots](#screenshots) · [Install](#install-on-the-ipad) · [Connect to MSFS](#connect-to-msfs-2024)
 
@@ -30,6 +30,7 @@ weather, VATSIM and the maps all load directly on the iPad.
 
 ## Contents
 
+- [Update log](docs/updates)
 - [Features](#features)
 - [Screenshots](#screenshots)
 - [Install on the iPad](#install-on-the-ipad)
@@ -45,9 +46,20 @@ weather, VATSIM and the maps all load directly on the iPad.
 - **3D globe** that flattens into a flat chart as you zoom in, with a clean solid-colour basemap
 - SimBrief route with waypoint triangles, FIR boundaries and airports
 - **NAV filters**: route, airports, FIRs, VOR, NDB, DME/TACAN and frequency labels
+- **Low / High** switches level choices and map detail; High hides NDBs and small airfields
+- **AA** changes map text size; the **ruler** measures distance, true/magnetic bearing and time, with snapping and a live aircraft start point
 - **Tap anything for details**: route fixes show the planned level, leg and remaining distance and the ETA; navaids show frequency, channel and variation; airports show the live METAR
 - **Vertical profile** and **flight progress strip** (next fix, top of descent, destination)
-- Weather: METAR station dots and SIGMET areas
+- **Weather layer**: METAR indicators for 5 000+ stations worldwide (green / amber / red by flight category) and SIGMET areas
+  with hazard and level labels. Tap an indicator for the airport's METAR and TAF, raw or in plain language, or a SIGMET for its details
+- **Weather time**: the `+00:00` menu in the top bar shows the forecast up to 12 hours ahead (TAF-based indicators, SIGMETs valid at that time)
+- **ATIS & weather briefing**: the speech-bubble button in the top bar opens VATSIM ATIS, METAR and TAF for your departure,
+  destination, alternates, the nearest airport or any ICAO, with a *Decoded* switch for plain language
+
+### Make it yours
+- **Settings → Customization**: Night, Day or *Match iPad* theme, accent colour, animations (Full, Reduced, Off), a UTC clock in the
+  top bar, map text size, route colour, 3D globe and grid on or off, dark charts at night, and the screen the app opens on
+- Smooth, subtle animations throughout; they follow the iPad's *Reduce Motion* setting
 
 ### Airport moving map
 - Zoom into any airport for a ground map with taxiways, runways, **stands and holding points**, without roads or clutter
@@ -63,7 +75,7 @@ weather, VATSIM and the maps all load directly on the iPad.
 
 ### Flight folder
 - Loads your latest **SimBrief** OFP: route, navlog, fuel, alternates and the full OFP document
-- Route notes and extra alternates. Developer builds also include a demo flight mode.
+- Route notes and extra alternates
 
 ### Fenix A320 cockpit panels
 - An **Aircraft** tab with the Fenix A320's controls in a clean EFB layout, live in both directions:
@@ -75,13 +87,14 @@ weather, VATSIM and the maps all load directly on the iPad.
 
 ### VATSIM assistant
 - Enter your callsign and see what ATC has given your flight: the **assigned squawk** (one tap sets it in the Fenix),
-  the cruise level and route in your flight plan, and a log of **amendments made by controllers**
+  the cruise level and route in your flight plan, and a log of **flight-plan changes**
 - **Who to call**: the approach/centre covering your position and the stations at your departure and arrival
 - Uses only your callsign's entry in the public VATSIM data feed (spoken instructions aren't published by VATSIM)
 
 ### VATSIM layer
 - Live pilots and controllers, styled after VATSIM Radar
 - **Real sector ownership** from VATGlasses at the flight level you choose, with approach areas and traffic counts
+- **CMPY company traffic**: your airline's pilots, highlighted in orange with callsigns; it works independently of the main VATSIM layer
 
 ## Screenshots
 
@@ -126,32 +139,54 @@ status and the last 300 events. **Load PC bridge logs** includes up to 200 event
 in memory for the session and are not sent to a reporting service. URLs, credentials and account paths are redacted;
 flight plans and account details are not logged. Review copied reports before sharing them.
 
-Release builds exclude demo flight and bundled/generated test charts. To use charts without the PC connection,
-save real charts to the **FLIGHT** pack first. Failed saves now show an error instead of claiming the chart is available offline.
+To use charts without the PC connection, save them to the **★ FLIGHT** pack first. Failed saves show an error instead
+of claiming the chart is available offline.
 
 ## Connect to MSFS 2024
 
-The iPad and the sim PC must be on the **same Wi-Fi network**.
+You only need this for the **live aircraft on the map**, the **sim's charts** and the **Fenix A320 controls**. Everything
+else works without the PC. Put the iPad and sim PC on the **same local network**, by Wi-Fi or Ethernet.
 
-**1. Start the bridge on the sim PC**
+### Step 1: run SimPilot Bridge on the PC
 
-1. Install [Node.js 20+](https://nodejs.org) (LTS). The bridge launcher opens the download page if Node is missing or too old.
-2. Download this repository ([ZIP](https://github.com/footfungus2/simpilot-efb/archive/refs/heads/main.zip)) and unzip it.
-3. Start MSFS 2024, then double-click **`bridge/start-bridge.bat`**. If Windows Firewall asks, allow **private networks**.
-4. The window shows the PC's address, for example `192.168.1.20:8380`.
+1. On the sim PC, open the **[latest release](https://github.com/footfungus2/simpilot-efb/releases/latest)** and download
+   **`SimPilot-for-PC.zip`**.
+2. Right-click the zip, choose **Extract All**, then open the **SimPilot for PC** folder inside.
+3. Double-click **SimPilot Bridge** (shown as **SimPilot Bridge.exe** if file extensions are visible) and leave its window open while you fly.
+   - If Windows says *"Windows protected your PC"*, click **More info**, then **Run anyway**.
+   - If Windows Firewall asks, tick **Private networks** and click **Allow access**. Windows may call this app
+     **Node.js JavaScript Runtime**; that is SimPilot Bridge.
+4. On the iPad, tap **OK** when SimPilot EFB asks to find devices on your local network.
 
-The app finds the bridge automatically. If it doesn't, enter that address under **Settings → Bridge**. This alone gives you
-the live aircraft position on the map, the vertical profile and the charts.
+That's all: there is nothing to install, and it doesn't matter whether you start it before or after MSFS. The app finds
+it by itself. The round icon at the top right turns **orange !** when the PC is found, and **green ✓** once MSFS
+and the optional chart panel are connected too. An orange icon with no chart panel is expected.
 
-**2. Optional: enable chart export from the sim**
+### Step 2 (optional): show the sim's charts on the iPad
 
-1. In MSFS 2024, enable *Developer Mode*, then **Help → SDK Installer** and install the SDK.
-2. Open the downloaded repository folder and double-click **`sim-package/install.bat`**. It builds the panel and finds
-   your MSFS package location from `UserCfg.opt`. If it cannot find it, choose the MSFS **Packages** folder in the
-   folder picker; the installer places this 2024-only panel in `Community2024` and creates that folder if needed.
-   For a manual override, run `build.ps1 -Community "D:\MSFS\Packages\Community2024"` from PowerShell.
-3. Start a **Free Flight**, open the toolbar's **gear icon** and switch **SimPilot Link** on (MSFS 2024 hides add-on panels
-   until you do), then open it. It shows *Bridge: connected* and exports charts when the iPad asks for them.
+A small **SimPilot Link** panel in the MSFS toolbar sends the sim's charts to the iPad. You set it up once:
+
+1. In MSFS 2024, open **Settings → Advanced Options** and switch **Developer Mode** on. In the menu bar that appears at
+   the top, choose **Help → SDK Installer** and install the SDK (Microsoft's free add-on kit, which the panel installer
+   uses). You can switch Developer Mode off again afterwards.
+2. **Close MSFS 2024.** Inside **SimPilot for PC**, open **Chart panel (optional)** and double-click **Install SimPilot Link**
+   (shown as **Install SimPilot Link.bat** if file extensions are visible). It finds your
+   MSFS folder by itself. If it asks, choose the MSFS **Packages** folder.
+3. **Start MSFS 2024 again**; new add-ons load when the sim starts. In a flight, click the **gear icon** in the toolbar, switch **SimPilot Link** on, then open it. It shows
+   *Bridge: connected*. Open it once per flight.
+
+### Not connecting?
+
+- Use the same local network, not a guest network. Wired Ethernet on the PC is fine.
+- Windows: **Settings → Network & internet → Wi-Fi** (or **Ethernet**) → your home network → **Private network**.
+- If you cancelled the firewall prompt: **Windows Security → Firewall & network protection → Allow an app through
+  firewall → Change settings**, find **Node.js JavaScript Runtime** and tick **Private**.
+- iPad: **Settings → Privacy → Local Network** → switch **SimPilot EFB** on.
+- Type the address shown in the SimPilot Bridge window, for example `192.168.1.20:8380`, into the app under
+  **Settings → Bridge**.
+- Choose the Wi-Fi or Ethernet address rather than a VPN or virtual adapter. If selecting text pauses the bridge
+  window, press **Esc** to resume.
+- **Settings → Help → Diagnostics** in the app shows which part isn't connected.
 
 ## How it works
 
@@ -160,7 +195,7 @@ flowchart LR
     subgraph PC["Sim PC (Windows)"]
         MSFS["MSFS 2024"]
         Link["SimPilot Link<br/>toolbar panel"]
-        Bridge["Bridge<br/>Node.js"]
+        Bridge["SimPilot Bridge"]
         MSFS -- SimConnect --> Bridge
         Link -- "chart export (HTTP)" --> Bridge
     end
@@ -211,10 +246,18 @@ option must be on in TrollStore's settings.
 <details>
 <summary><b>Bridge and sim panel</b></summary>
 
+Running from source needs [Node.js 20+](https://nodejs.org) (the release's `SimPilot-for-PC.zip` doesn't).
+
 ```sh
-cd bridge && npm install && npm test && npm run dev
+cd bridge && npm install && npm test && npm run dev   # or double-click bridge/start-bridge.bat on Windows
 cd sim-package && npm install && npm run build
 ```
+
+- `npm run package:exe` (in `bridge/`, official Node.js 22+ binary) builds the single-file *SimPilot Bridge* app for the
+  current platform and checks that it starts; CI builds the Windows `.exe` and `scripts/package-pc.ps1` stages
+  `SimPilot-for-PC.zip` with the ready-made chart panel.
+- `sim-package/install.bat` builds the panel from source (Node.js + MSFS 2024 SDK) and installs it into `Community2024`.
+  To choose the folder yourself: `build.ps1 -Community "D:\MSFS\Packages\Community2024"`.
 
 To run the bridge on another machine, enable remote SimConnect on the sim PC (`SimConnect.xml`, address `0.0.0.0`,
 port 5111) and start the bridge with `SIMPILOT_SIMCONNECT=<pc-ip>:5111`.

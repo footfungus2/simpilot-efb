@@ -26,6 +26,11 @@ struct VatsimPilot: Decodable {
     var coordinate: CLLocationCoordinate2D { CLLocationCoordinate2D(latitude: latitude, longitude: longitude) }
     var onGround: Bool { groundspeed < 50 }
 
+    static func airlineCode(_ callsign: String) -> String? {
+        let letters = String(callsign.trimmingCharacters(in: .whitespacesAndNewlines).uppercased().prefix { $0.isLetter })
+        return letters.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil ? letters : nil
+    }
+
     /// Icon scale by aircraft size, like VATSIM Radar (heavies are drawn bigger).
     var iconScale: Double {
         let type = (flight_plan?.aircraft_short ?? "").uppercased()
@@ -46,6 +51,8 @@ struct VatsimController: Decodable {
     var facility: Int
     var rating: Int
     var text_atis: [String]?
+    /// ATIS letter (ATIS stations only).
+    var atis_code: String?
     var logon_time: String
 
     var ratingName: String {
@@ -327,7 +334,14 @@ final class VatsimStore: ObservableObject {
     @Published private(set) var error: String?
     @Published var selection: VatsimSelection?
     @Published var enabled = false {
-        didSet { enabled ? start() : stop() }
+        didSet { if enabled != oldValue { updatePolling(); rebuild() } }
+    }
+    var companyCode: String? {
+        didSet { if companyCode != oldValue { updatePolling(); rebuild() } }
+    }
+    var companyPilots: [VatsimPilot] {
+        guard let companyCode else { return [] }
+        return feed?.pilots.filter { VatsimPilot.airlineCode($0.callsign) == companyCode } ?? []
     }
     @Published var filters: VatsimFilters {
         didSet {
@@ -355,6 +369,8 @@ final class VatsimStore: ObservableObject {
     private var bookingsFetched: Date?
     private var bookingsFailed = false
     private var task: Task<Void, Never>?
+    private var refreshing = false
+    private var buildGeneration = 0
     private let feedURL = URL(string: "https://data.vatsim.net/v3/vatsim-data.json")!
     private let bookingsURL = URL(string: "https://atc-bookings.vatsim.net/api/booking")!
 
@@ -367,8 +383,9 @@ final class VatsimStore: ObservableObject {
         }
     }
 
-    private func start() {
-        task?.cancel()
+    private func updatePolling() {
+        guard enabled || companyCode != nil else { stop(); return }
+        guard task == nil else { return }
         task = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()
@@ -384,6 +401,9 @@ final class VatsimStore: ObservableObject {
     }
 
     func refresh() async {
+        guard !refreshing else { return }
+        refreshing = true
+        defer { refreshing = false }
         do {
             let decoded = try JSONDecoder().decode(VatsimFeed.self, from: try await get(feedURL))
             try Task.checkCancellation()
@@ -427,11 +447,14 @@ final class VatsimStore: ObservableObject {
 
     private func rebuild() {
         guard let feed else { return }
-        let (filters, mine, hl, level) = (self.filters, myAirports, highlight, displayLevel)
+        buildGeneration += 1
+        let generation = buildGeneration
+        let (filters, mine, hl, level, enabled, company) = (self.filters, myAirports, highlight, displayLevel, self.enabled, companyCode)
         Task {
             let built = await Task.detached(priority: .utility) {
-                Self.buildFeatures(feed, filters: filters, myAirports: mine, highlight: hl, level: level)
+                Self.buildFeatures(feed, filters: filters, myAirports: mine, highlight: hl, level: level, enabled: enabled, companyCode: company)
             }.value
+            guard generation == buildGeneration else { return }
             geojson = built
             version += 1
         }
@@ -526,7 +549,7 @@ final class VatsimStore: ObservableObject {
     // MARK: Features
 
     nonisolated static func buildFeatures(_ feed: VatsimFeed, filters: VatsimFilters, myAirports: Set<String>,
-                                          highlight: String?, level: Int = 350) -> Data? {
+                                          highlight: String?, level: Int = 350, enabled: Bool = true, companyCode: String? = nil) -> Data? {
         let ref = VatsimReference.shared
         var features: [[String: Any]] = []
         func point(_ lon: Double, _ lat: Double) -> [String: Any] { ["type": "Point", "coordinates": [lon, lat]] }
@@ -535,7 +558,7 @@ final class VatsimStore: ObservableObject {
         // 1. VATGlasses: the airspace each controller actually owns right now (first online position in each block's
         //    owner list), at the selected flight level, merged per controller with one outline and one label.
         // 2. VATSpy fallback for controllers VATGlasses doesn't know: staffed sub-sector green, staffed parent FIR once.
-        if filters.sectors {
+        if enabled && filters.sectors {
             let vg = VatGlasses.shared
             var onlinePos: [String: String] = [:] // VATGlasses position id → controller callsign
             var vgControllers = Set<String>()
@@ -589,7 +612,7 @@ final class VatsimStore: ObservableObject {
         }
 
         // Approach: TRACON polygon (or a 25 NM circle), red ICAO box at its north-west edge.
-        if filters.approach {
+        if enabled && filters.approach {
             for c in feed.controllers where c.facility == 5 {
                 let label = ref.airport(for: c.prefix)?.icao ?? c.prefix
                 var geoms: [[String: Any]] = ref.tracons(for: c.prefix).compactMap { ref.traconFeatures[$0]?.geometry }
@@ -606,20 +629,20 @@ final class VatsimStore: ObservableObject {
 
         // Airports: ATC letters (bar when zoomed out, badges when zoomed in) and traffic counts.
         var letters: [String: Set<Character>] = [:]
-        if filters.localAtc {
+        if enabled && filters.localAtc {
             for c in feed.controllers where [2, 3, 4].contains(c.facility) {
                 if let icao = ref.airport(for: c.prefix)?.icao {
                     letters[icao, default: []].insert(c.facility == 2 ? "D" : c.facility == 3 ? "G" : "T")
                 }
             }
         }
-        if filters.atis {
+        if enabled && filters.atis {
             for a in feed.atis {
                 if let icao = ref.airport(for: a.prefix)?.icao { letters[icao, default: []].insert("A") }
             }
         }
         var airportIcaos = Set(letters.keys)
-        if filters.idleAirports || filters.trafficCounts {
+        if enabled && (filters.idleAirports || filters.trafficCounts) {
             for p in feed.pilots {
                 if let d = p.flight_plan?.departure, p.onGround { airportIcaos.insert(d) }
                 if let a = p.flight_plan?.arrival, !a.isEmpty { airportIcaos.insert(a) }
@@ -643,18 +666,22 @@ final class VatsimStore: ObservableObject {
         }
 
         // Pilots.
-        if filters.pilots {
+        if (enabled && filters.pilots) || companyCode != nil {
             for p in feed.pilots {
-                if !filters.groundTraffic && p.onGround { continue }
-                if Double(filters.minAltitude.rawValue) > p.altitude { continue }
-                if filters.onlyMyAirports {
-                    let fp = p.flight_plan
-                    if !myAirports.contains(fp?.departure ?? "") && !myAirports.contains(fp?.arrival ?? "") { continue }
+                let company = companyCode != nil && VatsimPilot.airlineCode(p.callsign) == companyCode
+                if !company {
+                    guard enabled && filters.pilots else { continue }
+                    if !filters.groundTraffic && p.onGround { continue }
+                    if Double(filters.minAltitude.rawValue) > p.altitude { continue }
+                    if filters.onlyMyAirports {
+                        let fp = p.flight_plan
+                        if !myAirports.contains(fp?.departure ?? "") && !myAirports.contains(fp?.arrival ?? "") { continue }
+                    }
                 }
                 features.append(["type": "Feature", "geometry": point(p.longitude, p.latitude),
                                  "properties": ["kind": "pilot", "key": p.callsign, "hdg": p.heading, "label": p.callsign,
-                                                "size": p.iconScale, "hl": p.callsign == highlight,
-                                                "showLabel": filters.pilotLabels]])
+                                                "size": p.iconScale, "hl": p.callsign == highlight || company, "company": company,
+                                                "showLabel": filters.pilotLabels || company]])
             }
         }
 

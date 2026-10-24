@@ -22,20 +22,26 @@ const EVT_AIRCRAFT_LOADED = 1;
 const RETRY_MS = 5000;
 
 /** Keeps a SimConnect connection alive and publishes ownship state to the hub. */
-export function startSim(hub: Hub, lvars: LVars): void {
+export function startSim(hub: Hub, lvars: LVars): () => void {
   let lastSent = 0;
+  let stopped = false;
+  let retry: ReturnType<typeof setTimeout> | undefined;
+  let current: SimConnectConnection | undefined;
   const minIntervalMs = 1000 / config.ownshipHz;
 
   const connect = async (): Promise<void> => {
+    if (stopped) return;
     let handle: SimConnectConnection;
     try {
       const options = config.simconnect ? { remote: config.simconnect } : undefined;
       const res = await open('SimPilot EFB Bridge', Protocol.KittyHawk, options);
       handle = res.handle;
+      if (stopped) { handle.close(); return; }
+      current = handle;
       log.info(`connected to ${res.recvOpen.applicationName}`);
     } catch (err) {
       log.debug(`SimConnect not available (${(err as Error).message}); retrying in ${RETRY_MS / 1000}s`);
-      setTimeout(connect, RETRY_MS);
+      if (!stopped) retry = setTimeout(connect, RETRY_MS);
       return;
     }
 
@@ -67,7 +73,7 @@ export function startSim(hub: Hub, lvars: LVars): void {
     handle.subscribeToSystemEvent(EVT_AIRCRAFT_LOADED, 'AircraftLoaded');
 
     handle.on('event', (ev) => {
-      if (!gone && ev.clientEventId === EVT_AIRCRAFT_LOADED) {
+      if (!gone && !stopped && ev.clientEventId === EVT_AIRCRAFT_LOADED) {
         hub.setSim(true);
         lvars.attach(handle);
         requestTitle();
@@ -75,7 +81,7 @@ export function startSim(hub: Hub, lvars: LVars): void {
     });
 
     handle.on('simObjectData', (rx) => {
-      if (gone) return;
+      if (gone || stopped) return;
       if (rx.requestID === REQ_LVARS) {
         lvars.onData(rx.data);
         return;
@@ -121,20 +127,31 @@ export function startSim(hub: Hub, lvars: LVars): void {
 
     const lost = (why: string) => {
       // 'quit' is usually followed by 'close'; only schedule one reconnect.
-      if (gone) return;
+      if (gone || stopped) return;
       gone = true;
+      if (current === handle) current = undefined;
       lvars.detach();
       log.warn(`SimConnect ${why}; reconnecting in ${RETRY_MS / 1000}s`);
       hub.setSim(false);
-      setTimeout(connect, RETRY_MS);
+      retry = setTimeout(connect, RETRY_MS);
     };
     handle.once('quit', () => lost('quit'));
     handle.once('close', () => lost('closed'));
     handle.on('error', (err) => {
+      if (stopped) return;
       lost(`error: ${err.message}`);
       handle.close();
     });
   };
 
   void connect();
+  return () => {
+    if (stopped) return;
+    stopped = true;
+    clearTimeout(retry);
+    lvars.detach();
+    try { current?.close(); } catch (err) { log.warn('Could not close SimConnect', err); }
+    current = undefined;
+    hub.setSim(false);
+  };
 }

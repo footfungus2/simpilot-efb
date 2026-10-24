@@ -14,6 +14,11 @@ struct MapFilters: Codable, Equatable {
     /// Number of active groups, shown on the NAV button like mPilot's layer counts.
     var activeCount: Int { [route, airports, firs, vor, ndb, dme].filter { $0 }.count }
 
+    static func levels(high: Bool, cruise: Int) -> [Int] {
+        let cruise = cruise > 0 ? max(60, cruise) : 350
+        return high ? [cruise + 30, cruise, cruise - 60].map { $0 - $0 % 10 } : [190, 130, 70]
+    }
+
     static func load() -> MapFilters {
         guard let data = UserDefaults.standard.data(forKey: "mapFilters"),
               let f = try? JSONDecoder().decode(MapFilters.self, from: data) else { return MapFilters() }

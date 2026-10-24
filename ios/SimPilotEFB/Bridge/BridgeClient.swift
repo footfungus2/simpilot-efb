@@ -5,18 +5,8 @@ import Foundation
 @MainActor
 final class OwnshipStore: ObservableObject {
     @Published private(set) var ownship: Ownship?
-    /// While the demo flight runs, sim updates from the bridge are ignored.
-    var demoActive = false {
-        didSet { if !demoActive { ownship = nil } }
-    }
 
     func update(_ o: Ownship?) {
-        guard !demoActive else { return }
-        ownship = o
-    }
-
-    func updateFromDemo(_ o: Ownship) {
-        guard demoActive else { return }
         ownship = o
     }
 }

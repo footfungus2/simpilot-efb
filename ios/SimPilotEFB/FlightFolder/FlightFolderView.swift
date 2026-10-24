@@ -9,12 +9,24 @@ struct FlightFolderView: View {
     @State private var showAddAlternate = false
     @State private var showPack = false
     @AppStorage("extraAlternates") private var extraAlternatesRaw = ""
+    /// Set once the folder is on screen: rows that arrive after that (a newly loaded OFP) stagger in, while the rows
+    /// already there when the folder opens simply come in with it.
+    @State private var appeared = false
 
     var body: some View {
         VStack(spacing: 0) {
             Text("Flight Folder")
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundColor(theme.text)
+                .overlay(alignment: .trailing) {
+                    // Reloading a flight that's already shown: a small spinner beside the title.
+                    if app.ofpLoading && app.ofp != nil {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                            .alignmentGuide(.trailing) { $0[.leading] - 8 }
+                            .transition(.opacity)
+                    }
+                }
                 .padding(.top, 18)
                 .padding(.bottom, 22)
 
@@ -36,20 +48,19 @@ struct FlightFolderView: View {
             ScrollView {
                 VStack(spacing: 0) {
                     separator
-                    if let ofp = app.ofp {
-                        airportRow(ofp.origin, role: .origin)
-                        row(icon: AnyView(RouteIcon()), title: "Route", subtitle: "\(Int(ofp.distanceNm.rounded())) NM") { showRoute = true }
-                        airportRow(ofp.destination, role: .destination)
-                        ForEach(ofp.alternates, id: \.icao) { airportRow($0, role: .alternate) }
-                        ForEach(extraAlternates, id: \.self) { icao in
-                            row(icon: AnyView(AirportSymbol(color: Theme.alternateMagenta)), title: icao, subtitle: "Alternate") { app.openCharts(icao) }
+                    // Flight rows, skeleton rows while the first OFP loads, or the empty state; they cross-fade in place.
+                    ZStack(alignment: .top) {
+                        if let ofp = app.ofp {
+                            flightRows(ofp)
+                                .id(ofp.fetchedAt)
+                                .transition(.opacity)
+                        } else if app.ofpLoading {
+                            loadingRows
+                                .transition(.opacity)
+                        } else {
+                            emptyState
+                                .transition(.opacity)
                         }
-                        GreyPillButton(title: "Add Alternate") { showAddAlternate = true }
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 14)
-                        separator
-                    } else {
-                        emptyState
                     }
                     FlightChartsRow(pack: app.chartPack) { showPack = true }
                     row(icon: AnyView(Image(systemName: "doc").font(.system(size: 18))), title: "Documents", subtitle: nil) { app.showOfp = true }
@@ -57,6 +68,9 @@ struct FlightFolderView: View {
                 }
             }
         }
+        .animation(Motion.smooth, value: app.ofp?.fetchedAt)
+        .animation(Motion.smooth, value: app.ofpLoading)
+        .onAppear { appeared = true }
         .background(theme.sidebar)
         .sheet(isPresented: $showRoute) { RouteSheet().environmentObject(app) }
         .sheet(isPresented: $showNotes) { RouteNotesSheet().environmentObject(app) }
@@ -65,7 +79,7 @@ struct FlightFolderView: View {
             AddAlternateSheet { icao in
                 var list = extraAlternates
                 if !list.contains(icao) { list.append(icao) }
-                extraAlternatesRaw = list.joined(separator: ",")
+                withAnimation(Motion.snappy) { extraAlternatesRaw = list.joined(separator: ",") }
                 app.bridge.send(requestCharts: icao)
             }
         }
@@ -80,15 +94,58 @@ struct FlightFolderView: View {
         Rectangle().fill(theme.separator).frame(height: 1)
     }
 
+    /// The flight's airports and route; they stagger in when a new OFP arrives while the folder is open.
+    private func flightRows(_ ofp: Ofp) -> some View {
+        VStack(spacing: 0) {
+            airportRow(ofp.origin, role: .origin)
+                .staggeredEntrance(0, active: appeared)
+            row(icon: AnyView(RouteIcon()), title: "Route", subtitle: "\(Int(ofp.distanceNm.rounded())) NM") { showRoute = true }
+                .staggeredEntrance(1, active: appeared)
+            airportRow(ofp.destination, role: .destination)
+                .staggeredEntrance(2, active: appeared)
+            ForEach(Array(ofp.alternates.enumerated()), id: \.element.icao) { i, alternate in
+                airportRow(alternate, role: .alternate)
+                    .staggeredEntrance(3 + i, active: appeared)
+            }
+            ForEach(extraAlternates, id: \.self) { icao in
+                row(icon: AnyView(AirportSymbol(color: Theme.alternateMagenta)), title: icao, subtitle: "Alternate") { app.openCharts(icao) }
+                    .transition(.opacity)
+            }
+            GreyPillButton(title: "Add Alternate") { showAddAlternate = true }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
+                .staggeredEntrance(3 + ofp.alternates.count, active: appeared)
+            separator
+        }
+    }
+
+    /// Placeholder rows (airport, route, airport) while the first OFP loads.
+    private var loadingRows: some View {
+        VStack(spacing: 0) {
+            ForEach(0..<3, id: \.self) { i in
+                HStack(spacing: 14) {
+                    SkeletonBlock(width: 24, height: 24, cornerRadius: 12)
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 7) {
+                        SkeletonBlock(width: i == 1 ? 50 : 60, height: 13)
+                        SkeletonBlock(width: [150, 64, 128][i], height: 9)
+                    }
+                    Spacer()
+                }
+                .padding(.horizontal, 18)
+                .frame(height: 62)
+                .overlay(Rectangle().fill(theme.separator).frame(height: 1), alignment: .bottom)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Loading the flight from SimBrief")
+    }
+
     private var emptyState: some View {
         VStack(spacing: 12) {
             Text("No flight loaded").foregroundColor(theme.textSecondary)
-            if app.ofpLoading {
-                ProgressView()
-            } else {
-                GreyPillButton(title: "Load from SimBrief") { Task { await app.loadOfp() } }
-                    .frame(width: 200)
-            }
+            GreyPillButton(title: "Load from SimBrief") { Task { await app.loadOfp() } }
+                .frame(width: 200)
             if let err = app.ofpError {
                 Text(err).font(.footnote).foregroundColor(Theme.warnOrange).multilineTextAlignment(.center)
             }
@@ -125,7 +182,7 @@ struct FlightFolderView: View {
             .contentShape(Rectangle())
             .overlay(Rectangle().fill(theme.separator).frame(height: 1), alignment: .bottom)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressableSoft)
     }
 }
 
@@ -368,7 +425,7 @@ private struct FlightChartsRow: View {
             .contentShape(Rectangle())
             .overlay(Rectangle().fill(theme.separator).frame(height: 1), alignment: .bottom)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressableSoft)
     }
 }
 

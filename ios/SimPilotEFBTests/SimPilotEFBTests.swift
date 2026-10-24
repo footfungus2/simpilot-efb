@@ -81,30 +81,24 @@ final class AiracTests: XCTestCase {
 }
 
 #if DEBUG
-final class TestChartsTests: XCTestCase {
-    /// Checks generated chart georeferencing without live map data or bundled airport charts.
-    @MainActor
-    func testGeneratesGeoreferencedCharts() throws {
-        let features: [[String: Any]] = [
-            ["properties": ["kind": "runway-area"], "geometry": ["type": "Polygon", "coordinates": [[[0.22, 51.88], [0.25, 51.88], [0.25, 51.89], [0.22, 51.89], [0.22, 51.88]]]]],
-            ["properties": ["kind": "stand"], "geometry": ["type": "Point", "coordinates": [0.235, 51.885]]]
-        ]
-        let result = try XCTUnwrap(TestCharts.build(icao: "ZZZZ", name: "Test Airport", features: features))
-        XCTAssertEqual(Set(result.index.categories.map(\.name)), ["AGC", "APC"])
-        let agc = try XCTUnwrap(result.details["test-ZZZZ-AGC"])
-        let page = try XCTUnwrap(agc.pages.first)
-        // EGSS reference point should land on the page, and the corners should round-trip.
-        let p = try XCTUnwrap(page.position(lat: 51.885, lon: 0.235))
-        XCTAssertTrue(p.x > 0 && p.x < page.width && p.y > 0 && p.y < page.height)
-        let proj = try XCTUnwrap(ChartGeoProjection(area: page.areas[0]))
-        let back = proj.unproject(p)
-        XCTAssertEqual(back.lat, 51.885, accuracy: 1e-6)
-        XCTAssertEqual(back.lon, 0.235, accuracy: 1e-6)
-        if let dir = ProcessInfo.processInfo.environment["TEST_CHART_DIR"] {
-            for (path, image) in result.images {
-                let name = path.replacingOccurrences(of: ":", with: "_") + ".png"
-                try image.pngData()?.write(to: URL(fileURLWithPath: dir).appendingPathComponent(name))
-            }
+final class BundledChartsTests: XCTestCase {
+    /// The offline EGSS charts (personal-use PDFs, gitignored — skipped when absent) put the airport on the chart
+    /// and round-trip positions through their georeference.
+    func testOfflineChartsAreGeoreferenced() throws {
+        let charts = BundledCharts.charts(for: "EGSS")
+        try XCTSkipIf(charts.isEmpty, "No offline charts bundled in this checkout")
+        let index = BundledCharts.index(icao: "EGSS", charts: charts)
+        XCTAssertEqual(index.provider, BundledCharts.provider)
+        XCTAssertEqual(index.categories.flatMap(\.charts).count, charts.count)
+        XCTAssertEqual(BundledCharts.title(for: charts), "Offline UK AIP charts")
+        for chart in charts {
+            let page = try XCTUnwrap(chart.detail.pages.first)
+            XCTAssertEqual(page.image, chart.imagePath)
+            // Aerodrome reference point: every bundled SID starts there.
+            let p = try XCTUnwrap(page.position(lat: 51.885, lon: 0.235), chart.detail.chart.name)
+            let back = try XCTUnwrap(ChartGeoProjection(area: page.areas[0])).unproject(p)
+            XCTAssertEqual(back.lat, 51.885, accuracy: 1e-6)
+            XCTAssertEqual(back.lon, 0.235, accuracy: 1e-6)
         }
     }
 }

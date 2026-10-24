@@ -59,9 +59,50 @@ jobs:
         run: |
           $tokens = $null
           $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Join-Path $PWD 'sim-package/build.ps1'), [ref]$tokens, [ref]$errors) | Out-Null
-          if ($errors.Count) { throw ($errors | Out-String) }
+          foreach ($file in 'sim-package/build.ps1', 'scripts/package-pc.ps1', 'scripts/test-pc.ps1') {
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Join-Path $PWD $file), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) { throw ($errors | Out-String) }
+          }
+      - name: Check PC packaging and installer behavior
+        shell: pwsh
+        run: ./scripts/test-pc.ps1
+
+  # The PC download: SimPilot Bridge.exe (no Node.js needed) and the ready-made chart panel with its installer.
+  pc-package:
+    needs: [checks, installer]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            bridge/package-lock.json
+            sim-package/package-lock.json
+      - name: Build SimPilot Bridge.exe
+        working-directory: bridge
+        run: |
+          npm ci
+          npm run package:exe
+      - name: Build the chart panel
+        working-directory: sim-package
+        run: |
+          npm ci
+          npm run build
+      - name: Stage SimPilot-for-PC.zip
+        shell: pwsh
+        run: ./scripts/package-pc.ps1 -OutDir release-pc
+      - name: Upload PC package
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimPilot-for-PC
+          path: release-pc/SimPilot-for-PC.zip
+          if-no-files-found: error
 
   build:
     needs: [checks, installer]
@@ -109,7 +150,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build
+    needs: [build, pc-package]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -124,12 +165,17 @@ jobs:
         with:
           name: SimPilotEFB-ipa
           path: artifact
+      - uses: actions/download-artifact@v4
+        with:
+          name: SimPilot-for-PC
+          path: artifact
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           ipa="artifact/SimPilotEFB.ipa"
           manifest="artifact/update.json"
+          pc="artifact/SimPilot-for-PC.zip"
           version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$manifest")"
           build="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["build"])' "$manifest")"
           head="$(gh api "repos/${GITHUB_REPOSITORY}/commits/main" --jq .sha)"
@@ -140,9 +186,9 @@ jobs:
           tag="v${version}-build.${build}"
           short="${GITHUB_SHA::7}"
           {
-            echo "## SimPilot EFB ${version} (build ${build})"
+            cat "docs/updates/${version}.md"
             echo
-            echo "Commit \`${short}\` · $(date -u '+%-d %b %Y')"
+            echo "Build ${build} · commit \`${short}\` · $(date -u '+%-d %b %Y')"
             echo
             echo "### Install"
             echo
@@ -154,8 +200,13 @@ jobs:
             echo
             echo "Keep the same installer and signing identity when updating to retain app data."
             echo
-            echo "Live aircraft, the sim's charts and Fenix A320 controls require the PC bridge and SimPilot Link panel."
-            echo "[Setup instructions](https://github.com/${GITHUB_REPOSITORY}#connect-to-msfs-2024)."
+            echo "### Connect to MSFS 2024 (optional)"
+            echo
+            echo "On the PC, download **SimPilot-for-PC.zip**, choose **Extract All**, open **SimPilot for PC** and double-click"
+            echo "**SimPilot Bridge** (nothing to install) for live aircraft position and Fenix A320 controls. Allow Private networks"
+            echo "if Windows Firewall asks; it may call the app **Node.js JavaScript Runtime**. Keep both devices on the same local network."
+            echo "For charts, follow **Read me.txt** for the optional panel and MSFS 2024 SDK, then restart the sim."
+            echo "[Step-by-step guide](https://github.com/${GITHUB_REPOSITORY}#connect-to-msfs-2024)."
             echo
             echo "### Included"
             echo
@@ -172,11 +223,11 @@ jobs:
           fi
           # Keep failed uploads hidden so the previous release remains available.
           if [[ "$draft" == "true" ]]; then
-            gh release upload "$tag" "$ipa" "$manifest" --clobber
+            gh release upload "$tag" "$ipa" "$manifest" "$pc" --clobber
           else
-            gh release create "$tag" "$ipa" "$manifest" \
-              --target "${GITHUB_SHA}" --title "SimPilot EFB ${version} (build ${build})" \
+            gh release create "$tag" "$ipa" "$manifest" "$pc" \
+              --target "${GITHUB_SHA}" --title "SimPilot EFB ${version}" \
               --notes-file notes.md --draft
           fi
-          gh release edit "$tag" --title "SimPilot EFB ${version} (build ${build})" \
+          gh release edit "$tag" --title "SimPilot EFB ${version}" \
             --notes-file notes.md --draft=false --latest

@@ -120,27 +120,6 @@ struct ChartGeoProjection {
         return (lat, lon)
     }
 
-    /// A georeferenced area that fits a lat/lon box into `region` (chart units) at a uniform scale, centred.
-    /// Used for the generated test charts, so they georeference exactly like Lido pages do.
-    static func area(fitting box: (minLat: Double, minLon: Double, maxLat: Double, maxLon: Double), into region: CGRect) -> ChartArea? {
-        let midLat = (box.minLat + box.maxLat) / 2
-        let proj = ChartProjection(standardParallel1: midLat - 0.5, standardParallel2: midLat + 0.5,
-                                   centralMeridian: (box.minLon + box.maxLon) / 2)
-        let world = ChartRect(upperLeft: [box.minLon, box.maxLat], lowerRight: [box.maxLon, box.minLat], orientation: 0)
-        // Probe at an arbitrary scale to learn the box's projected aspect ratio.
-        let probe = ChartArea(layer: "plan", geoReferenced: true,
-                              chartRect: ChartRect(upperLeft: [0, 0], lowerRight: [100, 100], orientation: 0),
-                              worldRect: world, projection: proj)
-        guard let lr = ChartGeoProjection(area: probe)?.project(lat: box.minLat, lon: box.maxLon), lr.x > 0, lr.y > 0 else { return nil }
-        let k = min(Double(region.width) / Double(lr.x), Double(region.height) / Double(lr.y))
-        let w = Double(lr.x) * k, h = Double(lr.y) * k
-        let x0 = Double(region.minX) + (Double(region.width) - w) / 2
-        let y0 = Double(region.minY) + (Double(region.height) - h) / 2
-        return ChartArea(layer: "plan", geoReferenced: true,
-                         chartRect: ChartRect(upperLeft: [x0, y0], lowerRight: [x0 + w, y0 + h], orientation: 0),
-                         worldRect: world, projection: proj)
-    }
-
     /// Inverse of `raw`.
     private static func inverseRaw(x: Double, y: Double, n: Double, F: Double, cm: Double) -> (lat: Double, lon: Double) {
         let sign: Double = n < 0 ? -1 : 1

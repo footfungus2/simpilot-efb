@@ -16,7 +16,10 @@ struct VatsimAssistantPage: View {
         VStack(spacing: 16) {
             callsignCard
             if let f = assistant.flight {
-                if assistant.isStale { staleBanner }
+                if assistant.isStale {
+                    staleBanner
+                        .transition(.card)
+                }
                 Group {
                     AdaptiveStack(compact: compact) {
                         squawkCard(f)
@@ -29,11 +32,14 @@ struct VatsimAssistantPage: View {
                     routeCard(f)
                 }
                 .opacity(assistant.isStale ? 0.5 : 1)
+                .transition(.opacity)
             }
             Text("From the public VATSIM data feed, using only your callsign's entry. It shows what's saved on your flight plan: the assigned squawk, cruise level and route, and when they change. Spoken instructions such as headings and levels aren't published by VATSIM.")
                 .font(.system(size: 12)).foregroundColor(theme.textSecondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .animation(Motion.smooth, value: assistant.flight != nil)
+        .animation(Motion.smooth, value: assistant.isStale)
         .onAppear {
             if assistant.callsign.isEmpty, let cs = app.ofp?.callsign { assistant.callsign = cs }
             draft = assistant.callsign
@@ -57,7 +63,8 @@ struct VatsimAssistantPage: View {
                         .background(RoundedRectangle(cornerRadius: 9).fill(theme.pill))
                         .accessibilityLabel("VATSIM callsign")
                     if let cs = app.ofp?.callsign, cs != assistant.callsign {
-                        ActionButton(label: "Use \(cs)") { draft = cs; assistant.callsign = cs }
+                        ActionButton(label: "Use \(cs)") { withAnimation(Motion.smooth) { draft = cs; assistant.callsign = cs } }
+                            .transition(.opacity)
                     }
                 }
                 Spacer(minLength: 0)
@@ -90,8 +97,10 @@ struct VatsimAssistantPage: View {
         }()
         return HStack(spacing: 8) {
             Circle().fill(color).frame(width: 8, height: 8)
+                .pulse(active: assistant.online == nil && !assistant.callsign.isEmpty && !assistant.isStale && assistant.error == nil)
             Text(text).font(.system(size: 13, weight: .medium)).foregroundColor(theme.textSecondary)
         }
+        .animation(Motion.smooth, value: color)
         .accessibilityElement(children: .combine)
     }
 
@@ -116,9 +125,11 @@ struct VatsimAssistantPage: View {
                 HStack(alignment: .firstTextBaseline) {
                     Text(sq).font(.system(size: 48, weight: .semibold, design: .rounded)).monospacedDigit()
                         .foregroundColor(current == sq ? Theme.okGreen : Theme.ownshipBlue)
+                        .crossfadeOnChange(of: sq)
                     Spacer()
                     if current == sq {
                         Label("Set", systemImage: "checkmark.circle.fill").font(.system(size: 15, weight: .semibold)).foregroundColor(Theme.okGreen)
+                            .transition(.pop)
                     }
                 }
                 if current != sq {
@@ -129,8 +140,8 @@ struct VatsimAssistantPage: View {
                         ActionButton(label: busy ? "Setting…" : "Set in Fenix", prominent: true, pending: busy,
                                      accessibilityName: "Set squawk \(sq) in the Fenix") { commander.squawk(sq) }
                             .disabled(!canSet)
-                            .opacity(canSet || busy ? 1 : 0.5)
                     }
+                    .transition(.opacity)
                     if !fenixLive {
                         Text("Connect the Fenix to set it from here.").font(.system(size: 12)).foregroundColor(theme.textSecondary)
                     }
@@ -141,12 +152,15 @@ struct VatsimAssistantPage: View {
                     .font(.system(size: 13)).foregroundColor(theme.textSecondary)
             }
         }
+        .animation(Motion.bouncy, value: f.assignedSquawk.map { $0 == current })
+        .animation(Motion.smooth, value: f.assignedSquawk)
     }
 
     private func levelCard(_ f: VatsimAssistant.Flight) -> some View {
         Card(title: "Cruise level in flight plan") {
             Text(VatsimAssistant.level(f.cruise) ?? "–")
                 .font(.system(size: 48, weight: .semibold, design: .rounded)).monospacedDigit().foregroundColor(theme.text)
+                .crossfadeOnChange(of: f.cruise)
             if let filed = app.ofp?.cruiseFl, let now = VatsimAssistant.level(f.cruise), now != "FL\(filed)" {
                 Text("Your SimBrief plan says FL\(filed)").font(.system(size: 13)).foregroundColor(Theme.warnOrange)
             } else {
@@ -172,6 +186,8 @@ struct VatsimAssistantPage: View {
             Text("Estimated from published sector boundaries. The controller actually working you can differ; follow handoffs on frequency.")
                 .font(.system(size: 12)).foregroundColor(theme.textSecondary)
         }
+        // Controllers logging on or off fade in and out.
+        .animation(Motion.smooth, value: (assistant.covering + assistant.departureStations + assistant.arrivalStations).map(\.id))
     }
 
     private func section(_ title: String, _ list: [VatsimAssistant.Contact]) -> some View {
@@ -229,9 +245,11 @@ struct VatsimAssistantPage: View {
                         }
                     }
                     .accessibilityElement(children: .combine)
+                    .transition(.card)
                 }
             }
         }
+        .animation(Motion.bouncy, value: assistant.changes.map(\.id))
     }
 
     private func routeCard(_ f: VatsimAssistant.Flight) -> some View {

@@ -1,14 +1,18 @@
 import CoreLocation
 import SwiftUI
 
-/// Details for a tapped route waypoint, navaid or airport.
+/// Details for a tapped route waypoint, navaid or airport (airports and WX indicators also show METAR and TAF).
 struct WaypointInfoCard: View {
     @EnvironmentObject private var app: AppState
     @Environment(\.theme) private var theme
     let pick: MapPick
     let ownship: Ownship?
     let onClose: () -> Void
-    @State private var metar: String?
+    @State private var weather: AirportWeather?
+    @State private var weatherError: String?
+    @State private var weatherLoading = false
+    /// The airport the latest weather request is for (a slower, older request must not overwrite it).
+    @State private var weatherRequest = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -23,7 +27,7 @@ struct WaypointInfoCard: View {
                     Image(systemName: "xmark").font(.system(size: 12, weight: .bold)).foregroundColor(theme.textSecondary)
                         .frame(width: 28, height: 28).background(Circle().fill(theme.pill))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressable)
                 .accessibilityLabel("Close")
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
@@ -37,10 +41,10 @@ struct WaypointInfoCard: View {
                         }
                     }
                 }
-                if let metar {
-                    Text(metar).font(.system(size: 12, design: .monospaced)).foregroundColor(theme.text.opacity(0.85))
-                        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(theme.pill))
+                if pick.kind == .airport {
+                    AirportWeatherSection(icao: icao, weather: weather, error: weatherError, loading: weatherLoading) {
+                        Task { await loadWeather(force: true) }
+                    }
                 }
                 Text(Self.dms(pick.coordinate)).font(.system(size: 12)).monospacedDigit().foregroundColor(theme.textSecondary)
             }
@@ -50,7 +54,7 @@ struct WaypointInfoCard: View {
         .background(RoundedRectangle(cornerRadius: 14).fill(theme.sidebar))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(theme.separator))
         .shadow(color: .black.opacity(0.35), radius: 16, y: 6)
-        .task(id: pick.id) { await loadMetar() }
+        .task(id: pick.id) { await loadWeather(force: false) }
     }
 
     // MARK: Content per kind
@@ -62,13 +66,16 @@ struct WaypointInfoCard: View {
 
     private var a: [String: String] { pick.attributes }
 
+    private var icao: String { a["icao"] ?? pick.id }
+
     private var title: String {
         switch pick.kind {
         case .fix: return fix?.ident ?? a["ident"] ?? "Waypoint"
         case .navaid: return "\(a["id"] ?? "") · \(a["name"] ?? "")"
         case .airport:
-            let icao = a["icao"] ?? pick.id
-            return "\(icao) · \(a["name"] ?? VatsimReference.shared.airports[icao]?.name ?? "")"
+            // AWC names read "Corvallis Muni, OR, US" (stations that aren't in the airport list).
+            let awcName = weather?.icao == icao ? weather?.name.flatMap { $0.split(separator: ",").first.map(String.init) } : nil
+            return "\(icao) · \(a["name"] ?? VatsimReference.shared.airports[icao]?.name ?? awcName ?? "")"
         }
     }
 
@@ -134,11 +141,29 @@ struct WaypointInfoCard: View {
         return out
     }
 
-    private func loadMetar() async {
-        metar = nil
+    private func loadWeather(force: Bool) async {
         guard pick.kind == .airport else { return }
-        let icao = a["icao"] ?? pick.id
-        metar = await WeatherService.metar(icao: icao)
+        let icao = icao
+        weatherRequest = icao
+        if weather?.icao != icao {
+            weather = nil
+            weatherError = nil
+        }
+        weatherLoading = true
+        do {
+            let result = try await WeatherService.airport(icao, force: force)
+            guard weatherRequest == icao else { return }
+            withAnimation(Motion.smooth) {
+                weather = result
+                weatherError = nil
+                weatherLoading = false
+            }
+        } catch {
+            guard weatherRequest == icao else { return }
+            weatherLoading = false
+            guard !Task.isCancelled else { return }
+            withAnimation(Motion.smooth) { weatherError = WeatherService.message(for: error) }
+        }
     }
 
     static func dms(_ c: CLLocationCoordinate2D) -> String {
@@ -155,4 +180,121 @@ struct WaypointInfoCard: View {
         f.dateFormat = "HH:mm'Z'"
         return f.string(from: d)
     }
+}
+
+/// METAR and TAF on the airport card, raw or decoded (the briefing's Decoded switch), with the TAF group at the
+/// weather time highlighted.
+private struct AirportWeatherSection: View {
+    @EnvironmentObject private var app: AppState
+    @Environment(\.theme) private var theme
+    @AppStorage(WeatherDecoder.decodedSettingKey) private var decoded = false
+    let icao: String
+    let weather: AirportWeather?
+    let error: String?
+    let loading: Bool
+    let onRetry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("WEATHER").font(.system(size: 10, weight: .semibold)).foregroundColor(theme.textSecondary)
+                if let m = weather?.metar {
+                    WxCategoryChip(category: m.category)
+                    if let observed = m.observed { ObservationAge(date: observed) }
+                }
+                Spacer(minLength: 4)
+                if weather?.metar != nil || weather?.taf != nil {
+                    Picker("Format", selection: Binding(get: { decoded }, set: { on in withAnimation(Motion.smooth) { decoded = on } })) {
+                        Text("Raw").tag(false)
+                        Text("Decoded").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 136)
+                }
+            }
+            content
+        }
+        .animation(Motion.smooth, value: decoded)
+    }
+
+    @ViewBuilder private var content: some View {
+        if let w = weather, w.icao == icao {
+            FittingScrollView(maxHeight: 300) { reports(w) }
+                .transition(.opacity)
+        } else if let error {
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundColor(Theme.warnOrange)
+                Text(error).foregroundColor(theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                Button("Retry", action: onRetry).font(.system(size: 13, weight: .semibold)).disabled(loading)
+            }
+            .font(.system(size: 13))
+        } else {
+            VStack(alignment: .leading, spacing: 7) {
+                SkeletonBlock(height: 12)
+                SkeletonBlock(width: 220, height: 12)
+                SkeletonBlock(width: 280, height: 12)
+            }
+            .padding(.vertical, 2)
+            .accessibilityLabel("Loading weather")
+        }
+    }
+
+    private func reports(_ w: AirportWeather) -> some View {
+        let imperial = WeatherDecoder.usesImperial(w.icao)
+        return VStack(alignment: .leading, spacing: 10) {
+            if let m = w.metar {
+                if decoded { MetarDecodedRows(metar: m, imperial: imperial) } else { RawWeatherText(text: m.raw, size: 12) }
+            } else {
+                note(w.metarError ?? "No METAR available.", warning: w.metarError != nil)
+            }
+            if let t = w.taf {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text("TAF").font(.system(size: 10, weight: .semibold)).foregroundColor(theme.textSecondary)
+                        Text("valid \(WeatherDecoder.time(t.validFrom)) – \(WeatherDecoder.time(t.validTo))")
+                            .font(.system(size: 11)).foregroundColor(theme.textSecondary)
+                        Spacer(minLength: 4)
+                        if app.wxOffsetHours > 0 {
+                            Text("at \(WeatherDecoder.time(app.weatherTime))").font(.system(size: 11, weight: .semibold))
+                                .foregroundColor(theme.accentColor)
+                        }
+                    }
+                    TafLinesView(taf: t, time: app.weatherTime, decoded: decoded, imperial: imperial, compact: true)
+                }
+            } else {
+                note(w.tafError ?? "No TAF issued.", warning: w.tafError != nil)
+            }
+        }
+    }
+
+    private func note(_ text: String, warning: Bool) -> some View {
+        HStack(spacing: 6) {
+            if warning { Image(systemName: "exclamationmark.triangle.fill").foregroundColor(Theme.warnOrange) }
+            Text(text).foregroundColor(theme.textSecondary)
+        }
+        .font(.system(size: 13))
+    }
+}
+
+/// A vertical ScrollView that is only as tall as its content, up to `maxHeight`.
+struct FittingScrollView<Content: View>: View {
+    let maxHeight: CGFloat
+    @ViewBuilder let content: Content
+    @State private var contentHeight: CGFloat = 0
+
+    var body: some View {
+        ScrollView(showsIndicators: contentHeight > maxHeight) {
+            content.background(GeometryReader { g in
+                Color.clear.preference(key: FittingHeightKey.self, value: g.size.height)
+            })
+        }
+        .frame(height: min(max(contentHeight, 1), maxHeight))
+        .onPreferenceChange(FittingHeightKey.self) { contentHeight = $0 }
+    }
+}
+
+private struct FittingHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }

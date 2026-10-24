@@ -16,7 +16,9 @@ struct RoundIconButton: View {
                 .frame(width: 36, height: 36)
                 .background(Circle().fill(fill ?? theme.pill))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressable)
+        .animation(Motion.smooth, value: tint)
+        .animation(Motion.smooth, value: fill)
     }
 }
 
@@ -34,11 +36,14 @@ struct PillGroup<Content: View>: View {
 }
 
 /// Icon button inside a PillGroup; `selected` shows the blue round fill used for the active module.
+/// Pass a `selectionNamespace` (one selected icon per namespace) and the fill becomes one circle that slides between
+/// the icons of the group; without it the fill fades in place.
 struct PillIcon: View {
     @Environment(\.theme) private var theme
     let systemName: String
     var selected = false
     var label: String?
+    var selectionNamespace: Namespace.ID?
     let action: () -> Void
 
     var body: some View {
@@ -50,9 +55,24 @@ struct PillIcon: View {
             .foregroundColor(selected ? .white : theme.text)
             .frame(minWidth: 32, minHeight: 32)
             .padding(.horizontal, label == nil ? 0 : 6)
-            .background(Circle().fill(selected ? Theme.selectedBlue : Color.clear).frame(width: 32, height: 32).opacity(label == nil ? 1 : 0))
+            .background(selectionFill)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressable)
+        .animation(Motion.snappy, value: selected)
+    }
+
+    @ViewBuilder private var selectionFill: some View {
+        if label != nil {
+            EmptyView() // text pills (e.g. the clock) have no round fill
+        } else if let selectionNamespace {
+            if selected {
+                Circle().fill(Theme.selectedBlue)
+                    .frame(width: 32, height: 32)
+                    .matchedGeometryEffect(id: "pillSelection", in: selectionNamespace)
+            }
+        } else {
+            Circle().fill(selected ? Theme.selectedBlue : Color.clear).frame(width: 32, height: 32)
+        }
     }
 }
 
@@ -70,6 +90,6 @@ struct GreyPillButton: View {
                 .frame(maxWidth: .infinity, minHeight: 30)
                 .background(RoundedRectangle(cornerRadius: 6).fill(theme.pillStrong))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressableSoft)
     }
 }

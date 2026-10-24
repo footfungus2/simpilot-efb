@@ -5,7 +5,6 @@ import SwiftUI
 enum FenixLink: Equatable {
     case noBridge
     case noSim
-    case demo
     case staleSim
     case wrongAircraft(String)
     case waiting
@@ -14,11 +13,10 @@ enum FenixLink: Equatable {
     /// How old the bridge's last aircraft position may be before the sim counts as not sending data.
     static let maxDataAge: TimeInterval = 5
 
-    static func evaluate(bridgeConnected: Bool, simConnected: Bool, aircraftTitle: String?, demoActive: Bool,
+    static func evaluate(bridgeConnected: Bool, simConnected: Bool, aircraftTitle: String?,
                          lastSimData: Date?, hasCockpitValues: Bool, now: Date = Date()) -> FenixLink {
         guard bridgeConnected else { return .noBridge }
         guard simConnected else { return .noSim }
-        if demoActive { return .demo }
         guard let last = lastSimData, now.timeIntervalSince(last) <= maxDataAge else { return .staleSim }
         let title = aircraftTitle ?? ""
         guard title.lowercased().contains("fenix") else { return .wrongAircraft(title) }
@@ -31,7 +29,6 @@ enum FenixLink: Equatable {
         switch self {
         case .noBridge: return "PC bridge not connected"
         case .noSim: return "MSFS isn't running"
-        case .demo: return "Demo flight running: stop it in Settings to control the sim"
         case .staleSim: return "No data from the sim in the last few seconds"
         case let .wrongAircraft(t): return "Load the Fenix A320" + (t.isEmpty ? "" : " (now: \(t))")
         case .waiting: return "Waiting for the Fenix cockpit…"
@@ -55,17 +52,21 @@ final class FenixCommander: ObservableObject {
     /// Target value of pending switch changes, so a picker can mark the option it's moving to.
     @Published private(set) var pendingTargets: [String: Int] = [:]
     @Published private(set) var notice: Notice?
+    /// Keys whose command the sim confirmed a moment ago, so the control can flash a checkmark.
+    @Published private(set) var confirmed: Set<String> = []
 
     private let bridge: BridgeClient
     private var vars: AircraftVars { bridge.aircraft }
     private let confirmTimeout: TimeInterval = 3
     private var stepTasks: [String: Task<Void, Never>] = [:]
+    private var confirmFlashes: [String: Int] = [:]
 
     init(bridge: BridgeClient) {
         self.bridge = bridge
     }
 
     func isPending(_ key: String) -> Bool { pending.contains(key) }
+    func isConfirmed(_ key: String) -> Bool { confirmed.contains(key) }
 
     /// Sets a switch/selector variable and waits for the sim to report the new position.
     func set(_ v: String, _ n: Int, label: String) {
@@ -148,14 +149,29 @@ final class FenixCommander: ObservableObject {
         pending.insert(key)
         if let target { pendingTargets[key] = target }
         Task {
+            var done = false
             do {
                 let message = try await work()
+                done = true
                 if announce { show(message ?? "\(label) done", isError: false) }
             } catch {
                 show(error.localizedDescription, isError: true)
             }
             pending.remove(key)
             pendingTargets[key] = nil
+            if done { flashConfirmed(key) }
+        }
+    }
+
+    /// Marks `key` as just confirmed for a moment (a newer confirmation of the same key restarts the moment).
+    private func flashConfirmed(_ key: String) {
+        let flash = (confirmFlashes[key] ?? 0) + 1
+        confirmFlashes[key] = flash
+        confirmed.insert(key)
+        Task {
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            guard confirmFlashes[key] == flash else { return }
+            confirmed.remove(key)
         }
     }
 

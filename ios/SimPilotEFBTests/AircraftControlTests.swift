@@ -7,9 +7,9 @@ import XCTest
 final class FenixLinkTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
-    private func link(bridge: Bool = true, sim: Bool = true, title: String? = "FenixA320 IAE", demo: Bool = false,
+    private func link(bridge: Bool = true, sim: Bool = true, title: String? = "FenixA320 IAE",
                       dataAge: TimeInterval? = 1, values: Bool = true) -> FenixLink {
-        FenixLink.evaluate(bridgeConnected: bridge, simConnected: sim, aircraftTitle: title, demoActive: demo,
+        FenixLink.evaluate(bridgeConnected: bridge, simConnected: sim, aircraftTitle: title,
                            lastSimData: dataAge.map { now.addingTimeInterval(-$0) }, hasCockpitValues: values, now: now)
     }
 
@@ -20,7 +20,6 @@ final class FenixLinkTests: XCTestCase {
     func testEachMissingPieceBlocksControl() {
         XCTAssertEqual(link(bridge: false), .noBridge)
         XCTAssertEqual(link(sim: false), .noSim)
-        XCTAssertEqual(link(demo: true), .demo)
         XCTAssertEqual(link(dataAge: nil), .staleSim)
         XCTAssertEqual(link(dataAge: FenixLink.maxDataAge + 1), .staleSim)
         XCTAssertEqual(link(title: "Airbus A320neo Asobo"), .wrongAircraft("Airbus A320neo Asobo"))

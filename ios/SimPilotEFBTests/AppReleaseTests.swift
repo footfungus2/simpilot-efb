@@ -3,6 +3,7 @@ import XCTest
 
 final class AppReleaseTests: XCTestCase {
     func testVersionAndBuildOrdering() {
+        XCTAssertTrue(AppRelease(version: "0.1.1", build: 1).isNewer(than: "0.1.0", build: 99))
         XCTAssertTrue(AppRelease(version: "0.1.0", build: 12).isNewer(than: "0.1.0", build: 11))
         XCTAssertFalse(AppRelease(version: "0.1.0", build: 12).isNewer(than: "0.1.0", build: 12))
         XCTAssertFalse(AppRelease(version: "0.1.0", build: 12).isNewer(than: "0.1.0", build: 13))

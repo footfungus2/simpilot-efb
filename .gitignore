@@ -27,9 +27,20 @@ ios/SimPilotEFB/Resources/TestCharts/*.pdf
 
 # stray output from other tools
 /Users/
+/release-pc/
 
 # personal signing team (see ios/Signing.xcconfig)
 ios/Local.xcconfig
 
 # local assistant notes about this machine/setup
 CLAUDE.md
+/COMPLETION_PLAN.md
+/HANDOFF.md
+/docs/completion-*.md
+/.claude/
+/.codex/
+/.agents/
+
+# Python test caches
+__pycache__/
+*.py[cod]

@@ -6,12 +6,34 @@ struct SettingsView: View {
     @EnvironmentObject private var updates: UpdateChecker
     @Environment(\.openURL) private var openURL
     @Environment(\.presentationMode) private var presentationMode
+    @Environment(\.theme) private var theme
     @State private var hostDraft = ""
     @State private var simbriefDraft = ""
 
     var body: some View {
         NavigationView {
             Form {
+                Section {
+                    NavigationLink {
+                        CustomizationView()
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "paintpalette.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(.white)
+                                .frame(width: 30, height: 30)
+                                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(theme.accentColor))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Customization")
+                                Text("Theme, accent colour, animations, map and start screen")
+                                    .font(.footnote)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+
                 Section(header: Text("Bridge"), footer: Text("Leave empty to find the bridge automatically. Otherwise enter the PC's address shown in the bridge window, e.g. 192.168.1.20:8380.")) {
                     TextField("Auto-discover", text: $hostDraft)
                         .keyboardType(.numbersAndPunctuation)
@@ -47,28 +69,6 @@ struct SettingsView: View {
                     if let ofp = app.ofp {
                         LabeledRow("Loaded", "\(ofp.callsign) \(ofp.origin.icao)–\(ofp.destination.icao)")
                     }
-                }
-
-                #if DEBUG
-                Section(header: Text("Demo flight (no simulator)"),
-                        footer: Text("Flies a simulated aircraft along your SimBrief route so you can test the map, vertical profile and charts without MSFS or the bridge.")) {
-                    Toggle("Fly the loaded route", isOn: $app.demoEnabled)
-                        .disabled(app.ofp == nil)
-                    Picker("Speed", selection: $app.demoSpeed) {
-                        Text("1×").tag(1.0)
-                        Text("8×").tag(8.0)
-                        Text("32×").tag(32.0)
-                        Text("128×").tag(128.0)
-                    }
-                    .pickerStyle(.segmented)
-                    Button("Restart from departure") { app.restartDemo() }
-                        .disabled(!app.demoEnabled)
-                }
-
-                #endif
-
-                Section(header: Text("Display")) {
-                    Toggle("Night mode", isOn: $app.night)
                 }
 
                 Section(header: Text("Help")) {
@@ -119,6 +119,14 @@ struct SettingsView: View {
                     LabeledRow("Version", Bundle.main.shortVersion)
                 }
             }
+            // Status rows that come and go (errors, spinners, the update button) fade instead of popping.
+            .animation(Motion.smooth, value: bridge.lastError)
+            .animation(Motion.smooth, value: app.ofpError)
+            .animation(Motion.smooth, value: app.ofpLoading)
+            .animation(Motion.smooth, value: app.ofp?.fetchedAt)
+            .animation(Motion.smooth, value: updates.checking)
+            .animation(Motion.smooth, value: updates.message)
+            .animation(Motion.smooth, value: updates.available?.version)
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -22,6 +22,7 @@ struct VatsimInfoCard: View {
         .background(RoundedRectangle(cornerRadius: 14).fill(theme.sidebar))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(theme.separator, lineWidth: 1))
         .shadow(color: .black.opacity(0.35), radius: 16, y: 6)
+        .animation(Motion.smooth, value: expanded)
     }
 
     // MARK: Header
@@ -47,7 +48,7 @@ struct VatsimInfoCard: View {
                     .frame(width: 28, height: 28)
                     .background(Circle().fill(theme.pill))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressable)
             .accessibilityLabel("Close")
         }
         .padding(.horizontal, 16)
@@ -267,7 +268,7 @@ private struct AirportDetails: View {
                         }
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressableSoft)
                     if expanded.contains(c.callsign) {
                         ControllerDetails(controller: c, bookedUntil: store.bookedUntil(c.callsign), compact: true)
                             .padding(.leading, 32)
@@ -332,7 +333,8 @@ private struct PilotDetails: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(RoundedRectangle(cornerRadius: 8).fill(theme.pill))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressableSoft)
+                .animation(Motion.smooth, value: showRoute)
             }
         }
     }

@@ -7,6 +7,9 @@ struct BottomToolbar: View {
     @Environment(\.theme) private var theme
     var chartNav: ChartNavigation?
     @State private var showTaxi = false
+    @State private var showText = false
+    @Namespace private var moduleSelection
+    @Namespace private var chartSelection
 
     var body: some View {
         HStack(spacing: 12) {
@@ -23,12 +26,12 @@ struct BottomToolbar: View {
             }
             Spacer()
             PillGroup {
-                PillIcon(systemName: "doc", selected: app.module == .charts) {
+                PillIcon(systemName: "doc", selected: app.module == .charts, selectionNamespace: moduleSelection) {
                     if app.chartsAirport == nil { app.chartsAirport = app.ofp?.origin.icao }
                     app.module = .charts
                 }
-                PillIcon(systemName: "map", selected: app.module == .map) { app.module = .map }
-                PillIcon(systemName: "airplane", selected: app.module == .aircraft) { app.module = .aircraft }
+                PillIcon(systemName: "map", selected: app.module == .map, selectionNamespace: moduleSelection) { app.module = .map }
+                PillIcon(systemName: "airplane", selected: app.module == .aircraft, selectionNamespace: moduleSelection) { app.module = .aircraft }
                 PillIcon(systemName: "pencil.tip", selected: app.annotating) {
                     if app.module != .charts {
                         if app.chartsAirport == nil { app.chartsAirport = app.ofp?.origin.icao }
@@ -41,6 +44,7 @@ struct BottomToolbar: View {
         .padding(.horizontal, 12)
         .frame(height: 50)
         .background(theme.bar)
+        .animation(Motion.layout, value: app.module)
     }
 
     private var mapLeft: some View {
@@ -53,33 +57,49 @@ struct BottomToolbar: View {
     }
 
     private func segment(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button { withAnimation(Motion.snappy, action) } label: {
             Text(title)
                 .font(.system(size: 13))
                 .foregroundColor(theme.text)
                 .padding(.horizontal, 12)
                 .frame(height: 26)
-                .background(Capsule().fill(selected ? theme.pillStrong : Color.clear))
+                .background(Group {
+                    if selected { Capsule().fill(theme.pillStrong).matchedGeometryEffect(id: "chart", in: chartSelection) }
+                })
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressable)
     }
 
     private var mapTools: some View {
         PillGroup {
-            Button { app.showVerticalProfile.toggle() } label: {
+            Button { withAnimation(Motion.layout) { app.showVerticalProfile.toggle() } } label: {
                 MountainIcon()
                     .stroke(app.showVerticalProfile ? Color.white : theme.text, lineWidth: 1.6)
                     .frame(width: 20, height: 14)
                     .frame(width: 32, height: 32)
                     .background(Circle().fill(app.showVerticalProfile ? Theme.selectedBlue : Color.clear))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressable)
+            .accessibilityLabel("Vertical profile")
             PillIcon(systemName: "arrow.triangle.turn.up.right.diamond", selected: !app.taxiRoute.isEmpty) { showTaxi = true }
                 .popover(isPresented: $showTaxi) { TaxiRoutePanel().environmentObject(app) }
                 .accessibilityLabel("Taxi route")
             PillIcon(systemName: "info.circle") { app.showOfp = true }
-            PillIcon(systemName: "textformat.size") {}
-            PillIcon(systemName: "ruler") {}
+            PillIcon(systemName: "textformat.size", selected: showText) { showText = true }
+                .accessibilityLabel("Map text size")
+                .popover(isPresented: $showText) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Map text").font(.headline)
+                        Picker("Map text size", selection: $app.mapTextSize) {
+                            ForEach(MapTextSize.allCases) { Text($0.shortTitle).tag($0) }
+                        }.pickerStyle(.segmented)
+                        Text("EGSS  CLN  D 114.55").font(.system(size: 16 * app.mapTextSize.scale))
+                            .animation(Motion.snappy, value: app.mapTextSize)
+                    }.padding().frame(width: 300).themed(theme)
+                }
+            PillIcon(systemName: "ruler", selected: app.rulerActive) {
+                withAnimation(Motion.bouncy) { app.rulerActive.toggle() }
+            }.accessibilityLabel(app.rulerActive ? "Close ruler" : "Measure distance and bearing")
         }
     }
 
@@ -92,6 +112,7 @@ struct BottomToolbar: View {
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(theme.text)
                     .padding(.horizontal, 6)
+                    .crossfadeOnChange(of: nav.currentType ?? "–")
                 PillIcon(systemName: "arrow.right") { nav.next() }.disabled(!nav.hasNext)
             }
         } else {
@@ -102,7 +123,7 @@ struct BottomToolbar: View {
     private var chartTools: some View {
         PillGroup {
             PillIcon(systemName: "info.circle") { app.showOfp = true }
-            PillIcon(systemName: app.night ? "moon.fill" : "sun.max") { app.night.toggle() }
+            PillIcon(systemName: app.night ? "moon.fill" : "sun.max") { app.toggleNight() }
             PillIcon(systemName: "rectangle.split.2x1", selected: app.splitView) { app.splitView.toggle() }
         }
     }

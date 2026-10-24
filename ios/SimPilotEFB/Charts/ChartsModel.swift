@@ -33,9 +33,8 @@ final class ChartsModel: ObservableObject {
     private var imageCache = NSCache<NSString, UIImage>()
     private var loadTask: Task<Void, Never>?
     #if DEBUG
-    /// Generated test charts (used while no sim is connected), kept for the session.
-    private var testDetails: [String: ChartDetail] = [:]
-    private var testImages: [String: UIImage] = [:]
+    /// Offline charts bundled with debug builds (used while no sim is connected), rendered once per airport.
+    private var offlineCharts: [String: [BundledCharts.Chart]] = [:]
     #endif
 
     /// Pinned charts for the flight, shown as the "FLIGHT" category.
@@ -53,11 +52,11 @@ final class ChartsModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] event in self?.handle(event) }
             .store(in: &cancellables)
-        // Swap test charts for the sim's Lido charts as soon as the bridge connects.
+        // Swap offline charts for the sim's Lido charts as soon as the bridge connects.
         bridge.$state
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
-                guard let self, case .connected = state, self.isTestCharts || self.isWaitingOrFailed else { return }
+                guard let self, case .connected = state, self.isOfflineCharts || self.isWaitingOrFailed else { return }
                 self.reloadIndex()
             }
             .store(in: &cancellables)
@@ -68,7 +67,7 @@ final class ChartsModel: ObservableObject {
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] linkUp in
-                guard let self, linkUp, self.isTestCharts || self.isWaitingOrFailed else { return }
+                guard let self, linkUp, self.isOfflineCharts || self.isWaitingOrFailed else { return }
                 self.reloadIndex()
             }
             .store(in: &cancellables)
@@ -97,14 +96,21 @@ final class ChartsModel: ObservableObject {
         }
     }
 
-    /// True while showing generated test charts instead of the sim's Lido charts.
-    var isTestCharts: Bool {
+    /// True while showing the offline charts bundled with debug builds instead of the sim's Lido charts.
+    var isOfflineCharts: Bool {
         #if DEBUG
-        return index?.provider == TestCharts.provider
+        return index?.provider == BundledCharts.provider
         #else
         return false
         #endif
     }
+
+    #if DEBUG
+    /// "Offline UK AIP charts" for the airport shown.
+    var offlineChartsTitle: String {
+        BundledCharts.title(for: icao.flatMap { offlineCharts[$0] } ?? [])
+    }
+    #endif
 
     var categories: [String] {
         let names = index?.categories.filter { !$0.charts.isEmpty }.map(\.name) ?? []
@@ -159,11 +165,9 @@ final class ChartsModel: ObservableObject {
         loadTask?.cancel()
         guard bridge.isConnected else {
             #if DEBUG
-            loadTestCharts(icao)
+            loadOfflineCharts(icao)
             #else
-            state = .failed(pack.items.isEmpty
-                ? "Connect the PC bridge and open SimPilot Link in MSFS to load charts. Pin flight charts to keep them available offline."
-                : "PC bridge not connected. Saved charts are available in ★ FLIGHT.")
+            state = .failed(noBridgeMessage)
             #endif
             return
         }
@@ -188,27 +192,48 @@ final class ChartsModel: ObservableObject {
         }
     }
 
+    /// Why there are no charts without the PC bridge.
+    private var noBridgeMessage: String {
+        pack.items.isEmpty
+            ? "Connect the PC bridge and open SimPilot Link in MSFS to load charts. Pin flight charts to keep them available offline."
+            : "PC bridge not connected. Saved charts are available in ★ FLIGHT."
+    }
+
     #if DEBUG
-    /// No sim connected: test charts generated from the airport map data, plus any bundled debug charts.
-    private func loadTestCharts(_ icao: String) {
+    /// No sim connected: the real charts bundled with debug builds, if there are any for this airport.
+    private func loadOfflineCharts(_ icao: String) {
+        let cached = offlineCharts[icao]
         loadTask = Task { [weak self] in
-            // Airport map data is optional: bundled debug charts still load without it.
-            let features = (try? await AirportMapService.features(icao: icao)) ?? []
-            let name = VatsimReference.shared.airports[icao]?.name
-            let result = await Task.detached(priority: .userInitiated) {
-                TestCharts.build(icao: icao, name: name, features: features)
-            }.value
+            let charts: [BundledCharts.Chart]
+            if let cached {
+                charts = cached
+            } else {
+                // Rendering the PDFs takes a moment, so it runs off the main thread.
+                charts = await Task.detached(priority: .userInitiated) { BundledCharts.charts(for: icao) }.value
+            }
             guard !Task.isCancelled, let self, self.icao == icao else { return }
-            guard let result else {
-                self.state = .failed("No sim connected, and no airport map data or bundled charts for \(icao).")
+            guard !charts.isEmpty else {
+                self.state = .failed(self.noBridgeMessage)
                 return
             }
-            self.testDetails.merge(result.details) { $1 }
-            self.testImages.merge(result.images) { $1 }
-            self.index = result.index
+            self.offlineCharts[icao] = charts
+            self.index = BundledCharts.index(icao: icao, charts: charts)
             self.state = .ready
             if self.selected == nil, let first = self.defaultChart() { self.select(first) }
         }
+    }
+
+    private func offlineChart(guid: String) -> BundledCharts.Chart? {
+        offlineCharts.values.lazy.flatMap { $0 }.first { $0.detail.chart.guid == guid }
+    }
+
+    private func offlineImage(path: String) -> UIImage? {
+        offlineCharts.values.lazy.flatMap { $0 }.first { $0.imagePath == path }?.image
+    }
+
+    /// Earlier debug builds generated placeholder charts from OpenStreetMap ("test-EGSS-AGC"); drops any that were pinned.
+    static func removePlaceholderCharts(from pack: ChartPack) {
+        for item in pack.items where item.id.hasPrefix("test-") { pack.remove(item.id) }
     }
     #endif
 
@@ -231,8 +256,8 @@ final class ChartsModel: ObservableObject {
         }
         guard let icao else { return }
         #if DEBUG
-        if let test = testDetails[chart.guid] {
-            detail = test
+        if let offline = offlineChart(guid: chart.guid) {
+            detail = offline.detail
             Task { await loadPage() }
             return
         }
@@ -293,14 +318,14 @@ final class ChartsModel: ObservableObject {
         }
     }
 
-    /// A page image from wherever it lives: pinned pack, generated test charts, memory, disk cache, then the bridge.
+    /// A page image from wherever it lives: pinned pack, offline charts, memory, disk cache, then the bridge.
     private func pageImage(_ path: String) async throws -> UIImage {
         if let packed = ChartPack.image(path) { return packed }
         if path.hasPrefix("pack:") {
             throw BridgeClient.HTTPError(status: 0, message: "Saved chart image is missing. Connect to the sim and pin the chart again.")
         }
         #if DEBUG
-        if let test = testImages[path] { return test }
+        if let offline = offlineImage(path: path) { return offline }
         #endif
         if let cached = imageCache.object(forKey: path as NSString) { return cached }
         if let data = ChartImageDiskCache.load(path), let img = UIImage(data: data) {

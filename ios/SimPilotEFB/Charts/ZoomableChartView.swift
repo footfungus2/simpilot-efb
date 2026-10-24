@@ -5,7 +5,8 @@ import UIKit
 /// Pinch-zoomable chart page with the ownship drawn on georeferenced pages.
 struct ZoomableChartView: UIViewRepresentable {
     let image: UIImage
-    let night: Bool
+    /// Show the page's night version: night mode with Settings → Customization → "Dark charts in night mode" on.
+    let dark: Bool
     let page: ChartPage
     let ownship: Ownship?
     /// Changes when another chart/page is shown, which resets the zoom.
@@ -22,8 +23,12 @@ struct ZoomableChartView: UIViewRepresentable {
         ChartScrollView()
     }
 
+    static func dismantleUIView(_ view: ChartScrollView, coordinator: ()) {
+        view.saveNow() // Page changes can dismantle the view before the debounced save runs.
+    }
+
     func updateUIView(_ view: ChartScrollView, context: Context) {
-        view.show(image: image, night: night, key: resetKey)
+        view.show(image: image, dark: dark, key: resetKey)
         view.follow = follow
         view.onUserPan = onUserPan
         view.setAnnotations(key: resetKey, chartSize: CGSize(width: page.width, height: page.height))
@@ -50,7 +55,7 @@ final class ChartScrollView: UIScrollView, UIScrollViewDelegate, PKCanvasViewDel
     private let ownshipLayer = CAShapeLayer()
     private let haloLayer = CAShapeLayer()
     private var shownKey: String?
-    private var shownNight: Bool?
+    private var shownDark: Bool?
     private var sourceImage: UIImage?
     var follow = false
     var onUserPan: () -> Void = {}
@@ -96,18 +101,28 @@ final class ChartScrollView: UIScrollView, UIScrollViewDelegate, PKCanvasViewDel
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
-    func show(image: UIImage, night: Bool, key: String) {
-        if key != shownKey || image !== sourceImage {
+    func show(image: UIImage, dark: Bool, key: String) {
+        let newPage = key != shownKey || image !== sourceImage
+        guard newPage || shownDark != dark else { return }
+        // Anything replacing a page already on screen (another page or image, day ↔ night) cross-dissolves; the first
+        // page fades in with the SwiftUI transition around this view.
+        let fade = imageView.image != nil && Motion.level != .off
+        if newPage {
             shownKey = key
             sourceImage = image
-            shownNight = nil
             zoomScale = 1
         }
-        if shownNight != night {
-            shownNight = night
-            imageView.image = night ? NightChart.render(image) : image
-            setNeedsLayout()
+        shownDark = dark
+        let next = dark ? NightChart.render(image) : image
+        if fade {
+            UIView.transition(with: imageView, duration: Motion.allowsMovement ? 0.25 : 0.18,
+                              options: [.transitionCrossDissolve, .allowUserInteraction]) {
+                self.imageView.image = next
+            }
+        } else {
+            imageView.image = next
         }
+        setNeedsLayout()
     }
 
     override func layoutSubviews() {
@@ -186,7 +201,7 @@ final class ChartScrollView: UIScrollView, UIScrollViewDelegate, PKCanvasViewDel
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
     }
 
-    private func saveNow() {
+    func saveNow() {
         saveWork?.cancel()
         guard let key = annotationKey, chartSize.width > 0, canvasWidth > 0 else { return }
         let k = chartSize.width / canvasWidth // view points → chart units

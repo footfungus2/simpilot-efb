@@ -34,29 +34,42 @@ private struct AircraftPanels: View {
         // Re-evaluated every second so "no data from the sim" shows up even when nothing else changes.
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let link = linkState(now: context.date)
+            // Fenix pages only work with a live Fenix; the VATSIM page works without it.
+            let locked = page != .vatsim && !link.isLive
             VStack(spacing: 0) {
                 header(link)
-                if let n = commander.notice { noticeBar(n) }
+                    .background(theme.bar)
+                    .zIndex(1) // notices drop out from under the header
+                if let n = commander.notice {
+                    noticeBar(n)
+                        .transition(.dropDown)
+                }
                 ScrollView(.vertical, showsIndicators: false) {
-                    Group {
+                    // Pages cross-fade in place (a ZStack, so the old and new page overlap instead of stacking).
+                    ZStack(alignment: .top) {
                         switch page {
-                        case .radio: RadioPage(vars: vars, cmd: commander, compact: compact)
-                        case .atc: ATCPage(vars: vars, cmd: commander, compact: compact)
-                        case .fcu: FCUPage(vars: vars, cmd: commander, compact: compact)
-                        case .lights: LightsPage(vars: vars, cmd: commander, compact: compact)
+                        case .radio: RadioPage(vars: vars, cmd: commander, compact: compact).transition(.screen)
+                        case .atc: ATCPage(vars: vars, cmd: commander, compact: compact).transition(.screen)
+                        case .fcu: FCUPage(vars: vars, cmd: commander, compact: compact).transition(.screen)
+                        case .lights: LightsPage(vars: vars, cmd: commander, compact: compact).transition(.screen)
                         case .vatsim:
                             VatsimAssistantPage(assistant: app.vatsimAssistant, vars: vars, commander: commander,
                                                 fenixLive: link.isLive, compact: compact)
+                                .transition(.screen)
                         }
                     }
-                    // Fenix pages only work with a live Fenix; the VATSIM page works without it.
-                    .disabled(page != .vatsim && !link.isLive)
-                    .opacity(page != .vatsim && !link.isLive ? 0.45 : 1)
+                    .disabled(locked)
+                    .opacity(locked ? 0.45 : 1)
+                    // The page dims as a whole while locked, so its buttons don't dim themselves on top of that.
+                    .environment(\.pressableDisabledOpacity, locked ? 1 : 0.4)
                     .padding(compact ? 12 : 20)
                     .frame(maxWidth: 980)
                     .frame(maxWidth: .infinity)
+                    .animation(Motion.smooth, value: page)
+                    .animation(Motion.smooth, value: locked)
                 }
             }
+            .animation(Motion.bouncy, value: commander.notice)
         }
         .background(theme.bar)
         .onAppear { bridge.watch(FenixA320.allWatched) }
@@ -66,7 +79,6 @@ private struct AircraftPanels: View {
         FenixLink.evaluate(bridgeConnected: bridge.isConnected,
                            simConnected: bridge.status?.sim.connected == true,
                            aircraftTitle: bridge.status?.sim.aircraftTitle,
-                           demoActive: ownship.demoActive,
                            lastSimData: ownship.ownship.map { Date(timeIntervalSince1970: $0.ts / 1000) },
                            hasCockpitValues: !vars.values.isEmpty, now: now)
     }
@@ -97,17 +109,21 @@ private struct AircraftPanels: View {
     private var title: some View {
         Text(page == .vatsim ? "VATSIM" : "Fenix A320").font(.system(size: 17, weight: .semibold)).foregroundColor(theme.text)
             .fixedSize()
+            .crossfadeOnChange(of: page == .vatsim)
     }
 
     /// Fenix connection state; on the VATSIM page it still tells you whether "Set in Fenix" will work.
     private func statusPill(_ link: FenixLink) -> some View {
         HStack(spacing: 8) {
             Circle().fill(link.isLive ? Theme.okGreen : Theme.warnOrange).frame(width: 8, height: 8)
+                .pulse(active: link == .waiting)
             Text(link.message).font(.system(size: 13, weight: .medium)).foregroundColor(theme.textSecondary)
                 .lineLimit(2).multilineTextAlignment(.trailing)
+                .crossfadeOnChange(of: link.message)
         }
         .padding(.horizontal, 12).padding(.vertical, 7)
         .background(Capsule().fill(theme.pill))
+        .animation(Motion.smooth, value: link)
         .accessibilityElement(children: .combine)
     }
 
@@ -121,7 +137,7 @@ private struct AircraftPanels: View {
                 Image(systemName: "xmark").font(.system(size: 13, weight: .bold)).foregroundColor(theme.textSecondary)
                     .frame(width: 44, height: 44)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressable)
             .accessibilityLabel("Dismiss")
         }
         .padding(.leading, 16)
@@ -187,12 +203,16 @@ struct AdaptiveStack<Content: View>: View {
     }
 }
 
-/// Segmented picker: the selected option is filled blue; a pending target gets a blue outline and a spinner.
+/// Segmented picker: the selected option is filled blue (the fill slides to a new option); a pending target gets a
+/// blue outline and a spinner, and the option flashes a checkmark when the sim confirms it.
 struct Segmented<Value: Equatable>: View {
     @Environment(\.theme) private var theme
+    @Namespace private var selection
     var options: [(String, Value)]
     var value: Value?
     var pending: Value? = nil
+    /// The sim just confirmed a change of this control.
+    var confirmed = false
     var accessibilityName: String? = nil
     var onSelect: (Value) -> Void
 
@@ -200,39 +220,61 @@ struct Segmented<Value: Equatable>: View {
         HStack(spacing: 2) {
             ForEach(options.indices, id: \.self) { i in
                 let (label, v) = options[i]
-                let isPending = pending == v && value != v
+                let isSelected = value == v
+                let isPending = pending == v && !isSelected
                 Button {
                     UISelectionFeedbackGenerator().selectionChanged()
                     onSelect(v)
                 } label: {
                     HStack(spacing: 6) {
-                        if isPending { ProgressView().scaleEffect(0.7) }
-                        Text(label).font(.system(size: 14, weight: value == v ? .semibold : .regular))
-                            .foregroundColor(value == v ? .white : theme.text)
+                        if isPending { ProgressView().scaleEffect(0.7).transition(.opacity) }
+                        Text(label).font(.system(size: 14, weight: isSelected ? .semibold : .regular))
+                            .foregroundColor(isSelected ? .white : theme.text)
                             .lineLimit(1).minimumScaleFactor(0.7)
                     }
                     .frame(maxWidth: .infinity, minHeight: 38)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(value == v ? Theme.selectedBlue : Color.clear))
+                    .background(
+                        ZStack {
+                            if isSelected {
+                                RoundedRectangle(cornerRadius: 8).fill(Theme.selectedBlue)
+                                    .matchedGeometryEffect(id: "selection", in: selection)
+                            }
+                        }
+                    )
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(isPending ? Theme.selectedBlue : .clear, lineWidth: 1.5))
+                    .overlay(alignment: .topTrailing) {
+                        if isSelected && confirmed {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.white)
+                                .padding(4)
+                                .transition(.pop)
+                        }
+                    }
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressableButtonStyle(scale: 0.96, dim: 0.8))
                 .accessibilityLabel(accessibilityName.map { "\($0): \(label)" } ?? label)
-                .accessibilityAddTraits(value == v ? .isSelected : [])
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
                 .accessibilityHint(isPending ? "Waiting for the sim" : "")
             }
         }
         .padding(3)
         .background(RoundedRectangle(cornerRadius: 10).fill(theme.pill))
+        .animation(Motion.snappy, value: value)
+        .animation(Motion.smooth, value: pending)
+        .animation(Motion.bouncy, value: confirmed)
     }
 }
 
-/// Push button with an indicator light (AP1, VHF1, …): green dot and outline when lit, spinner while pending.
+/// Push button with an indicator light (AP1, VHF1, …): green dot and outline when lit, spinner while pending,
+/// a checkmark for a moment when the sim confirms the press.
 struct LightButton: View {
     @Environment(\.theme) private var theme
     var label: String
     var lit = false
     var pending = false
+    var confirmed = false
     var minWidth: CGFloat = 64
     var action: () -> Void
 
@@ -242,11 +284,19 @@ struct LightButton: View {
             action()
         } label: {
             HStack(spacing: 7) {
-                if pending {
-                    ProgressView().scaleEffect(0.65).frame(width: 8, height: 8)
-                } else {
-                    Circle().fill(lit ? Theme.okGreen : theme.pillStrong).frame(width: 8, height: 8)
+                ZStack {
+                    if pending {
+                        ProgressView().scaleEffect(0.65)
+                            .transition(.opacity)
+                    } else if confirmed {
+                        Image(systemName: "checkmark").font(.system(size: 10, weight: .heavy)).foregroundColor(Theme.okGreen)
+                            .transition(.pop)
+                    } else {
+                        Circle().fill(lit ? Theme.okGreen : theme.pillStrong)
+                            .transition(.opacity)
+                    }
                 }
+                .frame(width: 8, height: 8)
                 Text(label).font(.system(size: 14, weight: .semibold)).foregroundColor(theme.text).lineLimit(1).minimumScaleFactor(0.7)
             }
             .padding(.horizontal, 10)
@@ -254,20 +304,24 @@ struct LightButton: View {
             .background(RoundedRectangle(cornerRadius: 9).fill(lit ? Theme.okGreen.opacity(0.14) : theme.pill))
             .overlay(RoundedRectangle(cornerRadius: 9).stroke(lit ? Theme.okGreen.opacity(0.7) : Color.clear, lineWidth: 1.5))
         }
-        .buttonStyle(.plain)
+        // A pending press shows its spinner at full strength.
+        .buttonStyle(PressableButtonStyle(scale: 0.96, dim: 0.8, disabledOpacity: pending ? 1 : nil))
         .disabled(pending)
+        .animation(Motion.bouncy, value: commandPhase(pending: pending, confirmed: confirmed))
+        .animation(Motion.smooth, value: lit)
         .accessibilityLabel(label)
         .accessibilityValue(pending ? "waiting for the sim" : (lit ? "on" : "off"))
     }
 }
 
-/// Plain action button (44 pt tall by default).
+/// Plain action button (44 pt tall by default): spinner while pending, a checkmark for a moment once confirmed.
 struct ActionButton: View {
     @Environment(\.theme) private var theme
     var label: String
     var systemImage: String? = nil
     var prominent = false
     var pending = false
+    var confirmed = false
     var minWidth: CGFloat = 56
     var height: CGFloat = 44
     var accessibilityName: String? = nil
@@ -279,8 +333,17 @@ struct ActionButton: View {
             action()
         } label: {
             HStack(spacing: 6) {
-                if pending { ProgressView().scaleEffect(0.75).tint(prominent ? .white : nil) }
-                else if let systemImage { Image(systemName: systemImage).font(.system(size: 15, weight: .semibold)) }
+                if pending {
+                    ProgressView().scaleEffect(0.75).tint(prominent ? .white : nil)
+                        .transition(.opacity)
+                } else if confirmed {
+                    Image(systemName: "checkmark").font(.system(size: 15, weight: .bold))
+                        .foregroundColor(prominent ? .white : Theme.okGreen)
+                        .transition(.pop)
+                } else if let systemImage {
+                    Image(systemName: systemImage).font(.system(size: 15, weight: .semibold))
+                        .transition(.opacity)
+                }
                 if !label.isEmpty { Text(label).font(.system(size: 15, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.7) }
             }
             .foregroundColor(prominent ? .white : theme.text)
@@ -288,9 +351,40 @@ struct ActionButton: View {
             .frame(minWidth: minWidth, maxWidth: minWidth == 0 ? .infinity : nil, minHeight: height)
             .background(RoundedRectangle(cornerRadius: 9).fill(prominent ? Theme.selectedBlue : theme.pill))
         }
-        .buttonStyle(.plain)
+        // A pending press shows its spinner at full strength.
+        .buttonStyle(PressableButtonStyle(scale: 0.96, dim: 0.8, disabledOpacity: pending ? 1 : nil))
         .disabled(pending)
+        .animation(Motion.bouncy, value: commandPhase(pending: pending, confirmed: confirmed))
         .accessibilityLabel(accessibilityName ?? label)
+    }
+}
+
+/// 0 idle, 1 waiting for the sim, 2 just confirmed: what the spinner / checkmark swaps animate on.
+private func commandPhase(pending: Bool, confirmed: Bool) -> Int {
+    pending ? 1 : confirmed ? 2 : 0
+}
+
+/// Spinner while a command is in flight, then a checkmark for a moment once the sim confirms it; nothing (no space)
+/// otherwise. The parent animates `commandPhase`, so it fades in and out and its neighbours move smoothly.
+private struct CommandStatus: View {
+    var pending: Bool
+    var confirmed: Bool
+    var scale: CGFloat = 1
+
+    var body: some View {
+        if pending || confirmed {
+            ZStack {
+                if pending {
+                    ProgressView()
+                        .transition(.opacity)
+                } else {
+                    Image(systemName: "checkmark.circle.fill").font(.system(size: 18)).foregroundColor(Theme.okGreen)
+                        .transition(.pop)
+                }
+            }
+            .scaleEffect(scale)
+            .transition(.opacity)
+        }
     }
 }
 
@@ -326,6 +420,7 @@ private struct StepperPair: View {
 private struct RepeatButton: View {
     @Environment(\.theme) private var theme
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.pressableDisabledOpacity) private var disabledOpacity
     var systemImage: String
     var action: () -> Void
     @State private var timer: Timer?
@@ -335,6 +430,10 @@ private struct RepeatButton: View {
         Image(systemName: systemImage).font(.system(size: 17, weight: .semibold)).foregroundColor(theme.text)
             .frame(width: 52, height: 44)
             .background(RoundedRectangle(cornerRadius: 9).fill(pressed ? theme.pillStrong : theme.pill))
+            .scaleEffect(pressed && Motion.allowsMovement ? 0.94 : 1)
+            .opacity(isEnabled ? 1 : disabledOpacity)
+            .animation(Motion.press, value: pressed)
+            .animation(Motion.smooth, value: isEnabled)
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0)
                 .onChanged { _ in
@@ -383,6 +482,7 @@ struct Readout: View {
                 .font(.system(size: size, weight: .semibold, design: .rounded)).monospacedDigit()
                 .foregroundColor(color ?? theme.text)
                 .lineLimit(1).minimumScaleFactor(0.6)
+                .crossfadeOnChange(of: value)
         }
         .accessibilityElement(children: .combine)
     }
@@ -417,15 +517,17 @@ private struct RMPCard: View {
     var body: some View {
         Card(title: "Radio \(rmp.n)") {
             HStack(spacing: 6) {
-                if cmd.isPending(rmp.power) { ProgressView().scaleEffect(0.7) }
+                CommandStatus(pending: cmd.isPending(rmp.power), confirmed: cmd.isConfirmed(rmp.power), scale: 0.7)
                 Toggle("Radio \(rmp.n) power", isOn: Binding(get: { powered }, set: { cmd.set(rmp.power, $0 ? 1 : 0, label: "Radio \(rmp.n) power") }))
                     .labelsHidden()
             }
+            .animation(Motion.bouncy, value: commandPhase(pending: cmd.isPending(rmp.power), confirmed: cmd.isConfirmed(rmp.power)))
         } content: {
             HStack(alignment: .center, spacing: 12) {
                 Readout(caption: "Active", value: powered ? FenixA320.frequency(vars[rmp.active]) : "", color: Theme.okGreen)
                 Spacer(minLength: 4)
                 ActionButton(label: "", systemImage: "arrow.left.arrow.right", prominent: true, pending: cmd.isPending(rmp.transfer),
+                             confirmed: cmd.isConfirmed(rmp.transfer),
                              minWidth: 56, height: 48, accessibilityName: "Swap active and standby frequencies on radio \(rmp.n)") {
                     cmd.press(rmp.transfer, label: "Radio \(rmp.n) transfer")
                 }
@@ -437,15 +539,18 @@ private struct RMPCard: View {
                             Image(systemName: "keyboard").font(.system(size: 11)).foregroundColor(Theme.ownshipBlue)
                         }
                         HStack(spacing: 6) {
-                            Text(powered ? FenixA320.frequency(vars[rmp.standby]) : "–")
+                            let standby = powered ? FenixA320.frequency(vars[rmp.standby]) : "–"
+                            Text(standby)
                                 .font(.system(size: 34, weight: .semibold, design: .rounded)).monospacedDigit()
                                 .foregroundColor(Theme.ownshipBlue).lineLimit(1).minimumScaleFactor(0.6)
-                            if tuning { ProgressView() }
+                                .crossfadeOnChange(of: standby)
+                            CommandStatus(pending: tuning, confirmed: cmd.isConfirmed("tune\(rmp.n)"))
                         }
+                        .animation(Motion.bouncy, value: commandPhase(pending: tuning, confirmed: cmd.isConfirmed("tune\(rmp.n)")))
                     }
                     .frame(minHeight: 44)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressableSoft)
                 .accessibilityLabel("Standby frequency \(FenixA320.frequency(vars[rmp.standby]))")
                 .accessibilityHint("Double tap to type a new standby frequency")
                 .popover(isPresented: $entering) { entry }
@@ -476,7 +581,6 @@ private struct RMPCard: View {
                 .font(.system(size: 13)).foregroundColor(typed.isEmpty || khz != nil ? theme.textSecondary : Theme.warnOrange)
             ActionButton(label: "Load into standby", prominent: true, minWidth: 0) { load(khz) }
                 .disabled(khz == nil)
-                .opacity(khz == nil ? 0.5 : 1)
         }
         .padding(18)
         .frame(width: 300)
@@ -491,7 +595,8 @@ private struct RMPCard: View {
     private func keyGrid(_ keys: [(label: String, sw: String, light: String, counter: Bool)]) -> some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
             ForEach(keys, id: \.label) { k in
-                LightButton(label: k.label, lit: lit(vars, k.light), pending: cmd.isPending(k.sw), minWidth: 0) {
+                LightButton(label: k.label, lit: lit(vars, k.light), pending: cmd.isPending(k.sw), confirmed: cmd.isConfirmed(k.sw),
+                            minWidth: 0) {
                     cmd.press(k.sw, counter: k.counter, label: "Radio \(rmp.n) \(k.label)")
                 }
             }
@@ -513,23 +618,29 @@ private struct ATCPage: View {
             Card(title: "Transponder") {
                 HStack(alignment: .firstTextBaseline) {
                     Readout(caption: "Squawk", value: code, size: 48)
-                    if cmd.isPending("squawk") { ProgressView() }
+                    CommandStatus(pending: cmd.isPending("squawk"), confirmed: cmd.isConfirmed("squawk"))
                     Spacer()
                     if lit(vars, A.fail) {
                         Text("ATC FAIL").font(.system(size: 13, weight: .bold)).foregroundColor(Theme.warnOrange)
+                            .transition(.pop)
                     }
                 }
+                .animation(Motion.bouncy, value: lit(vars, A.fail))
+                .animation(Motion.bouncy, value: commandPhase(pending: cmd.isPending("squawk"), confirmed: cmd.isConfirmed("squawk")))
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
                     ForEach([1, 2, 3, 4, 5, 6, 7, 0], id: \.self) { d in
-                        ActionButton(label: "\(d)", pending: cmd.isPending(A.digit(d)), minWidth: 0, height: 52) {
+                        ActionButton(label: "\(d)", pending: cmd.isPending(A.digit(d)), confirmed: cmd.isConfirmed(A.digit(d)),
+                                     minWidth: 0, height: 52) {
                             cmd.press(A.digit(d), label: "Transponder key \(d)")
                         }
                     }
                 }
                 .disabled(cmd.isPending("squawk"))
                 HStack(spacing: 10) {
-                    ActionButton(label: "CLR", pending: cmd.isPending(A.clear), minWidth: 0, height: 48) { cmd.press(A.clear, label: "Transponder CLR") }
-                    ActionButton(label: "IDENT", prominent: true, pending: cmd.isPending(A.ident), minWidth: 0, height: 48) { cmd.press(A.ident, label: "IDENT") }
+                    ActionButton(label: "CLR", pending: cmd.isPending(A.clear), confirmed: cmd.isConfirmed(A.clear),
+                                 minWidth: 0, height: 48) { cmd.press(A.clear, label: "Transponder CLR") }
+                    ActionButton(label: "IDENT", prominent: true, pending: cmd.isPending(A.ident), confirmed: cmd.isConfirmed(A.ident),
+                                 minWidth: 0, height: 48) { cmd.press(A.ident, label: "IDENT") }
                 }
             }
             .frame(maxWidth: compact ? .infinity : 420)
@@ -548,7 +659,8 @@ private struct ATCPage: View {
     }
 
     private func picker(_ name: String, _ v: String, _ options: [(String, Int)]) -> some View {
-        Segmented(options: options, value: int(vars, v), pending: cmd.pendingTargets[v], accessibilityName: name) {
+        Segmented(options: options, value: int(vars, v), pending: cmd.pendingTargets[v], confirmed: cmd.isConfirmed(v),
+                  accessibilityName: name) {
             cmd.set(v, $0, label: name)
         }
     }
@@ -587,7 +699,8 @@ private struct FCUPage: View {
                 }
                 target("Altitude", value: altitudeText, managed: F.altitudeManaged, knob: F.altitudeKnob) {
                     Segmented(options: [("100", 0), ("1000", 1)], value: int(vars, F.altitudeScale),
-                              pending: cmd.pendingTargets[F.altitudeScale], accessibilityName: "Altitude step") {
+                              pending: cmd.pendingTargets[F.altitudeScale], confirmed: cmd.isConfirmed(F.altitudeScale),
+                              accessibilityName: "Altitude step") {
                         cmd.set(F.altitudeScale, $0, label: "Altitude step")
                     }
                     .frame(maxWidth: 150)
@@ -600,7 +713,8 @@ private struct FCUPage: View {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: compact ? 3 : 6), spacing: 10) {
                     ForEach(["AP1", "AP2", "A/THR", "LOC", "APPR", "EXPED"], id: \.self) { name in
                         let b = F.buttons[name]
-                        LightButton(label: name, lit: lit(vars, b?.light), pending: b.map { cmd.isPending($0.sw) } ?? false, minWidth: 0) {
+                        LightButton(label: name, lit: lit(vars, b?.light), pending: b.map { cmd.isPending($0.sw) } ?? false,
+                                    confirmed: b.map { cmd.isConfirmed($0.sw) } ?? false, minWidth: 0) {
                             if let b { cmd.press(b.sw, label: name) }
                         }
                     }
@@ -611,7 +725,8 @@ private struct FCUPage: View {
 
     private func button(_ key: String, title: String) -> some View {
         let b = F.buttons[key]
-        return ActionButton(label: title, pending: b.map { cmd.isPending($0.sw) } ?? false, minWidth: 110) {
+        return ActionButton(label: title, pending: b.map { cmd.isPending($0.sw) } ?? false,
+                            confirmed: b.map { cmd.isConfirmed($0.sw) } ?? false, minWidth: 110) {
             if let b { cmd.press(b.sw, label: title) }
         }
     }
@@ -623,6 +738,7 @@ private struct FCUPage: View {
                 Text("MANAGED").font(.system(size: 11, weight: .bold)).foregroundColor(Theme.okGreen)
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(Theme.okGreen.opacity(0.15)))
+                    .transition(.pop)
             }
         } content: {
             HStack(alignment: .center) {
@@ -630,21 +746,25 @@ private struct FCUPage: View {
                     .font(.system(size: 40, weight: .semibold, design: .rounded)).monospacedDigit()
                     .foregroundColor(isManaged ? Theme.okGreen : Theme.ownshipBlue)
                     .lineLimit(1).minimumScaleFactor(0.6)
+                    .crossfadeOnChange(of: value)
                     .accessibilityLabel("\(title) \(value)")
                 Spacer()
                 StepperPair(name: "\(title) knob") { cmd.step(knob.0, $0, label: "\(title) knob") }
             }
             HStack(spacing: 8) {
-                ActionButton(label: "Push", pending: cmd.isPending(knob.1 + ".push"), minWidth: 70, accessibilityName: "Push \(title) knob (managed)") {
+                ActionButton(label: "Push", pending: cmd.isPending(knob.1 + ".push"), confirmed: cmd.isConfirmed(knob.1 + ".push"),
+                             minWidth: 70, accessibilityName: "Push \(title) knob (managed)") {
                     cmd.send(FenixA320.dec(knob.1), key: knob.1 + ".push", label: "Push \(title)")
                 }
-                ActionButton(label: "Pull", pending: cmd.isPending(knob.1 + ".pull"), minWidth: 70, accessibilityName: "Pull \(title) knob (selected)") {
+                ActionButton(label: "Pull", pending: cmd.isPending(knob.1 + ".pull"), confirmed: cmd.isConfirmed(knob.1 + ".pull"),
+                             minWidth: 70, accessibilityName: "Pull \(title) knob (selected)") {
                     cmd.send(FenixA320.inc(knob.1), key: knob.1 + ".pull", label: "Pull \(title)")
                 }
                 Spacer(minLength: 4)
                 extra()
             }
         }
+        .animation(Motion.bouncy, value: isManaged)
     }
 
     private var mach: Bool { lit(vars, F.mach) }
@@ -702,7 +822,7 @@ private struct LightsPage: View {
                     Spacer(minLength: 8)
                     // Panel order is top → bottom (ON first); read left → right as OFF … ON.
                     Segmented(options: s.positions.reversed().map { ($0.label, $0.value) }, value: int(vars, s.v),
-                              pending: cmd.pendingTargets[s.v], accessibilityName: title(s.title)) {
+                              pending: cmd.pendingTargets[s.v], confirmed: cmd.isConfirmed(s.v), accessibilityName: title(s.title)) {
                         cmd.set(s.v, $0, label: title(s.title))
                     }
                     .frame(maxWidth: CGFloat(s.positions.count) * 72)

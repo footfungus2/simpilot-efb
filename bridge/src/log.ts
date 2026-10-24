@@ -27,7 +27,7 @@ function redact(value: string): string {
     })
     .replace(/\b(authorization\s*[:=]\s*)(?:bearer|basic)\s+\S+/gi, '$1[redacted]')
     .replace(/\b(token|access[_-]?token|refresh[_-]?token|api[_-]?key|password|username|userid|pilot[_ ]?id|callsign|authorization)(["']?)\s*([:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi, '$1$2$3[redacted]')
-    .replace(/(?:[A-Z]:\\+Users\\+|\/Users\/|\/home\/)[^\s]+/gi, '~')
+    .replace(/(?:[A-Z]:\\+Users\\+|\/Users\/|\/home\/)[^,;\r\n]+/gi, '~')
     .replace(/[\r\n\x00-\x1f\x7f]/g, ' ')
     .slice(0, 2000);
 }

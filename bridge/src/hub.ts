@@ -28,10 +28,11 @@ export class Hub {
   private linkWasConnected = false;
   lastOwnship: Ownship | undefined;
   private messageHandlers: ((msg: AppToBridge) => void)[] = [];
+  private readonly timer: ReturnType<typeof setInterval>;
 
   constructor() {
     // Link liveness is only observed when it polls, so check for timeouts on a timer.
-    setInterval(() => {
+    this.timer = setInterval(() => {
       const connected = this.linkConnected();
       if (connected !== this.linkWasConnected) {
         this.linkWasConnected = connected;
@@ -39,6 +40,13 @@ export class Hub {
         this.broadcastStatus();
       }
     }, 1000).unref();
+  }
+
+  close(): void {
+    clearInterval(this.timer);
+    for (const client of this.clients) client.terminate();
+    this.clients.clear();
+    this.messageHandlers = [];
   }
 
   status(): BridgeStatus {

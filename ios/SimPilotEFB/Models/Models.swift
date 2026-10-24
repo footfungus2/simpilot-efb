@@ -152,19 +152,6 @@ struct Ofp: Codable, Equatable {
     var pdfUrl: String?
 }
 
-// MARK: - Weather
-
-struct MetarStation: Codable, Equatable, Identifiable {
-    var icao: String
-    var lat: Double
-    var lon: Double
-    var category: String
-    var raw: String?
-    var obsTime: Double?
-
-    var id: String { icao }
-}
-
 // MARK: - WebSocket envelope
 
 enum BridgeMessage {

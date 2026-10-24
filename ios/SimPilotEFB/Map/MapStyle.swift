@@ -11,26 +11,26 @@ enum MapStyle {
     static let sigmetSource = "sigmets"
     static let ammSource = "amm"
     static let vatsimSource = "vatsim"
-    static let vatsimLayers = ["vatsim-sector-fill", "vatsim-sector-line", "vatsim-vg-fill", "vatsim-vg-line", "vatsim-approach-line", "vatsim-pilots",
+    static let vatsimLayers = ["vatsim-sector-fill", "vatsim-sector-line", "vatsim-vg-fill", "vatsim-vg-line", "vatsim-approach-line", "vatsim-pilots", "vatsim-company-labels",
                                "vatsim-pilot-labels", "vatsim-airport-dot", "vatsim-airport-bar", "vatsim-airport-badge",
                                "vatsim-airport-counts", "vatsim-airport-idle-labels", "vatsim-airport-labels", "vatsim-sector-label",
                                "vatsim-approach-label"]
     /// Layers a tap can select, most specific first.
-    static let vatsimTappable = ["vatsim-pilots", "vatsim-airport-badge", "vatsim-airport-bar", "vatsim-airport-labels",
+    static let vatsimTappable = ["vatsim-pilots", "vatsim-company-labels", "vatsim-airport-badge", "vatsim-airport-bar", "vatsim-airport-labels",
                                  "vatsim-airport-idle-labels", "vatsim-approach-label", "vatsim-sector-label", "vatsim-approach-line", "vatsim-vg-fill", "vatsim-sector-fill"]
 
     /// Zoom where the enroute map hands over to the airport moving map.
     static let ammZoom = 12.0
 
-    /// Layers toggled by the NAV / WX buttons.
     /// Layers behind each NAV filter.
-    static func layers(for filters: MapFilters) -> [(String, Bool)] {
+    static func layers(for filters: MapFilters, high: Bool) -> [(String, Bool)] {
         let groups: [([String], Bool)] = [
             (["route-line", "route-points", "route-labels", "airports", "airport-labels"], filters.route),
-            (["all-airports-major", "all-airports-minor"], filters.airports),
+            (["all-airports-major"], filters.airports),
+            (["all-airports-minor"], filters.airports && !high),
             (["fir-lines", "fir-labels"], filters.firs),
             (["navaid-vor"], filters.vor),
-            (["navaid-ndb"], filters.ndb),
+            (["navaid-ndb"], filters.ndb && !high),
             (["navaid-dme"], filters.dme),
         ]
         return groups.flatMap { ids, on in ids.map { ($0, on) } }
@@ -39,18 +39,16 @@ enum MapStyle {
     /// Layers a tap can pick for the waypoint details card, most specific first.
     static let pickable = ["route-points", "navaid-vor", "navaid-dme", "navaid-ndb", "airports", "all-airports-major", "all-airports-minor"]
 
-    static let wxLayers = ["metar-dots", "sigmet-fill", "sigmet-line"]
-
-    static func write(theme: Theme) throws -> URL {
+    static func write(theme: Theme, customization: CustomizationValues) throws -> URL {
         let base = Bundle.main.resourceURL!.appendingPathComponent("Basemap")
         let file = { (name: String) in base.appendingPathComponent(name).absoluteString }
         let hex = { (c: UIColor) -> String in c.hexString }
 
-        let style: [String: Any] = [
+        var style: [String: Any] = [
             "version": 8,
             "name": theme.night ? "SimPilot Night" : "SimPilot Day",
             // 3D globe when zoomed out; MapLibre flattens it to a normal map as you zoom in.
-            "projection": ["type": "globe"],
+            "projection": ["type": customization.globeView ? "globe" : "mercator"],
             "glyphs": base.appendingPathComponent("Glyphs").absoluteString + "/{fontstack}/{range}.pbf",
             "sources": [
                 "land": ["type": "geojson", "data": file("ne_50m_land.geojson")],
@@ -69,6 +67,7 @@ enum MapStyle {
                 ownshipSource: emptySource(),
                 metarSource: emptySource(),
                 sigmetSource: emptySource(),
+                "ruler": emptySource(),
             ],
             "layers": [
                 ["id": "background", "type": "background", "paint": ["background-color": hex(theme.mapBackground)]],
@@ -91,6 +90,8 @@ enum MapStyle {
                 ["id": "fir-labels", "maxzoom": ammZoom + 0.5, "type": "symbol", "source": "fir-labels", "minzoom": 3.5,
                  "layout": ["text-field": ["get", "label"], "text-font": ["Noto Sans Italic"], "text-size": 11, "text-max-width": 12],
                  "paint": ["text-color": hex(theme.firLine), "text-halo-color": hex(theme.mapLabelHalo), "text-halo-width": 1]],
+                // WX: METAR/TAF indicators below the airports, so airports and labels win the space (WeatherMapLayer).
+                WeatherMapLayer.metarLayer(flight: false, theme: theme),
                 // All airports as blue Lido gears; minor ones appear when zoomed in.
                 ["id": "all-airports-major", "maxzoom": ammZoom + 0.5, "type": "symbol", "source": "all-airports", "minzoom": 3.5,
                  "filter": ["==", ["get", "rank"], 1],
@@ -202,11 +203,16 @@ enum MapStyle {
                             "icon-size": ["interpolate", ["linear"], ["zoom"],
                                           3, ["*", 0.45, ["get", "size"]], 7, ["*", 0.75, ["get", "size"]], 12, ["*", 1.1, ["get", "size"]]]]],
                 ["id": "vatsim-pilot-labels", "type": "symbol", "source": vatsimSource, "minzoom": 7,
-                 "filter": ["all", ["==", ["get", "kind"], "pilot"], ["get", "showLabel"]],
+                 "filter": ["all", ["==", ["get", "kind"], "pilot"], ["get", "showLabel"], ["!", ["get", "company"]]],
                  "layout": ["text-field": ["get", "label"], "text-font": ["Noto Sans Bold"], "text-size": 14,
                             "text-anchor": "top-left", "text-offset": [0.6, 0.6], "text-optional": true],
                  "paint": ["text-color": ["case", ["get", "hl"], "#FF9F1C", "#4A7BFF"],
                            "text-halo-color": "rgba(0,0,0,0.5)", "text-halo-width": 1]],
+                ["id": "vatsim-company-labels", "type": "symbol", "source": vatsimSource,
+                 "filter": ["all", ["==", ["get", "kind"], "pilot"], ["get", "company"]],
+                 "layout": ["text-field": ["get", "label"], "text-font": ["Noto Sans Bold"], "text-size": 14,
+                            "text-anchor": "top-left", "text-offset": [0.6, 0.6], "text-allow-overlap": true],
+                 "paint": ["text-color": "#FF9F1C", "text-halo-color": "rgba(0,0,0,0.7)", "text-halo-width": 1]],
                 ["id": "vatsim-airport-dot", "type": "circle", "source": vatsimSource, "minzoom": 6,
                  "filter": ["==", ["get", "kind"], "airport-idle"],
                  "paint": ["circle-radius": 2.5, "circle-color": "#8E8E8E"]],
@@ -250,11 +256,12 @@ enum MapStyle {
                 navaidLayer("navaid-vor", kind: "vor", icon: "nav-vor", minzoom: 5.5, color: "#5AB0E8", theme: theme),
                 navaidLayer("navaid-dme", kind: "dme", icon: "nav-dme", minzoom: 6.5, color: "#5AB0E8", theme: theme),
                 navaidLayer("navaid-ndb", kind: "ndb", icon: "nav-ndb", minzoom: 7, color: "#C467C9", theme: theme),
-                ["id": "sigmet-fill", "type": "fill", "source": sigmetSource, "paint": ["fill-color": "#9B3FD1", "fill-opacity": 0.12]],
-                ["id": "sigmet-line", "type": "line", "source": sigmetSource, "paint": ["line-color": "#B45CE8", "line-width": 1.5]],
+                WeatherMapLayer.sigmetFillLayer(),
+                WeatherMapLayer.sigmetLineLayer(),
+                WeatherMapLayer.sigmetLabelLayer(theme: theme),
                 ["id": "route-line", "type": "line", "source": routeSource,
                  "layout": ["line-join": "round", "line-cap": "round"],
-                 "paint": ["line-color": "#E8B04A", "line-width": 3]],
+                 "paint": ["line-color": customization.routeColor.cssHex, "line-width": 3]],
                 ["id": "route-points", "maxzoom": ammZoom + 0.5, "type": "symbol", "source": routePointsSource,
                  "layout": ["icon-image": "wpt-triangle", "icon-allow-overlap": true, "icon-size": 1]],
                 ["id": "route-labels", "maxzoom": ammZoom + 0.5, "type": "symbol", "source": routePointsSource,
@@ -263,11 +270,8 @@ enum MapStyle {
                     "text-anchor": "left", "text-offset": [0.8, 0], "text-optional": true,
                  ],
                  "paint": ["text-color": hex(theme.mapLabel), "text-halo-color": hex(theme.mapLabelHalo), "text-halo-width": 1.6]],
-                ["id": "metar-dots", "type": "circle", "source": metarSource,
-                 "paint": [
-                    "circle-radius": 5, "circle-stroke-width": 1, "circle-stroke-color": "#10161F",
-                    "circle-color": ["match", ["get", "category"], "green", "#2FB24F", "amber", "#E8A33D", "red", "#D23A3A", "#8A8F98"],
-                 ]],
+                // The flight's airports always show their indicator.
+                WeatherMapLayer.metarLayer(flight: true, theme: theme),
                 ["id": "airports", "maxzoom": ammZoom + 0.5, "type": "symbol", "source": airportsSource,
                  "layout": ["icon-image": ["concat", "apt-", ["get", "role"]], "icon-allow-overlap": true]],
                 ["id": "airport-labels", "maxzoom": ammZoom + 0.5, "type": "symbol", "source": airportsSource,
@@ -276,6 +280,15 @@ enum MapStyle {
                     "text-anchor": "top-left", "text-offset": [0.7, 0.4], "text-allow-overlap": true,
                  ],
                  "paint": ["text-color": "#3D8BFF", "text-halo-color": hex(theme.mapLabelHalo), "text-halo-width": 1.5]],
+                ["id": "ruler-line", "type": "line", "source": "ruler", "filter": ["==", ["get", "kind"], "line"],
+                 "paint": ["line-color": hex(UIColor(hex: customization.accent.hex)), "line-width": 2.5, "line-dasharray": [3, 2]]],
+                ["id": "ruler-points", "type": "circle", "source": "ruler", "filter": ["==", ["get", "kind"], "endpoint"],
+                 "paint": ["circle-radius": 5, "circle-color": "#FFFFFF", "circle-stroke-color": customization.routeColor.cssHex, "circle-stroke-width": 2]],
+                ["id": "ruler-labels", "type": "symbol", "source": "ruler",
+                 "filter": ["!=", ["get", "kind"], "line"],
+                 "layout": ["text-field": ["get", "label"], "text-font": ["Noto Sans Bold"], "text-size": 13,
+                            "text-offset": [0, 1.2], "text-allow-overlap": true],
+                 "paint": ["text-color": hex(theme.mapLabel), "text-halo-color": hex(theme.mapLabelHalo), "text-halo-width": 2]],
                 ["id": "ownship-halo", "type": "circle", "source": ownshipSource,
                  "paint": ["circle-radius": 36, "circle-color": "#3D8BFF", "circle-opacity": 0.3, "circle-pitch-alignment": "map"]],
                 ["id": "ownship", "type": "symbol", "source": ownshipSource,
@@ -286,11 +299,34 @@ enum MapStyle {
             ],
         ]
 
+        var layers = style["layers"] as? [[String: Any]] ?? []
+        for i in layers.indices {
+            var layout = layers[i]["layout"] as? [String: Any] ?? [:]
+            if let size = layout["text-size"] { layout["text-size"] = scaledTextSize(size, by: customization.mapTextSize.scale) }
+            if layers[i]["id"] as? String == "graticule" { layout["visibility"] = customization.showGraticule ? "visible" : "none" }
+            layers[i]["layout"] = layout
+        }
+        style["layers"] = layers
         let data = try JSONSerialization.data(withJSONObject: style)
         let url = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(theme.night ? "style-night.json" : "style-day.json")
+            .appendingPathComponent("style-\(theme.night)-\(customization.globeView)-\(customization.mapTextSize.rawValue)-\(customization.routeColor.rawValue)-\(customization.showGraticule)-\(customization.accent.rawValue).json")
         try data.write(to: url, options: .atomic)
         return url
+    }
+
+    /// Scale expression outputs, keeping a zoom expression at the top level as MapLibre requires.
+    static func scaledTextSize(_ value: Any, by scale: Double) -> Any {
+        if let number = value as? NSNumber { return number.doubleValue * scale }
+        guard var expression = value as? [Any], let operation = expression.first as? String else { return value }
+        if operation == "interpolate" {
+            for i in stride(from: 4, to: expression.count, by: 2) { expression[i] = scaledTextSize(expression[i], by: scale) }
+        } else if operation == "step", expression.count >= 3 {
+            expression[2] = scaledTextSize(expression[2], by: scale)
+            for i in stride(from: 4, to: expression.count, by: 2) { expression[i] = scaledTextSize(expression[i], by: scale) }
+        } else {
+            return ["*", value, scale] as [Any]
+        }
+        return expression
     }
 
     private static func navaidLayer(_ id: String, kind: String, icon: String, minzoom: Double, color: String, theme: Theme) -> [String: Any] {

@@ -26,6 +26,10 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('diagnostic retention', () => {
+  it('redacts account paths containing spaces without leaving a broken suffix', () => {
+    logger('test').info('chart cache: C:\\Users\\First Last\\AppData\\Local\\SimPilot Bridge\\cache');
+    expect(logEntries().at(-1)!.message).toBe('chart cache: ~');
+  });
   it('redacts quoted JSON credentials and authorization values', () => {
     logger('test').error('{"token":"secret-value","username":"private-name","authorization":"Bearer topsecret"}');
     expect(logEntries().at(-1)!.message).not.toMatch(/secret-value|private-name|topsecret/);

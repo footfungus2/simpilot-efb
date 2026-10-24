@@ -8,7 +8,19 @@ struct EnrouteMapView: UIViewRepresentable {
     var ownship: Ownship?
     @Binding var follow: Bool
     var mapFilters: MapFilters
-    var wxVisible: Bool
+    var customization: CustomizationValues
+    var enrouteHigh: Bool
+    var rulerActive: Bool
+    var ruler: MapRuler
+    var onRulerTap: (MapRuler.Point) -> Void
+    var companyVisible: Bool
+    /// WX layer: data comes from the store; the WX popover's toggles show or hide the indicator and SIGMET layers.
+    let weather: WeatherStore
+    var wxMetars: Bool
+    var wxSigmets: Bool
+    /// The store's data versions; a change pushes its new GeoJSON to the map.
+    var wxIndicatorVersion = 0
+    var wxSigmetVersion = 0
     /// Bump to re-centre on the ownship (if following) or fit the route.
     var recenterToken: Int
     let bridge: BridgeClient
@@ -25,9 +37,11 @@ struct EnrouteMapView: UIViewRepresentable {
     var taxiRouteAirport: String?
     var activeRunwayRefs: [String] = []
     var onMapTap: (MapPick?) -> Void = { _ in }
+    /// A tapped SIGMET (its id), nil when something else was tapped.
+    var onSigmetTap: (String?) -> Void = { _ in }
 
     func makeUIView(context: Context) -> MLNMapView {
-        let map = MLNMapView(frame: .zero, styleURL: try? MapStyle.write(theme: Theme(night: night)))
+        let map = MLNMapView(frame: .zero, styleURL: try? MapStyle.write(theme: Theme(night: night, accent: customization.accent), customization: customization))
         map.delegate = context.coordinator
         map.logoView.isHidden = true
         map.attributionButton.isHidden = true
@@ -54,11 +68,13 @@ struct EnrouteMapView: UIViewRepresentable {
 
     func updateUIView(_ map: MLNMapView, context: Context) {
         let c = context.coordinator
+        let previous = c.parent.customization
         c.parent = self
-        if c.night != night {
+        if c.night != night || previous.globeView != customization.globeView || previous.mapTextSize != customization.mapTextSize
+            || previous.routeColor != customization.routeColor || previous.showGraticule != customization.showGraticule || previous.accent != customization.accent {
             c.night = night
             c.styleLoaded = false
-            map.styleURL = try? MapStyle.write(theme: Theme(night: night))
+            map.styleURL = try? MapStyle.write(theme: Theme(night: night, accent: customization.accent), customization: customization)
             return // apply() runs again once the new style has loaded
         }
         c.apply()
@@ -74,9 +90,9 @@ struct EnrouteMapView: UIViewRepresentable {
         var styleLoaded = false
 
         private var shownRouteStamp: Double?
+        private var fittedRouteStamp: Double?
         private var lastRecenterToken = -1
         private var lastFollowCenter: CLLocationCoordinate2D?
-        private var wxTask: Task<Void, Never>?
         private var ammFeatures: [String: [[String: Any]]] = [:]
         private var ammLoading = Set<String>()
         private var ammFailedAt: [String: Date] = [:]
@@ -84,11 +100,17 @@ struct EnrouteMapView: UIViewRepresentable {
         private var lastVatsimVersion = -1
         private var lastFocusToken = 0
         private var shownOverlayID: UUID?
+        private var focusedOverlayID: UUID?
+        private var shownRuler: MapRuler?
+        private var shownRulerStart: MapRuler.Point?
         private var shownTaxiRoute: String?
         private var shownFrequencies: Bool?
         private var shownActiveRefs: [String]?
         private var overlayNight: Bool?
-        private var sigmetsLoadedAt: Date?
+        private var shownIndicatorVersion = -1
+        private var shownSigmetVersion = -1
+        /// The highlighted SIGMET on the current style (outer nil: not applied yet).
+        private var shownSelectedSigmet: String??
 
         init(parent: EnrouteMapView) {
             self.parent = parent
@@ -123,13 +145,17 @@ struct EnrouteMapView: UIViewRepresentable {
             style.setImage(MapIcons.vatsimPlane(color: UIColor(hex: 0xFF9F1C)), forName: "vatsim-plane-hl")
             style.setImage(MapIcons.labelBox(border: UIColor(hex: 0x4A4A4A)), forName: "label-box")
             style.setImage(MapIcons.labelBox(border: UIColor(hex: 0xFF5B45), fill: UIColor(hex: 0x1A1A1A)), forName: "label-box-red")
+            WeatherMapLayer.addImages(to: style)
+            shownIndicatorVersion = -1
+            shownSigmetVersion = -1
+            shownSelectedSigmet = nil
             updateAMMSource()
             lastVatsimVersion = -1
             shownOverlayID = nil
+            shownRuler = nil
             styleLoaded = true
             DiagnosticLog.record(.info, "Map", "Map loaded.")
             shownRouteStamp = nil
-            sigmetsLoadedAt = nil
             apply()
         }
 
@@ -148,19 +174,27 @@ struct EnrouteMapView: UIViewRepresentable {
             guard let map else { return }
             let p = g.location(in: map)
             let rect = CGRect(x: p.x - 18, y: p.y - 18, width: 36, height: 36)
-            if parent.vatsimVisible {
-                for layer in MapStyle.vatsimTappable {
-                    let hits = map.visibleFeatures(in: rect, styleLayerIdentifiers: [layer])
-                    guard let f = hits.first, let kind = f.attribute(forKey: "kind") as? String,
-                          let key = f.attribute(forKey: "key") as? String else { continue }
-                    parent.onMapTap(nil)
-                    switch kind {
-                    case "pilot": parent.onVatsimTap(.pilot(key))
-                    case "airport", "airport-idle": parent.onVatsimTap(.airport(key))
-                    default: parent.onVatsimTap(.controller(key))
-                    }
-                    return
-                }
+            if parent.rulerActive {
+                let snap = CGRect(x: p.x - 22, y: p.y - 22, width: 44, height: 44)
+                let f = firstFeature(in: snap, layers: MapStyle.pickable)
+                let coordinate = f?.coordinate ?? map.convert(p, toCoordinateFrom: map)
+                let label = f.flatMap { feature in
+                    ["ident", "icao", "id"].compactMap { feature.attribute(forKey: $0) as? String }.first
+                } ?? String(format: "%.2f, %.2f", coordinate.latitude, coordinate.longitude)
+                select()
+                parent.onRulerTap(MapRuler.Point(coordinate: coordinate, label: label))
+                return
+            }
+            // Symbols first (traffic, ATC badges, fixes, navaids, airports, weather indicators), then areas.
+            if parent.vatsimVisible || parent.companyVisible,
+               let hit = vatsimHit(in: rect, layers: parent.vatsimVisible ? MapStyle.vatsimTappable.filter { !Self.vatsimAreas.contains($0) } : ["vatsim-pilots", "vatsim-company-labels"]) {
+                select(vatsim: hit)
+                return
+            }
+            // A weather indicator right under the finger wins over a fix or navaid next to it.
+            if parent.wxMetars, let pick = metarPick(in: rect.insetBy(dx: 10, dy: 10)) {
+                select(pick: pick)
+                return
             }
             // Waypoints, navaids and airports open the details card.
             for layer in MapStyle.pickable {
@@ -169,12 +203,64 @@ struct EnrouteMapView: UIViewRepresentable {
                 for (k, v) in f.attributes { attrs[k] = "\(v)" }
                 let kind: MapPick.Kind = layer == "route-points" ? .fix : layer.hasPrefix("navaid") ? .navaid : .airport
                 let id = attrs["idx"] ?? attrs["id"] ?? attrs["icao"] ?? attrs["ident"] ?? "?"
-                parent.onVatsimTap(nil)
-                parent.onMapTap(MapPick(kind: kind, id: id, coordinate: f.coordinate, attributes: attrs))
+                select(pick: MapPick(kind: kind, id: id, coordinate: f.coordinate, attributes: attrs))
                 return
             }
-            parent.onVatsimTap(nil)
-            parent.onMapTap(nil)
+            // A METAR/TAF indicator opens its airport's card (METAR + TAF).
+            if parent.wxMetars, let pick = metarPick(in: rect) {
+                select(pick: pick)
+                return
+            }
+            if parent.wxSigmets,
+               let f = firstFeature(in: rect, layers: WeatherMapLayer.sigmetLabelTappable)
+                ?? map.visibleFeatures(at: p, styleLayerIdentifiers: Set(WeatherMapLayer.sigmetAreaTappable)).first,
+               let id = f.attribute(forKey: "id") as? String {
+                select(sigmet: id)
+                return
+            }
+            if parent.vatsimVisible, let hit = vatsimHit(in: rect, layers: Self.vatsimAreas) {
+                select(vatsim: hit)
+                return
+            }
+            select()
+        }
+
+        /// VATSIM layers that cover areas; they only win a tap when no symbol is under it.
+        private static let vatsimAreas = ["vatsim-approach-line", "vatsim-vg-fill", "vatsim-sector-fill"]
+
+        private func vatsimHit(in rect: CGRect, layers: [String]) -> VatsimSelection? {
+            guard let map else { return nil }
+            for layer in layers {
+                guard let f = map.visibleFeatures(in: rect, styleLayerIdentifiers: [layer]).first,
+                      let kind = f.attribute(forKey: "kind") as? String, let key = f.attribute(forKey: "key") as? String else { continue }
+                switch kind {
+                case "pilot": return .pilot(key)
+                case "airport", "airport-idle": return .airport(key)
+                default: return .controller(key)
+                }
+            }
+            return nil
+        }
+
+        private func metarPick(in rect: CGRect) -> MapPick? {
+            guard let f = firstFeature(in: rect, layers: WeatherMapLayer.metarTappable),
+                  let icao = f.attribute(forKey: "icao") as? String else { return nil }
+            return WeatherMapLayer.airportPick(icao: icao, coordinate: f.coordinate, ofp: parent.ofp, store: parent.weather)
+        }
+
+        private func firstFeature(in rect: CGRect, layers: [String]) -> MLNFeature? {
+            guard let map else { return nil }
+            for layer in layers {
+                if let f = map.visibleFeatures(in: rect, styleLayerIdentifiers: [layer]).first { return f }
+            }
+            return nil
+        }
+
+        /// Opens one card (VATSIM, waypoint/airport or SIGMET) and closes the others.
+        private func select(vatsim: VatsimSelection? = nil, pick: MapPick? = nil, sigmet: String? = nil) {
+            parent.onVatsimTap(vatsim)
+            parent.onMapTap(pick)
+            parent.onSigmetTap(sigmet)
         }
 
         func mapView(_ mapView: MLNMapView, regionWillChangeWith reason: MLNCameraChangeReason, animated: Bool) {
@@ -184,7 +270,7 @@ struct EnrouteMapView: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MLNMapView, regionDidChangeWith reason: MLNCameraChangeReason, animated: Bool) {
-            scheduleWeatherRefresh()
+            parent.weather.refreshIfStale()
             // Zoomed in on an airport: fetch its moving map.
             if mapView.zoomLevel >= MapStyle.ammZoom - 1, let icao = AirportIndex.nearest(to: mapView.centerCoordinate, withinKm: 8) {
                 loadAMM(icao)
@@ -199,7 +285,10 @@ struct EnrouteMapView: UIViewRepresentable {
             if shownRouteStamp != parent.ofp?.fetchedAt {
                 shownRouteStamp = parent.ofp?.fetchedAt
                 setRoute(style: style)
-                if parent.ownship == nil { fitRoute(map) }
+                if parent.ownship == nil, fittedRouteStamp != parent.ofp?.fetchedAt {
+                    fittedRouteStamp = parent.ofp?.fetchedAt
+                    fitRoute(map)
+                }
                 parent.ofp.map { [$0.origin, $0.destination] + $0.alternates }?.forEach { loadAMM($0.icao) }
             }
 
@@ -218,7 +307,7 @@ struct EnrouteMapView: UIViewRepresentable {
 
             setOwnship(style: style)
 
-            for (id, on) in MapStyle.layers(for: parent.mapFilters) { style.layer(withIdentifier: id)?.isVisible = on }
+            for (id, on) in MapStyle.layers(for: parent.mapFilters, high: parent.enrouteHigh) { style.layer(withIdentifier: id)?.isVisible = on }
             if parent.mapFilters.navaidFrequencies != shownFrequencies {
                 shownFrequencies = parent.mapFilters.navaidFrequencies
                 let text: [Any] = parent.mapFilters.navaidFrequencies
@@ -228,13 +317,19 @@ struct EnrouteMapView: UIViewRepresentable {
                     (style.layer(withIdentifier: id) as? MLNSymbolStyleLayer)?.text = NSExpression(mglJSONObject: text)
                 }
             }
-            for id in MapStyle.wxLayers { style.layer(withIdentifier: id)?.isVisible = parent.wxVisible }
-            for id in MapStyle.vatsimLayers { style.layer(withIdentifier: id)?.isVisible = parent.vatsimVisible }
+            updateWeather(style: style)
+            for id in MapStyle.vatsimLayers {
+                let companyLayer = ["vatsim-pilots", "vatsim-company-labels"].contains(id)
+                style.layer(withIdentifier: id)?.isVisible = parent.vatsimVisible || (parent.companyVisible && companyLayer)
+            }
+            (style.layer(withIdentifier: "vatsim-pilots") as? MLNSymbolStyleLayer)?.predicate = NSPredicate(mglJSONObject:
+                parent.vatsimVisible ? ["==", ["get", "kind"], "pilot"] : ["all", ["==", ["get", "kind"], "pilot"], ["get", "company"]])
             // With VATSIM on, the online sectors carry the boundaries; dim the base FIR lines so borders don't double up.
             (style.layer(withIdentifier: "fir-lines") as? MLNLineStyleLayer)?.lineOpacity = NSExpression(forConstantValue: parent.vatsimVisible ? 0.3 : 1)
             updateChartOverlay(map: map, style: style)
             updateTaxiRoute(style: style)
             updateActiveRunways(style: style)
+            updateRuler(style: style)
 
             if parent.vatsimFocusToken != lastFocusToken {
                 lastFocusToken = parent.vatsimFocusToken
@@ -247,7 +342,6 @@ struct EnrouteMapView: UIViewRepresentable {
                 lastVatsimVersion = parent.vatsimVersion
                 source.shape = parent.vatsimData.flatMap { try? MLNShape(data: $0, encoding: String.Encoding.utf8.rawValue) }
             }
-            if parent.wxVisible { scheduleWeatherRefresh(immediate: sigmetsLoadedAt == nil) }
 
             if parent.recenterToken != lastRecenterToken {
                 lastRecenterToken = parent.recenterToken
@@ -352,15 +446,16 @@ struct EnrouteMapView: UIViewRepresentable {
         /// Pins the selected chart page onto the map at its georeferenced corners, under the route and aircraft.
         private func updateChartOverlay(map: MLNMapView, style: MLNStyle) {
             let overlay = parent.chartOverlay
-            if overlay?.id != shownOverlayID || (overlay != nil && overlayNight != night) {
+            let dark = night && parent.customization.invertChartsAtNight
+            if overlay?.id != shownOverlayID || (overlay != nil && overlayNight != dark) {
                 if let layer = style.layer(withIdentifier: "chart-overlay") { style.removeLayer(layer) }
                 if let source = style.source(withIdentifier: "chart-overlay") { style.removeSource(source) }
                 shownOverlayID = overlay?.id
-                overlayNight = night
+                overlayNight = dark
                 guard let overlay else { return }
                 let quad = MLNCoordinateQuad(topLeft: overlay.topLeft, bottomLeft: overlay.bottomLeft,
                                              bottomRight: overlay.bottomRight, topRight: overlay.topRight)
-                let image = night ? NightChart.render(overlay.image) : overlay.image
+                let image = dark ? NightChart.render(overlay.image) : overlay.image
                 let source = MLNImageSource(identifier: "chart-overlay", coordinateQuad: quad, image: image)
                 style.addSource(source)
                 let layer = MLNRasterStyleLayer(identifier: "chart-overlay", source: source)
@@ -369,16 +464,47 @@ struct EnrouteMapView: UIViewRepresentable {
                 } else {
                     style.addLayer(layer)
                 }
-                // Fly to the chart.
-                let lats = [overlay.topLeft, overlay.topRight, overlay.bottomRight, overlay.bottomLeft].map(\.latitude)
-                let lons = [overlay.topLeft, overlay.topRight, overlay.bottomRight, overlay.bottomLeft].map(\.longitude)
-                let bounds = MLNCoordinateBounds(sw: CLLocationCoordinate2D(latitude: lats.min()!, longitude: lons.min()!),
-                                                 ne: CLLocationCoordinate2D(latitude: lats.max()!, longitude: lons.max()!))
-                map.setVisibleCoordinateBounds(bounds, edgePadding: UIEdgeInsets(top: 60, left: 40, bottom: 60, right: 100),
-                                               animated: true, completionHandler: nil)
+                // A style/appearance change must not move the user's map.
+                if focusedOverlayID != overlay.id {
+                    focusedOverlayID = overlay.id
+                    let lats = [overlay.topLeft, overlay.topRight, overlay.bottomRight, overlay.bottomLeft].map(\.latitude)
+                    let lons = [overlay.topLeft, overlay.topRight, overlay.bottomRight, overlay.bottomLeft].map(\.longitude)
+                    let bounds = MLNCoordinateBounds(sw: CLLocationCoordinate2D(latitude: lats.min()!, longitude: lons.min()!),
+                                                     ne: CLLocationCoordinate2D(latitude: lats.max()!, longitude: lons.max()!))
+                    map.setVisibleCoordinateBounds(bounds, edgePadding: UIEdgeInsets(top: 60, left: 40, bottom: 60, right: 100),
+                                                   animated: true, completionHandler: nil)
+                }
             }
             (style.layer(withIdentifier: "chart-overlay") as? MLNRasterStyleLayer)?.rasterOpacity =
                 NSExpression(forConstantValue: parent.chartOverlayOpacity)
+        }
+
+        private func updateRuler(style: MLNStyle) {
+            let ruler = parent.rulerActive ? parent.ruler : MapRuler()
+            let a = ruler.start(parent.ownship)
+            guard ruler != shownRuler || a != shownRulerStart else { return }
+            shownRuler = ruler
+            shownRulerStart = a
+            var features: [[String: Any]] = []
+            func point(_ p: MapRuler.Point, kind: String = "endpoint") -> [String: Any] {
+                ["type": "Feature", "properties": ["kind": kind, "label": p.label],
+                 "geometry": ["type": "Point", "coordinates": [p.coordinate.longitude, p.coordinate.latitude]]]
+            }
+            if let a {
+                features.append(point(a))
+                if let b = ruler.b {
+                    features.append(point(b))
+                    let segments = MapRuler.segments(a.coordinate, b.coordinate)
+                    features.append(["type": "Feature", "properties": ["kind": "line"],
+                                     "geometry": ["type": "MultiLineString", "coordinates": segments]])
+                    let coords = segments.flatMap { $0 }, mid = coords[coords.count / 2]
+                    let label = String(format: "%.1f NM · %03.0f° T", MapRuler.distanceNM(a.coordinate, b.coordinate), RunwayAwareness.bearing(a.coordinate, b.coordinate))
+                    features.append(point(MapRuler.Point(coordinate: CLLocationCoordinate2D(latitude: mid[1], longitude: mid[0]), label: label), kind: "label"))
+                }
+            }
+            if let data = try? JSONSerialization.data(withJSONObject: ["type": "FeatureCollection", "features": features]) {
+                (style.source(withIdentifier: "ruler") as? MLNShapeSource)?.shape = try? MLNShape(data: data, encoding: String.Encoding.utf8.rawValue)
+            }
         }
 
         // MARK: Airport moving map
@@ -412,43 +538,31 @@ struct EnrouteMapView: UIViewRepresentable {
 
         // MARK: Weather
 
-        private func scheduleWeatherRefresh(immediate: Bool = false) {
-            guard parent.wxVisible, styleLoaded else { return }
-            wxTask?.cancel()
-            wxTask = Task { [weak self] in
-                if !immediate { try? await Task.sleep(nanoseconds: 800_000_000) }
-                guard !Task.isCancelled else { return }
-                await self?.refreshWeather()
+        /// Shows the WX layers per the WX popover and pushes new indicator/SIGMET data from the store.
+        /// Never starts or cancels a download: this runs on every SwiftUI update (ownship at 10 Hz).
+        private func updateWeather(style: MLNStyle) {
+            for id in WeatherMapLayer.metarLayers { setVisible(style, id, parent.wxMetars) }
+            for id in WeatherMapLayer.sigmetLayers { setVisible(style, id, parent.wxSigmets) }
+            let wx = parent.weather
+            if parent.wxIndicatorVersion != shownIndicatorVersion,
+               let source = style.source(withIdentifier: MapStyle.metarSource) as? MLNShapeSource {
+                shownIndicatorVersion = parent.wxIndicatorVersion
+                source.shape = wx.indicatorGeoJSON.flatMap { try? MLNShape(data: $0, encoding: String.Encoding.utf8.rawValue) }
+            }
+            if parent.wxSigmetVersion != shownSigmetVersion,
+               let source = style.source(withIdentifier: MapStyle.sigmetSource) as? MLNShapeSource {
+                shownSigmetVersion = parent.wxSigmetVersion
+                source.shape = wx.sigmetGeoJSON.flatMap { try? MLNShape(data: $0, encoding: String.Encoding.utf8.rawValue) }
+            }
+            if wx.selectedSigmet != shownSelectedSigmet {
+                shownSelectedSigmet = wx.selectedSigmet
+                WeatherMapLayer.highlight(sigmet: wx.selectedSigmet, in: style)
             }
         }
 
-        private func refreshWeather() async {
-            guard let map, let style = map.style else { return }
-
-            if sigmetsLoadedAt.map({ Date().timeIntervalSince($0) > 600 }) ?? true {
-                if let data = try? await WeatherService.sigmetsGeoJSON(),
-                   let shape = try? MLNShape(data: data, encoding: String.Encoding.utf8.rawValue) {
-                    (style.source(withIdentifier: MapStyle.sigmetSource) as? MLNShapeSource)?.shape = shape
-                    sigmetsLoadedAt = Date()
-                }
-            }
-
-            // METAR indicators only when zoomed in enough for the request to stay small.
-            let b = map.visibleCoordinateBounds
-            let span = b.ne.longitude - b.sw.longitude
-            guard span > 0, span < 40 else {
-                (style.source(withIdentifier: MapStyle.metarSource) as? MLNShapeSource)?.shape = nil
-                return
-            }
-            guard let stations = try? await WeatherService.metars(minLat: b.sw.latitude, minLon: b.sw.longitude,
-                                                                  maxLat: b.ne.latitude, maxLon: b.ne.longitude) else { return }
-            let features: [MLNPointFeature] = stations.map { s in
-                let f = MLNPointFeature()
-                f.coordinate = CLLocationCoordinate2D(latitude: s.lat, longitude: s.lon)
-                f.attributes = ["icao": s.icao, "category": s.category]
-                return f
-            }
-            (style.source(withIdentifier: MapStyle.metarSource) as? MLNShapeSource)?.shape = MLNShapeCollectionFeature(shapes: features)
+        private func setVisible(_ style: MLNStyle, _ id: String, _ visible: Bool) {
+            guard let layer = style.layer(withIdentifier: id), layer.isVisible != visible else { return }
+            layer.isVisible = visible
         }
     }
 }

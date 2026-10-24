@@ -14,6 +14,8 @@ final class AppState: ObservableObject {
     let bridge = BridgeClient()
     let vatsim = VatsimStore()
     let vatsimAssistant = VatsimAssistant()
+    /// Worldwide METAR/TAF/SIGMET data for the map's WX layer.
+    let weather = WeatherStore()
     private(set) lazy var fenixCommander = FenixCommander(bridge: bridge)
     let chartPack = ChartPack()
     lazy var chartsModel = ChartsModel(bridge: bridge, pack: chartPack)
@@ -23,12 +25,46 @@ final class AppState: ObservableObject {
     @Published var simbriefUser: String { didSet { defaults.set(simbriefUser, forKey: "simbriefUser") } }
     @Published var night: Bool { didSet { defaults.set(night, forKey: "night") } }
 
-    #if DEBUG
-    // Testing without the sim: fly the loaded SimBrief route with a simulated aircraft.
-    @Published var demoEnabled = false { didSet { updateDemo() } }
-    @Published var demoSpeed: Double = 8 { didSet { demo.speed = demoSpeed } }
-    private lazy var demo = DemoFlight { [weak self] o in self?.bridge.ownship.updateFromDemo(o) }
-    #endif
+    // Customization (Settings → Customization; persisted)
+    /// Night/day follows the iPad's Dark Mode setting instead of the night toggle.
+    @Published var followSystemAppearance: Bool { didSet { defaults.set(followSystemAppearance, forKey: "followSystemAppearance") } }
+    @Published var accent: AccentChoice { didSet { defaults.set(accent.rawValue, forKey: AccentChoice.defaultsKey) } }
+    @Published var motion: MotionLevel { didSet { defaults.set(motion.rawValue, forKey: MotionLevel.defaultsKey) } }
+    /// UTC clock in the top bar instead of the version number.
+    @Published var showUtcClock: Bool { didSet { defaults.set(showUtcClock, forKey: "showUtcClock") } }
+    @Published var mapTextSize: MapTextSize { didSet { defaults.set(mapTextSize.rawValue, forKey: MapTextSize.defaultsKey) } }
+    @Published var routeColor: RouteColorChoice { didSet { defaults.set(routeColor.rawValue, forKey: RouteColorChoice.defaultsKey) } }
+    /// 3D globe when zoomed out (off: flat map at every zoom).
+    @Published var globeView: Bool { didSet { defaults.set(globeView, forKey: "globeView") } }
+    @Published var showGraticule: Bool { didSet { defaults.set(showGraticule, forKey: "showGraticule") } }
+    /// Charts switch to their dark version in night mode (off: charts stay white at night).
+    @Published var invertChartsAtNight: Bool { didSet { defaults.set(invertChartsAtNight, forKey: "invertChartsAtNight") } }
+    @Published var startModule: StartModule { didSet { defaults.set(startModule.rawValue, forKey: StartModule.defaultsKey) } }
+    @Published var flightFolderAtLaunch: Bool { didSet { defaults.set(flightFolderAtLaunch, forKey: "flightFolderAtLaunch") } }
+
+    // Map layers and tools (persisted unless noted)
+    /// Low / High enroute chart in the bottom toolbar.
+    @Published var enrouteHigh: Bool { didSet { defaults.set(enrouteHigh, forKey: "enrouteHigh") } }
+    /// WX layer: METAR (or, with a time offset, TAF) indicators, and SIGMETs.
+    @Published var wxMetars: Bool { didSet { defaults.set(wxMetars, forKey: "wxMetars") } }
+    @Published var wxSigmets: Bool { didSet { defaults.set(wxSigmets, forKey: "wxSigmets") } }
+    /// Weather time offset from the top bar (+00:00 … +12:00): weather shows the forecast for now + this. Not persisted.
+    @Published var wxOffsetHours = 0
+    /// Ruler (distance/bearing measuring) mode on the map. Not persisted.
+    @Published var rulerActive = false {
+        didSet {
+            if !rulerActive { ruler = MapRuler() } else {
+                mapPick = nil
+                vatsim.selection = nil
+                weather.selectedSigmet = nil
+            }
+        }
+    }
+    @Published var ruler = MapRuler()
+    /// CMPY layer: highlight VATSIM traffic of your airline.
+    @Published var companyTraffic: Bool { didSet { defaults.set(companyTraffic, forKey: "companyTraffic") } }
+    /// Airline code typed in the CMPY panel; empty = taken from the SimBrief callsign.
+    @Published var companyCodeOverride: String { didSet { defaults.set(companyCodeOverride, forKey: "companyCode") } }
 
     // Flight
     @Published private(set) var ofp: Ofp?
@@ -36,13 +72,12 @@ final class AppState: ObservableObject {
     @Published var ofpError: String?
 
     // Navigation
-    @Published var module: Module = .map
+    @Published var module: Module = .map { didSet { defaults.set(module.storageName, forKey: "lastModule") } }
     @Published var chartsAirport: String?
     @Published var sidebarVisible = true
     @Published var showSettings = false
     @Published var showOfp = false
     @Published var showVerticalProfile = false
-    @Published var enrouteHigh = true
     @Published var followOwnship = true
     /// A chart laid over the moving map ("Show on map" in the chart viewer).
     @Published var chartOverlay: ChartOverlay?
@@ -87,14 +122,62 @@ final class AppState: ObservableObject {
         bridgeHost = defaults.string(forKey: "bridgeHost") ?? ""
         simbriefUser = defaults.string(forKey: "simbriefUser") ?? ""
         night = defaults.object(forKey: "night") as? Bool ?? true
+        followSystemAppearance = defaults.object(forKey: "followSystemAppearance") as? Bool ?? false
+        accent = AccentChoice.current
+        motion = MotionLevel.current
+        showUtcClock = defaults.object(forKey: "showUtcClock") as? Bool ?? false
+        mapTextSize = MapTextSize.current
+        routeColor = RouteColorChoice.current
+        globeView = defaults.object(forKey: "globeView") as? Bool ?? true
+        showGraticule = defaults.object(forKey: "showGraticule") as? Bool ?? true
+        invertChartsAtNight = defaults.object(forKey: "invertChartsAtNight") as? Bool ?? true
+        startModule = StartModule(rawValue: defaults.string(forKey: StartModule.defaultsKey) ?? "") ?? .map
+        flightFolderAtLaunch = defaults.object(forKey: "flightFolderAtLaunch") as? Bool ?? true
+        enrouteHigh = defaults.object(forKey: "enrouteHigh") as? Bool ?? true
+        wxMetars = defaults.object(forKey: "wxMetars") as? Bool ?? false
+        wxSigmets = defaults.object(forKey: "wxSigmets") as? Bool ?? false
+        companyTraffic = defaults.object(forKey: "companyTraffic") as? Bool ?? true
+        companyCodeOverride = defaults.string(forKey: "companyCode") ?? ""
         if let data = defaults.data(forKey: "ofp"), let saved = try? JSONDecoder().decode(Ofp.self, from: data) {
             ofp = saved
         }
+        // Start screen and Flight Folder from Settings → Customization.
+        switch startModule {
+        case .map: module = .map
+        case .charts: module = .charts
+        case .aircraft: module = .aircraft
+        case .last: module = Module(storageName: defaults.string(forKey: "lastModule") ?? "") ?? .map
+        }
+        if module == .charts { chartsAirport = ofp?.origin.icao }
+        sidebarVisible = flightFolderAtLaunch
         // Re-publish bridge changes so views observing AppState see connection updates.
         bridge.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        Publishers.CombineLatest3($companyTraffic, $companyCodeOverride, $ofp)
+            .sink { [weak self] on, override, ofp in
+                guard let self else { return }
+                let code = Self.companyCode(override: override, callsign: ofp?.callsign)
+                self.vatsim.companyCode = on ? code : nil
+            }.store(in: &cancellables)
     }
 
-    var theme: Theme { Theme(night: night) }
+    var theme: Theme { Theme(night: night, accent: accent) }
+
+    /// The night/day buttons: a manual choice stops following the iPad's appearance.
+    func toggleNight() {
+        followSystemAppearance = false
+        night.toggle()
+    }
+
+    /// Airline code for the CMPY layer: the CMPY panel's override, else the letters of the SimBrief callsign ("EZY128W" → "EZY").
+    var companyCode: String? {
+        Self.companyCode(override: companyCodeOverride, callsign: ofp?.callsign)
+    }
+
+    nonisolated static func companyCode(override: String, callsign: String?) -> String? {
+        let code = override.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        if !code.isEmpty { return code.range(of: "^[A-Z]{3}$", options: .regularExpression) != nil ? code : nil }
+        return callsign.flatMap(VatsimPilot.airlineCode)
+    }
 
     func connect() {
         bridge.start(manualHost: bridgeHost)
@@ -112,9 +195,6 @@ final class AppState: ObservableObject {
             if let data = try? JSONEncoder().encode(loaded) { defaults.set(data, forKey: "ofp") }
             // Pre-load charts for every airport of the flight while the sim is running.
             for icao in flightAirports.map(\.icao) { bridge.send(requestCharts: icao) }
-            #if DEBUG
-            if demoEnabled { demo.start(ofp: loaded) }
-            #endif
             DiagnosticLog.record(.info, "Flight", "SimBrief flight loaded.")
         } catch {
             ofpError = error.localizedDescription
@@ -125,27 +205,7 @@ final class AppState: ObservableObject {
     func clearFlight() {
         ofp = nil
         defaults.removeObject(forKey: "ofp")
-        #if DEBUG
-        demoEnabled = false
-        #endif
     }
-
-    #if DEBUG
-    func restartDemo() {
-        demo.restart()
-    }
-
-    private func updateDemo() {
-        bridge.ownship.demoActive = demoEnabled
-        if demoEnabled, let ofp {
-            demo.speed = demoSpeed
-            demo.start(ofp: ofp)
-            followOwnship = true
-        } else {
-            demo.stop()
-        }
-    }
-    #endif
 
     var flightAirports: [OfpAirport] {
         guard let ofp else { return [] }
@@ -176,11 +236,7 @@ final class AppState: ObservableObject {
 
     var routeSubtitle: String {
         guard let ofp else { return "No flight loaded" }
-        var subtitle = "\(ofp.origin.icao)-\(ofp.destination.icao)"
-        #if DEBUG
-        if demoEnabled { subtitle += " · DEMO FLIGHT" }
-        #endif
-        return subtitle
+        return "\(ofp.origin.icao)-\(ofp.destination.icao)"
     }
 }
 
