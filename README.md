@@ -244,6 +244,16 @@ Future features: airways, enroute intersections from sim navigation data, grid M
 
 Issues and pull requests are welcome.
 
+## License
+
+The original SimPilot EFB source code is licensed under the [zlib License](LICENSE),
+copyright (c) 2026 footfungus2. You may use, modify and redistribute it, including commercially,
+provided you do not misrepresent the original authorship, clearly mark altered source versions
+and preserve the notice in source distributions.
+
+Third-party dependencies, libraries and data retain their own licenses and terms, including
+the sources listed below. The zlib License does not override those terms.
+
 ## Data sources & credits
 
 | Data | Source | License |
