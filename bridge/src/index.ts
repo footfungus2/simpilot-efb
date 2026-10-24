@@ -70,7 +70,7 @@ function welcome(port: number, version: string): void {
   }
   console.log('  MSFS 2024 connects automatically whenever it is running. To stop, close this window.');
   if (process.platform === 'win32') {
-    console.log('  Windows may call this app "Node.js JavaScript Runtime" in its firewall prompt. Allow Private networks.');
+    console.log('  Windows may call the bridge "Node.js JavaScript Runtime" in its firewall prompt. Allow Private networks.');
     console.log('  If clicking/selecting text pauses this window, press Esc to resume.');
   }
   console.log('');

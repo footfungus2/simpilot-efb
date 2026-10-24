@@ -68,7 +68,7 @@ jobs:
         shell: pwsh
         run: ./scripts/test-pc.ps1
 
-  # The PC download: SimPilot Bridge.exe (no Node.js needed) and the ready-made chart panel with its installer.
+  # The PC download: a portable SimPilot Bridge bundle (no Node.js install needed) and the ready-made chart panel.
   pc-package:
     needs: [checks, installer]
     runs-on: windows-latest
@@ -84,11 +84,16 @@ jobs:
           cache-dependency-path: |
             bridge/package-lock.json
             sim-package/package-lock.json
-      - name: Build SimPilot Bridge.exe
+      - name: Build SimPilot Bridge portable bundle
         working-directory: bridge
         run: |
           npm ci
-          npm run package:exe
+          npm run package:portable
+      - name: Verify the bundled Node.js runtime signature
+        shell: pwsh
+        run: |
+          $signature = Get-AuthenticodeSignature -LiteralPath 'bridge\dist\app\node.exe'
+          if ($signature.Status -ne 'Valid') { throw "Bundled Node.js signature is $($signature.Status)." }
       - name: Build the chart panel
         working-directory: sim-package
         run: |

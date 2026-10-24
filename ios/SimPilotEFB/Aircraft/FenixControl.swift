@@ -18,9 +18,12 @@ enum FenixLink: Equatable {
         guard bridgeConnected else { return .noBridge }
         guard simConnected else { return .noSim }
         guard let last = lastSimData, now.timeIntervalSince(last) <= maxDataAge else { return .staleSim }
-        let title = aircraftTitle ?? ""
+        // A live Fenix readback is stronger evidence than SimConnect's aircraft title.
+        if hasCockpitValues { return .live }
+        let title = aircraftTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !title.isEmpty else { return .waiting }
         guard title.lowercased().contains("fenix") else { return .wrongAircraft(title) }
-        return hasCockpitValues ? .live : .waiting
+        return .waiting
     }
 
     var isLive: Bool { self == .live }

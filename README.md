@@ -152,8 +152,7 @@ else works without the PC. Put the iPad and sim PC on the **same local network**
 1. On the sim PC, open the **[latest release](https://github.com/footfungus2/simpilot-efb/releases/latest)** and download
    **`SimPilot-for-PC.zip`**.
 2. Right-click the zip, choose **Extract All**, then open the **SimPilot for PC** folder inside.
-3. Double-click **SimPilot Bridge** (shown as **SimPilot Bridge.exe** if file extensions are visible) and leave its window open while you fly.
-   - If Windows says *"Windows protected your PC"*, click **More info**, then **Run anyway**.
+3. Double-click **SimPilot Bridge.cmd** (shown as **SimPilot Bridge** if file extensions are hidden) and leave its window open while you fly.
    - If Windows Firewall asks, tick **Private networks** and click **Allow access**. Windows may call this app
      **Node.js JavaScript Runtime**; that is SimPilot Bridge.
 4. On the iPad, tap **OK** when SimPilot EFB asks to find devices on your local network.
@@ -253,9 +252,9 @@ cd bridge && npm install && npm test && npm run dev   # or double-click bridge/s
 cd sim-package && npm install && npm run build
 ```
 
-- `npm run package:exe` (in `bridge/`, official Node.js 22+ binary) builds the single-file *SimPilot Bridge* app for the
-  current platform and checks that it starts; CI builds the Windows `.exe` and `scripts/package-pc.ps1` stages
-  `SimPilot-for-PC.zip` with the ready-made chart panel.
+- `npm run package:portable` (in `bridge/`, on Windows with the official Node.js 22+ runtime) bundles the bridge
+  beside an unmodified, signature-checked `node.exe` and checks that it starts; `scripts/package-pc.ps1` stages
+  `SimPilot-for-PC.zip` with the ready-made chart panel. No separate Node.js installation is needed.
 - `sim-package/install.bat` builds the panel from source (Node.js + MSFS 2024 SDK) and installs it into `Community2024`.
   To choose the folder yourself: `build.ps1 -Community "D:\MSFS\Packages\Community2024"`.
 

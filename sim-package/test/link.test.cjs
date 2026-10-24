@@ -17,6 +17,8 @@ function run(t, file, globals) {
     clearTimeout(timer) { timers.delete(timer); clearTimeout(timer); },
     ...globals,
   };
+  // MSFS Coherent does not provide Array.flatMap.
+  runInNewContext('Array.prototype.flatMap = undefined', context);
   const source = readFileSync(`${__dirname}/../src/${file}.ts`, 'utf8');
   runInNewContext(transformSync(source, { loader: 'ts', format: 'cjs', target: 'es2017' }).code, context);
   return { api: context.module.exports, timers };

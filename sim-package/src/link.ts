@@ -159,7 +159,10 @@ async function runJob(job: Job): Promise<void> {
   const index = await getIndexForAirport(job.icao, job.provider);
   await request('POST', '/link/index', { jobId: job.id, icao: job.icao, provider: job.provider, index }, 30000);
 
-  const charts = index.charts.flatMap((c) => c.charts);
+  const charts = [];
+  for (const category of index.charts) {
+    for (const chart of category.charts) charts.push(chart);
+  }
   if (!charts.length) throw new Error('No charts available for this airport');
   let pagesOk = 0;
   let pagesFailed = 0;

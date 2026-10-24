@@ -14,7 +14,9 @@ function Write-Fixture($relative, $text = 'fixture') {
 try {
   Write-Fixture 'scripts\placeholder'
   Copy-Item (Join-Path $PSScriptRoot 'package-pc.ps1') (Join-Path $fixture 'scripts\package-pc.ps1')
-  Write-Fixture 'bridge\dist\app\SimPilot Bridge.exe'
+  Write-Fixture 'bridge\dist\app\node.exe'
+  Write-Fixture 'bridge\dist\app\bridge.cjs'
+  Write-Fixture 'bridge\dist\app\SimPilot Bridge.cmd'
   Write-Fixture 'bridge\dist\app\Source and notices\Node-LICENSE.txt'
   Write-Fixture 'sim-package\PackageSources\html_ui\InGamePanels\SimPilotLink\link.js'
   foreach ($file in 'install.bat', 'build.ps1', 'package.xml', 'PackageDefinitions\panel.xml') { Write-Fixture ('sim-package\' + $file) }
@@ -25,9 +27,10 @@ try {
   Assert-Check (Test-Path (Join-Path $output 'keep.txt')) 'Packaging deleted unrelated output files.'
   $expanded = Join-Path $scratch 'expanded'
   Expand-Archive (Join-Path $output 'SimPilot-for-PC.zip') $expanded
-  foreach ($file in 'SimPilot Bridge.exe', 'Read me.txt', 'Source and notices\Node-LICENSE.txt', 'Chart panel (optional)\Install SimPilot Link.bat') {
+  foreach ($file in 'node.exe', 'bridge.cjs', 'SimPilot Bridge.cmd', 'Read me.txt', 'Source and notices\Node-LICENSE.txt', 'Chart panel (optional)\Install SimPilot Link.bat') {
     Assert-Check (Test-Path (Join-Path $expanded ('SimPilot for PC\' + $file))) "Missing packaged file: $file"
   }
+  Assert-Check (-not (Test-Path (Join-Path $expanded 'SimPilot for PC\SimPilot Bridge.exe'))) 'The modified standalone executable is still included.'
   Assert-Check (@(Get-ChildItem $output -Directory -Filter '.stage-*').Count -eq 0) 'Packaging left its temporary stage behind.'
 
   # A tiny SDK stand-in proves failed native commands cannot install a stale package.

@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** True in the single-file "SimPilot Bridge.exe" (the packaging script defines it at bundle time). */
+/** True in the bundled Windows bridge (the packaging script defines it at bundle time). */
 export const packaged = process.env.SIMPILOT_PACKAGED === '1';
 
 const here = packaged ? '' : path.dirname(fileURLToPath(import.meta.url));
@@ -33,7 +33,7 @@ export const config = {
   ownshipHz: envInt('SIMPILOT_OWNSHIP_HZ', 10, 60),
   /** The link panel counts as disconnected after this long without a poll. */
   linkTimeoutMs: 6000,
-  bridgeVersion: '0.1.1',
+  bridgeVersion: '0.1.2',
 };
 
 function parseHostPort(v: string | undefined): { host: string; port: number } | undefined {

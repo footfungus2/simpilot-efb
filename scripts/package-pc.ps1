@@ -1,6 +1,6 @@
-# Stages SimPilot-for-PC.zip for the GitHub release: SimPilot Bridge.exe (runs without Node.js), the ready-made
+# Stages SimPilot-for-PC.zip for the GitHub release: a bundled signed Node.js runtime and SimPilot Bridge launcher, the ready-made
 # chart panel with its one-click installer, and a short read-me. CI runs it on Windows after
-# `npm run package:exe` (bridge) and `npm run build` (sim-package).
+# `npm run package:portable` (bridge) and `npm run build` (sim-package).
 #   pwsh ./scripts/package-pc.ps1 -OutDir release-pc
 param([string]$OutDir = 'release-pc')
 
@@ -11,10 +11,14 @@ $temporary = Join-Path $out ('.stage-' + [guid]::NewGuid().ToString('N'))
 $stage = Join-Path $temporary 'SimPilot for PC'
 $panel = Join-Path $stage 'Chart panel (optional)'
 
-$exe = Join-Path $root 'bridge\dist\app\SimPilot Bridge.exe'
+$runtime = Join-Path $root 'bridge\dist\app\node.exe'
+$bundle = Join-Path $root 'bridge\dist\app\bridge.cjs'
+$launcher = Join-Path $root 'bridge\dist\app\SimPilot Bridge.cmd'
 $sim = Join-Path $root 'sim-package'
 $linkJs = Join-Path $sim 'PackageSources\html_ui\InGamePanels\SimPilotLink\link.js'
-if (-not (Test-Path -LiteralPath $exe)) { throw "Missing $exe - run 'npm run package:exe' in bridge first." }
+foreach ($file in @($runtime, $bundle, $launcher)) {
+  if (-not (Test-Path -LiteralPath $file)) { throw "Missing $file - run 'npm run package:portable' in bridge first." }
+}
 if (-not (Test-Path -LiteralPath $linkJs)) { throw "Missing $linkJs - run 'npm run build' in sim-package first." }
 $notices = Join-Path $root 'bridge\dist\app\Source and notices'
 if (-not (Test-Path -LiteralPath $notices)) { throw 'Source and license notices are missing. Rebuild SimPilot Bridge before packaging.' }
@@ -22,7 +26,7 @@ if (-not (Test-Path -LiteralPath $notices)) { throw 'Source and license notices 
 try {
 New-Item -ItemType Directory -Path $panel -Force | Out-Null
 
-Copy-Item -LiteralPath $exe -Destination $stage
+foreach ($file in @($runtime, $bundle, $launcher)) { Copy-Item -LiteralPath $file -Destination $stage }
 Copy-Item -LiteralPath $notices -Destination $stage -Recurse
 Copy-Item -LiteralPath (Join-Path $sim 'install.bat') -Destination (Join-Path $panel 'Install SimPilot Link.bat')
 foreach ($item in 'build.ps1', 'package.xml', 'PackageDefinitions', 'PackageSources') {
@@ -35,8 +39,7 @@ SimPilot for PC
 
 Open the "SimPilot for PC" folder after choosing Extract All.
 
-1. Double-click "SimPilot Bridge" (SimPilot Bridge.exe) and leave its window open while you fly.
-   - If Windows says "Windows protected your PC": click "More info", then "Run anyway".
+1. Double-click "SimPilot Bridge.cmd" (shown as "SimPilot Bridge" if extensions are hidden) and leave its window open while you fly.
    - If Windows Firewall asks: tick "Private networks" and click "Allow access".
      Windows may call it "Node.js JavaScript Runtime"; that is SimPilot Bridge.
    Keep the iPad and PC on the same local network (Wi-Fi or Ethernet).

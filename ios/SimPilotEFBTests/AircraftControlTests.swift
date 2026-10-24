@@ -22,11 +22,17 @@ final class FenixLinkTests: XCTestCase {
         XCTAssertEqual(link(sim: false), .noSim)
         XCTAssertEqual(link(dataAge: nil), .staleSim)
         XCTAssertEqual(link(dataAge: FenixLink.maxDataAge + 1), .staleSim)
-        XCTAssertEqual(link(title: "Airbus A320neo Asobo"), .wrongAircraft("Airbus A320neo Asobo"))
+        XCTAssertEqual(link(title: "Airbus A320neo Asobo", values: false), .wrongAircraft("Airbus A320neo Asobo"))
         XCTAssertEqual(link(values: false), .waiting)
-        for state in [link(bridge: false), link(dataAge: nil), link(title: "Cessna"), link(values: false)] {
+        for state in [link(bridge: false), link(dataAge: nil), link(title: "Cessna", values: false), link(values: false)] {
             XCTAssertFalse(state.isLive)
         }
+    }
+
+    func testCockpitDataConfirmsFenixWhenSimConnectTitleIsMissingOrGeneric() {
+        XCTAssertEqual(link(title: nil), .live)
+        XCTAssertEqual(link(title: "Airbus A320-214"), .live)
+        XCTAssertEqual(link(title: nil, values: false), .waiting)
     }
 
     func testOldValuesDoNotCountAsLive() {
