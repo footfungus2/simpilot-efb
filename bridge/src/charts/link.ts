@@ -6,6 +6,7 @@ import type { Hub } from '../hub.js';
 import { HttpError } from '../http.js';
 import { logger } from '../log.js';
 import type { ChartIndex } from '../types.js';
+import { type Capturer, ScreenCapture } from './capture.js';
 import { icaoIdent, normalizeIndex, normalizePages, pickImageUrl } from './normalize.js';
 import { type ChartStore, isPng, safeIcao } from './store.js';
 
@@ -34,6 +35,7 @@ export class ChartLink {
   constructor(
     private readonly store: ChartStore,
     private readonly hub: Hub,
+    private readonly capturer: Capturer = new ScreenCapture(),
   ) {}
 
   /** Queues a chart download for an airport unless one is already pending. */
@@ -121,11 +123,37 @@ export class ChartLink {
     }
 
     if (!png) return false;
+    await this.save(job, guid, page, png);
+    return true;
+  }
+
+  /** One screen-captured tile of a page the panel is showing; the page is saved after its last tile. */
+  async onCapture(body: any): Promise<boolean> {
+    const job = this.job(body.jobId);
+    const guid = String(body.guid);
+    const page = Number(body.page);
+    const metadata = job.pages.get(guid);
+    if (!Number.isInteger(page) || page < 0 || !metadata?.saved || page >= metadata.count) throw new HttpError(400, 'capture page does not match chart metadata');
+    const int = (v: unknown, max: number) => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= max;
+    const size = (v: any, min: number, max: number) => [v?.w, v?.h].every((n) => Number.isFinite(n) && n >= min && n <= max);
+    const { i, j, cols, rows } = body;
+    if (!int(cols, 16) || !int(rows, 64) || cols < 1 || rows < 1 || !int(i, cols - 1) || !int(j, rows - 1) ||
+      !size(body.view, 50, 20_000) || !size(body.image, 1, 100_000)) {
+      throw new HttpError(400, 'invalid capture tile');
+    }
+    await this.capturer.tile({ i, j, cols, rows, view: { w: body.view.w, h: body.view.h }, image: { w: body.image.w, h: body.image.h } });
+    if (i !== cols - 1 || j !== rows - 1) return false;
+    const png = await this.capturer.finish();
+    if (!isPng(png)) throw new HttpError(500, 'chart capture produced no image');
+    await this.save(job, guid, page, png);
+    return true;
+  }
+
+  private async save(job: Job, guid: string, page: number, png: Buffer): Promise<void> {
     await this.store.saveImage(job.icao, guid, page, png);
     job.images.add(`${guid}#${page}`);
     job.done = job.images.size;
     this.progress(job);
-    return true;
   }
 
   async onDone(body: any): Promise<void> {

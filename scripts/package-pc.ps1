@@ -55,6 +55,9 @@ Open the "SimPilot for PC" folder after choosing Extract All.
    c. Start MSFS 2024 again: new panels load only when the sim starts.
       In a flight, click the gear icon in the toolbar, switch "SimPilot Link" on and open it.
       Open the panel once per flight.
+   d. While charts download, keep the panel open and fully visible (not minimised or covered).
+      It shows each chart page and SimPilot Bridge copies it from the screen. A bigger panel
+      (or one popped out into its own window) is faster and gives sharper charts.
 
 Not connecting?
 - Windows: Settings > Network & internet > Wi-Fi (or Ethernet) > your home network > Private network.

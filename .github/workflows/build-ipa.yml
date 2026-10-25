@@ -49,7 +49,7 @@ jobs:
 
   installer:
     runs-on: windows-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -67,6 +67,16 @@ jobs:
       - name: Check PC packaging and installer behavior
         shell: pwsh
         run: ./scripts/test-pc.ps1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bridge/package-lock.json
+      - name: Check the chart screen-capture helper
+        working-directory: bridge
+        run: |
+          npm ci
+          npx vitest run test/chart-link.test.ts
 
   # The PC download: a portable SimPilot Bridge bundle (no Node.js install needed) and the ready-made chart panel.
   pc-package:

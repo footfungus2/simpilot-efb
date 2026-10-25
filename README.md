@@ -173,6 +173,9 @@ A small **SimPilot Link** panel in the MSFS toolbar sends the sim's charts to th
    MSFS folder by itself. If it asks, choose the MSFS **Packages** folder.
 3. **Start MSFS 2024 again**; new add-ons load when the sim starts. In a flight, click the **gear icon** in the toolbar, switch **SimPilot Link** on, then open it. It shows
    *Bridge: connected*. Open it once per flight.
+4. **While charts download, keep the panel open and fully visible** (not minimised or covered). MSFS doesn't let add-ons
+   read its chart images, so the panel shows each page and SimPilot Bridge copies it from the screen. A bigger panel, or
+   one popped out into its own window, is faster and gives sharper charts. Each airport is downloaded once, then kept.
 
 ### Not connecting?
 

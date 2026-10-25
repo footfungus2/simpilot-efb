@@ -91,68 +91,93 @@ test('rejected chart URL cleans up the view and listeners immediately', async (t
   assert.ok(calls.some(([name]) => name === 'DESTROY_CHART_VIEW'));
 });
 
-async function exportJob(t, pages, dataUrl = `data:image/png;base64,${'A'.repeat(100)}`) {
+async function exportJob(t, pages, { captureError } = {}) {
   let finish;
   const done = new Promise((resolve) => { finish = resolve; });
   let released = 0;
-  run(t, 'link', {
+  const tiles = [];
+  const srcAtRelease = [];
+  const image = {
+    style: {},
+    naturalWidth: 1200,
+    naturalHeight: 1700,
+    setAttribute() {},
+    get src() { return this._src; },
+    set src(value) { this._src = value; if (value) queueMicrotask(() => this.onload?.()); },
+  };
+  const element = () => ({ style: {}, setAttribute() {}, appendChild() {}, clientWidth: 600, clientHeight: 400 });
+  const { api } = run(t, 'link', {
     require: () => ({
       getIndexForAirport: async () => ({ charts: [{ charts: [{ guid: 'chart' }] }] }),
       getChartPages: async () => ({ pages }),
-      loadChartLiveView: async () => ({ imageUrl: 'live-view', release() { released++; } }),
+      loadChartLiveView: async () => ({ imageUrl: 'live-view', release() { released++; srcAtRelease.push(image.src); } }),
     }),
     document: {
       getElementById: () => null,
-      createElement: () => ({ getContext: () => ({ drawImage() {} }), toDataURL: () => dataUrl }),
+      body: { appendChild() {} },
+      createElement: (tag) => (tag === 'img' ? image : element()),
     },
     TemplateElement: class {},
     window: { customElements: { define() {} } },
     checkAutoload() {},
     setInterval() {},
-    Image: class {
-      naturalWidth = 1;
-      naturalHeight = 1;
-      set src(_value) { queueMicrotask(() => this.onload?.()); }
-    },
     XMLHttpRequest: class {
       open(method, url) { this.url = url; }
       setRequestHeader() {}
-      overrideMimeType() {}
       send(raw) {
         const body = raw ? JSON.parse(raw) : {};
         let response = {};
         this.status = 200;
         if (this.url.endsWith('/link/poll')) response = { jobs: [{ id: 'job', icao: 'EGSS', provider: 'LIDO' }] };
-        else if (this.url.endsWith('/link/image')) response = { saved: body.page === 0 };
-        else if (this.url.endsWith('/link/done')) finish(body);
+        else if (this.url.endsWith('/link/capture')) {
+          tiles.push(body);
+          if (captureError) { this.status = 409; response = { error: captureError }; }
+          else response = { saved: body.page === 0 && body.i === body.cols - 1 && body.j === body.rows - 1 };
+        } else if (this.url.endsWith('/link/done')) finish(body);
         else if (!this.url.startsWith('http://127.0.0.1')) this.status = 500;
         this.responseText = JSON.stringify(response);
         queueMicrotask(() => this.onload());
       }
     },
   });
-  return { result: await done, released };
+  return { result: await done, released, tiles, srcAtRelease, api };
 }
 
-test('partial export fails the job and releases each ChartView', async (t) => {
-  const pages = [0, 1].map((p) => ({ urls: [{ name: 'PNG', url: `https://charts.invalid/${p}.png` }] }));
-  const { result, released } = await exportJob(t, pages);
+const pageList = (n) => Array.from({ length: n }, (_, p) => ({ urls: [{ name: 'PNG', url: `https://charts.invalid/${p}.png` }] }));
+
+test('partial export fails the job and releases each ChartView after detaching the image', async (t) => {
+  const { result, released, srcAtRelease } = await exportJob(t, pageList(2));
   assert.match(result.error, /1 chart page\(s\) could not be exported/);
   assert.equal(released, 2);
+  assert.deepEqual(srcAtRelease, ['', '']);
 });
 
 test('a chart with no pages fails the job', async (t) => {
   assert.match((await exportJob(t, [])).result.error, /could not be exported/);
 });
 
-test('a complete export reports success', async (t) => {
-  const { result } = await exportJob(t, [{ urls: [{ name: 'PNG', url: 'https://charts.invalid/0.png' }] }]);
+test('a complete export captures every tile of the page', async (t) => {
+  const { result, tiles } = await exportJob(t, pageList(1));
   assert.equal(result.error, undefined);
+  // 600×400 view, 1200×1700 image: 2 columns × 5 rows covering the page.
+  assert.deepEqual(tiles.map((b) => [b.i, b.j]), [0, 1, 2, 3, 4].flatMap((j) => [[0, j], [1, j]]));
+  assert.deepEqual(tiles[0].view, { w: 600, h: 400 });
+  assert.deepEqual(tiles[0].image, { w: 1200, h: 1700 });
 });
 
-test('blocked canvas readback stops the job after the first page', async (t) => {
-  const pages = [0, 1, 2].map((p) => ({ urls: [{ name: 'PNG', url: `https://charts.invalid/${p}.png` }] }));
-  const { result, released } = await exportJob(t, pages, 'data:,');
-  assert.match(result.error, /canvas readback blocked/);
+test('a capture error stops the job with the bridge\'s message', async (t) => {
+  const { result, released, tiles } = await exportJob(t, pageList(3), { captureError: "Can't see the SimPilot Link window" });
+  assert.match(result.error, /Can't see the SimPilot Link window/);
   assert.equal(released, 1);
+  assert.equal(tiles.length, 1);
+});
+
+test('the tile layout stays sharp but bounded', async (t) => {
+  const { api } = await exportJob(t, pageList(1));
+  // Never wider than the chart image itself.
+  assert.equal(api.captureLayout(600, 400, 500, 700).cols, 1);
+  // A small window drops columns rather than taking more than 16 tiles.
+  const small = api.captureLayout(300, 200, 2000, 2800);
+  assert.ok(small.cols * small.rows <= 16 || small.cols === 1);
+  assert.ok(small.rows * 200 >= small.h);
 });

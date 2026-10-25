@@ -123,6 +123,9 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
     .add('POST', '/link/image', async (req, res) => {
       sendJson(res, 200, { ok: true, saved: await link.onImage(await readJson(req)) });
     })
+    .add('POST', '/link/capture', async (req, res) => {
+      sendJson(res, 200, { ok: true, saved: await link.onCapture(await readJson(req)) });
+    })
     .add('POST', '/link/done', async (req, res) => {
       await link.onDone(await readJson(req));
       sendJson(res, 200, { ok: true });

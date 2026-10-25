@@ -2,7 +2,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { type CaptureTile, type Capturer, ScreenCapture } from '../src/charts/capture.js';
 import { ChartLink } from '../src/charts/link.js';
+import { HttpError } from '../src/http.js';
 import { ChartStore } from '../src/charts/store.js';
 import { Hub } from '../src/hub.js';
 
@@ -92,4 +94,67 @@ describe('chart export completion', () => {
     await expect(link.onImage({ jobId: job.id, guid: 'chart-1', page: 0, url: 'https://charts.example/image.png?token=secret' })).resolves.toBe(false);
     expect(await store.hasImage('EDDF', 'chart-1', 0)).toBe(false);
   });
+});
+
+describe('chart page screen capture', () => {
+  let dir: string;
+  let store: ChartStore;
+  let hub: Hub;
+  beforeEach(async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'simpilot-capture-'));
+    store = new ChartStore(dir);
+    hub = new Hub();
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  async function start(capturer: Capturer) {
+    const link = new ChartLink(store, hub, capturer);
+    const job = link.request('EDDF');
+    await link.onIndex({ jobId: job.id, index: { airportIcao: { ident: 'EDDF' }, charts: [{ name: 'IAC', charts: [{ guid: 'chart-1' }] }] } });
+    await link.onPages({ jobId: job.id, guid: 'chart-1', pages: [{ width: 10, height: 14 }] });
+    return { link, job };
+  }
+  const tile = (jobId: string, i: number, j: number) =>
+    ({ jobId, guid: 'chart-1', page: 0, i, j, cols: 2, rows: 2, view: { w: 600, h: 400 }, image: { w: 1200, h: 800 } });
+
+  it('captures every tile and saves the stitched page after the last one', async () => {
+    const tiles: CaptureTile[] = [];
+    const png = Buffer.from(pngBase64, 'base64');
+    const { link, job } = await start({ tile: async (t) => void tiles.push(t), finish: async () => png });
+    const saved = [];
+    for (const [i, j] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) saved.push(await link.onCapture(tile(job.id, i, j)));
+    expect(saved).toEqual([false, false, false, true]);
+    expect(tiles.map((t) => [t.i, t.j])).toEqual([[0, 0], [1, 0], [0, 1], [1, 1]]);
+    await link.onDone({ jobId: job.id });
+    expect(await store.getIndex('EDDF')).toBeDefined();
+  });
+
+  it('passes the helper error on to the panel and rejects tiles outside the page', async () => {
+    const { link, job } = await start({
+      tile: async () => { throw new HttpError(409, "Can't see the SimPilot Link window"); },
+      finish: async () => Buffer.alloc(0),
+    });
+    await expect(link.onCapture(tile(job.id, 0, 0))).rejects.toThrow(/SimPilot Link window/);
+    await expect(link.onCapture({ ...tile(job.id, 0, 0), i: 2 })).rejects.toThrow(/invalid capture tile/);
+    await expect(link.onCapture({ ...tile(job.id, 0, 0), page: 1 })).rejects.toThrow(/does not match/);
+  });
+});
+
+// Compiles and runs the real helper; only meaningful on Windows (CI runs it there).
+describe.runIf(process.platform === 'win32')('screen capture helper on Windows', () => {
+  it('starts and answers commands', async () => {
+    const capture = new ScreenCapture();
+    try {
+      // No SimPilot Link window on screen here: the helper must answer with an error, not hang or crash.
+      await expect(capture.tile({ i: 0, j: 0, cols: 1, rows: 1, view: { w: 600, h: 400 }, image: { w: 600, h: 800 } }))
+        .rejects.toThrow(/SimPilot Link window|handle|screen/i);
+      await expect(capture.finish()).rejects.toThrow(/interrupted/);
+    } finally {
+      capture.stop();
+    }
+  }, 120_000);
 });
