@@ -44,11 +44,37 @@ if (-not $sdk) {
   throw 'The MSFS 2024 SDK is not installed yet (it is free and needed once to add the panel). In MSFS 2024 open Settings > Advanced Options and switch Developer Mode on, then choose Help > SDK Installer in the menu bar at the top and install it. Then double-click this installer again.'
 }
 $built = Join-Path $PSScriptRoot 'Packages\simpilot-link'
+# fspackagetool builds by starting its own copy of MSFS; a second start while one is open or still closing fails
+# with "This game is already running" (0x800705b4).
+function Wait-SimClosed([int]$Seconds) {
+  $deadline = (Get-Date).AddSeconds($Seconds)
+  while (Get-Process -Name 'FlightSimulator2024' -ErrorAction SilentlyContinue) {
+    if ((Get-Date) -gt $deadline) { return $false }
+    Start-Sleep -Seconds 2
+  }
+  return $true
+}
+if (Get-Process -Name 'FlightSimulator2024' -ErrorAction SilentlyContinue) {
+  Write-Host 'MSFS 2024 is open. Close it now: the SDK starts its own copy of MSFS to build the panel. Waiting...' -ForegroundColor Yellow
+  if (-not (Wait-SimClosed 300)) { throw 'MSFS 2024 is still open. Close it, then run this installer again.' }
+}
+$started = Get-Date
 for ($attempt = 0; $attempt -lt 2; $attempt++) {
   if (Test-Path -LiteralPath $built) { Remove-Item -LiteralPath $built -Recurse -Force }
-  & "$sdk\Tools\bin\fspackagetool.exe" "$PSScriptRoot\package.xml"
-  if ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath (Join-Path $built 'layout.json')) -and (Test-Path -LiteralPath (Join-Path $built 'manifest.json'))) { break }
-  if ($attempt -eq 1) { throw 'The MSFS SDK could not build the chart panel. Close MSFS, check that the MSFS 2024 SDK is installed, then run this installer again.' }
+  & "$sdk\Tools\bin\fspackagetool.exe" "$PSScriptRoot\package.xml" -nopause
+  # The output was deleted above, so these files mean this run built it (the tool's exit code isn't reliable).
+  if ((Test-Path -LiteralPath (Join-Path $built 'layout.json')) -and (Test-Path -LiteralPath (Join-Path $built 'manifest.json'))) { break }
+  Write-Host "The SDK build didn't finish (exit code $LASTEXITCODE). Waiting for MSFS to close before trying again..." -ForegroundColor Yellow
+  if (-not (Wait-SimClosed 120) -or $attempt -eq 1) {
+    $buildLog = Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -File -Include '*.log', '*.txt' -ErrorAction SilentlyContinue |
+      Where-Object { $_.LastWriteTime -ge $started -and $_.FullName -notlike '*\node_modules\*' } |
+      Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($buildLog) {
+      Write-Host "Last lines of the SDK build log ($($buildLog.FullName)):" -ForegroundColor Yellow
+      Get-Content -LiteralPath $buildLog.FullName -Tail 30 | Write-Host
+    }
+    throw 'The MSFS SDK could not build the chart panel. Make sure MSFS 2024 is closed and the MSFS 2024 SDK is installed, then run this installer again. If it fails again, send a photo of this window.'
+  }
 }
 Write-Host "Built $PSScriptRoot\Packages\simpilot-link"
 

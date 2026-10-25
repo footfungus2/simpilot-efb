@@ -237,6 +237,8 @@ final class BridgeClient: ObservableObject {
             if status?.sim.aircraftTitle != s.sim.aircraftTitle || !s.sim.connected {
                 aircraft.reset()
                 ownship.update(nil)
+                // The bridge only streams changes, so values it sent before this reset would never come back.
+                if s.sim.connected, !watchedVars.isEmpty { send(json: ["t": "lvarWatch", "names": Array(watchedVars)]) }
             }
             status = s
         case let .lvars(values): aircraft.merge(values)
