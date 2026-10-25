@@ -1,9 +1,9 @@
-// Minimal re-implementation of the SDK's ChartsClient (msfs-sdk 2.3.3) on top of the
+// Minimal re-implementation of the SDK's ChartsClient / ChartView (msfs-sdk 2.3.3) on top of the
 // JS_LISTENER_CHARTS view listener. Bundling the whole SDK into a toolbar panel costs 2.4 MB and
 // runs SDK top-level code in a view that wasn't built for it, so only the calls we need live here.
 // Types come from the SDK (type-only imports, nothing is bundled).
 
-import type { IcaoValue, SimChartIndex } from '@microsoft/msfs-sdk';
+import type { IcaoValue, SimChartIndex, SimChartPages } from '@microsoft/msfs-sdk';
 
 interface ViewListener {
   call(name: string, ...args: unknown[]): Promise<any>;
@@ -105,4 +105,62 @@ async function requestCharts<T>(call: string, ...args: unknown[]): Promise<T> {
 
 export function getIndexForAirport(ident: string, provider: string): Promise<SimChartIndex<string>> {
   return requestCharts('GET_CHARTS_INDEX', airportIcao(ident), provider);
+}
+
+export function getChartPages(guid: string): Promise<SimChartPages> {
+  return requestCharts('GET_CHART_PAGES', guid);
+}
+
+/**
+ * Asks the sim to load one chart page into a LiveView and resolves with the LiveView's image URL
+ * (usable as an <img> src). The view is destroyed by the returned `release` function.
+ */
+export async function loadChartLiveView(pageUrl: string): Promise<{ imageUrl: string; release: () => void }> {
+  const l = await listener();
+  const creating = Promise.resolve().then(() => l.call('CREATE_CHART_VIEW') as Promise<string>);
+  let viewId: string;
+  const destroy = (id: string) => Promise.resolve().then(() => l.call('DESTROY_CHART_VIEW', id)).catch(() => {});
+  try {
+    viewId = await withTimeout(creating, REQUEST_TIMEOUT_MS, 'CREATE_CHART_VIEW');
+  } catch (err) {
+    void creating.then(destroy).catch(() => {});
+    throw err;
+  }
+  let onName: (guid: string, name: string, chartUrl: string) => void = () => {};
+  let onError: (guid: string, code: number, chartUrl: string) => void = () => {};
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    l.off('SendLiveViewName', onName);
+    l.off('SendLiveViewError', onError);
+    void destroy(viewId);
+  };
+  try {
+    const imageUrl = await new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('ChartView timed out')), REQUEST_TIMEOUT_MS);
+      onName = (guid, name, chartUrl) => {
+        if (guid === viewId && chartUrl === pageUrl) {
+          clearTimeout(timer);
+          resolve(name);
+        }
+      };
+      onError = (guid, code, chartUrl) => {
+        if (guid === viewId && chartUrl === pageUrl) {
+          clearTimeout(timer);
+          reject(new Error(`ChartView error code ${code}`));
+        }
+      };
+      l.on('SendLiveViewName', onName);
+      l.on('SendLiveViewError', onError);
+      void Promise.resolve().then(() => l.call('SET_CHART_VIEW_URL', viewId, pageUrl)).catch((err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+    });
+    return { imageUrl, release };
+  } catch (err) {
+    release();
+    throw err;
+  }
 }
