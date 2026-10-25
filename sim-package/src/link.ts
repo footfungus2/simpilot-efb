@@ -1,9 +1,9 @@
 // SimPilot Link: runs inside MSFS 2024 as a toolbar panel. It polls the bridge on this PC for
 // chart jobs and exports the sim's built-in Lido charts (index, page metadata, page images).
 //
-// Chart page URLs are simulator handles; MSFS ChartView is the supported way to load them.
+// Chart images can't be exported (see runJob); only the chart index is read.
 
-import { getChartPages, getIndexForAirport, loadChartLiveView } from './charts.js';
+import { getIndexForAirport } from './charts.js';
 
 declare const TemplateElement: { new (): HTMLElement; prototype: HTMLElement };
 declare function checkAutoload(): void;
@@ -71,98 +71,14 @@ function log(msg: string, level: 'info' | 'warn' | 'error' = 'info'): void {
 
 // ---------------------------------------------------------------- chart export
 
-function pickPageUrl(urls: readonly { name: string; url: string }[]): string | undefined {
-  const png = urls.find((u) => /png/i.test(u.name) || /\.png(\?|$)/i.test(u.url));
-  return (png ?? urls[0])?.url;
-}
-
-async function viaView(url: string): Promise<string> {
-  const { imageUrl, release } = await loadChartLiveView(url);
-  try {
-    const image = new Image();
-    image.crossOrigin = 'anonymous';
-    await new Promise<void>((resolve, reject) => {
-      const finish = (err?: Error) => {
-        clearTimeout(timer);
-        image.onload = image.onerror = null;
-        if (err) reject(err);
-        else resolve();
-      };
-      const timer = setTimeout(() => finish(new Error('Chart image timed out')), 20000);
-      image.onload = () => finish();
-      image.onerror = () => finish(new Error('Could not load MSFS ChartView image (CORS or image error)'));
-      image.src = imageUrl;
-    });
-    const canvas = document.createElement('canvas');
-    canvas.width = image.naturalWidth || image.width;
-    canvas.height = image.naturalHeight || image.height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx || !canvas.width || !canvas.height) throw new Error('canvas unavailable');
-    ctx.drawImage(image, 0, 0);
-    const dataUrl = canvas.toDataURL('image/png');
-    if (!dataUrl.startsWith('data:image/png;base64,') || dataUrl.length < 100) throw new Error('canvas readback blocked');
-    return dataUrl.slice('data:image/png;base64,'.length);
-  } finally {
-    release();
-  }
-}
-
-async function exportPage(job: Job, guid: string, page: number, url: string): Promise<boolean> {
-  const base = { jobId: job.id, icao: job.icao, guid, page };
-  try {
-    const res = await request('POST', '/link/image', { ...base, pngBase64: await viaView(url) }, 30000) as { saved?: boolean };
-    if (res.saved) {
-      setText('spl-method', 'ChartView', true);
-      return true;
-    }
-    log(`chart page ${page + 1}: ChartView returned no image`, 'warn');
-  } catch (err) {
-    log(`chart page ${page + 1}: ChartView export failed: ${(err as Error).message}`, 'warn');
-  }
-  return false;
-}
-
+// MSFS hands chart pages to panels only as GPU bitmaps (ChartView LiveViews): they can be shown but not read back,
+// and drawing them into a canvas to copy them crashed the sim. So the panel lists the charts and stops there.
 async function runJob(job: Job): Promise<void> {
   setText('spl-job', `${job.icao}: index…`);
   log(`${job.icao}: fetching ${job.provider} chart index`);
   const index = await getIndexForAirport(job.icao, job.provider);
-  await request('POST', '/link/index', { jobId: job.id, icao: job.icao, provider: job.provider, index }, 30000);
-
-  const charts = [];
-  for (const category of index.charts) {
-    for (const chart of category.charts) charts.push(chart);
-  }
-  if (!charts.length) throw new Error('No charts available for this airport');
-  let pagesOk = 0;
-  let pagesFailed = 0;
-  for (let i = 0; i < charts.length; i++) {
-    const chart = charts[i]!;
-    setText('spl-job', `${job.icao}: ${i + 1}/${charts.length} charts`);
-    const { pages } = await getChartPages(chart.guid);
-    await request('POST', '/link/pages', { jobId: job.id, icao: job.icao, guid: chart.guid, pages }, 30000);
-    if (!pages.length) {
-      pagesFailed++;
-      log(`${job.icao}: chart ${i + 1} has no pages`, 'warn');
-    }
-
-    for (let p = 0; p < pages.length; p++) {
-      const url = pickPageUrl(pages[p]!.urls);
-      const exported = url ? await exportPage(job, chart.guid, p, url) : false;
-      if (exported) {
-        pagesOk++;
-      } else {
-        pagesFailed++;
-      }
-    }
-  }
-  const summary = `${job.icao}: ${charts.length} charts, ${pagesOk} pages${pagesFailed ? `, ${pagesFailed} failed` : ''}`;
-  log(summary, pagesFailed ? 'error' : 'info');
-  setText('spl-job', summary, pagesFailed === 0);
-  await request('POST', '/link/done', {
-    jobId: job.id,
-    icao: job.icao,
-    error: pagesFailed ? `${pagesFailed} chart page(s) could not be exported; please retry` : undefined,
-  });
+  const count = index.charts.reduce((n, category) => n + category.charts.length, 0);
+  throw new Error(`MSFS 2024 has ${count} charts for ${job.icao} but doesn't let add-ons copy chart images, so they can't be shown on the iPad`);
 }
 
 // ---------------------------------------------------------------- poll loop

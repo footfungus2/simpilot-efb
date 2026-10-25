@@ -67,7 +67,7 @@ weather, VATSIM and the maps all load directly on the iPad.
 - Data from OpenStreetMap, cached on the device so it works offline afterwards
 
 ### Charts
-- The sim's built-in charts, exported by an in-sim toolbar panel
+- The sim's built-in charts: **not available yet** (MSFS 2024 doesn't let add-ons copy chart images)
 - **Your aircraft drawn on georeferenced charts**, with follow mode
 - **Show a chart on the map**, overlaid in place
 - **Apple Pencil annotations** (double-tap honours the system eraser and palette setting), plus split view of chart and map
@@ -162,6 +162,9 @@ it by itself. The round icon at the top right turns **orange !** when the PC is 
 and the optional chart panel are connected too. An orange icon with no chart panel is expected.
 
 ### Step 2 (optional): show the sim's charts on the iPad
+
+> **Not working yet:** MSFS 2024 doesn't let add-ons copy its chart images, so the panel can list an airport's charts
+> but can't send them to the iPad. You can skip this step for now.
 
 A small **SimPilot Link** panel in the MSFS toolbar sends the sim's charts to the iPad. You set it up once:
 
