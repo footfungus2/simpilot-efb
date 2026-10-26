@@ -3,13 +3,14 @@ import CoreImage
 import CoreLocation
 import UIKit
 
-/// Loads an airport's chart index and pages from the bridge, which gets them from the sim via the link panel.
+/// Loads an airport's chart list from the bridge right away; a chart's pages are exported from the sim (by the
+/// link panel) when the chart is first opened, then kept on the PC and the iPad.
 @MainActor
 final class ChartsModel: ObservableObject {
     enum LoadState: Equatable {
         case idle
         case loading
-        case waitingForSim(done: Int, total: Int)
+        case waitingForSim
         case failed(String)
         case ready
     }
@@ -27,6 +28,13 @@ final class ChartsModel: ObservableObject {
     @Published var pageIndex = 0
     @Published private(set) var image: UIImage?
     @Published private(set) var imageError: String?
+    /// While the sim is exporting the selected chart: pages done so far (total is 0 until the sim has sent the pages).
+    @Published private(set) var exportProgress: ExportProgress?
+
+    struct ExportProgress: Equatable {
+        var done: Int
+        var total: Int
+    }
 
     private let bridge: BridgeClient
     private var cancellables = Set<AnyCancellable>()
@@ -56,8 +64,9 @@ final class ChartsModel: ObservableObject {
         bridge.$state
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
-                guard let self, case .connected = state, self.isOfflineCharts || self.isWaitingOrFailed else { return }
-                self.reloadIndex()
+                guard let self, case .connected = state else { return }
+                if self.isOfflineCharts || self.isWaitingOrFailed { self.reloadIndex() }
+                self.askAgainForSelectedChart()
             }
             .store(in: &cancellables)
         // …and again when the SimPilot Link panel comes online in the sim, so a request the bridge lost
@@ -67,8 +76,9 @@ final class ChartsModel: ObservableObject {
             .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] linkUp in
-                guard let self, linkUp, self.isOfflineCharts || self.isWaitingForPanel else { return }
-                self.reloadIndex()
+                guard let self, linkUp else { return }
+                if self.isOfflineCharts || self.isWaitingForPanel { self.reloadIndex() }
+                self.askAgainForSelectedChart()
             }
             .store(in: &cancellables)
     }
@@ -96,10 +106,14 @@ final class ChartsModel: ObservableObject {
         }
     }
 
-    /// A reconnect during or after page progress must not start the same failed export again.
     private var isWaitingForPanel: Bool {
-        if case .waitingForSim(done: 0, total: 0) = state { return true }
+        if case .waitingForSim = state { return true }
         return false
+    }
+
+    /// A chart the sim was still exporting when the bridge restarted (or before the panel was open) is asked for again.
+    private func askAgainForSelectedChart() {
+        if exportProgress != nil, let chart = selected { loadDetail(chart) }
     }
 
     /// True while showing the offline charts bundled with debug builds instead of the sim's Lido charts.
@@ -160,14 +174,16 @@ final class ChartsModel: ObservableObject {
         selected = nil
         detail = nil
         image = nil
+        exportProgress = nil
         category = nil
         runwayFilter = nil
         reloadIndex()
     }
 
-    func reloadIndex() {
+    /// `silently` keeps the list on screen while it is fetched again (a refreshed list from the sim).
+    func reloadIndex(silently: Bool = false) {
         guard let icao else { return }
-        state = .loading
+        if !silently { state = .loading }
         loadTask?.cancel()
         guard bridge.isConnected else {
             #if DEBUG
@@ -187,8 +203,8 @@ final class ChartsModel: ObservableObject {
                     if selected == nil, let first = defaultChart() { select(first) }
                 } else {
                     guard !Task.isCancelled, self.icao == icao else { return }
-                    // 202: the bridge queued a job for the in-sim link; wait for chartsReady.
-                    state = .waitingForSim(done: 0, total: 0)
+                    // 202: the bridge queued the list for the in-sim link; wait for chartsReady.
+                    state = .waitingForSim
                 }
             } catch {
                 guard !Task.isCancelled, self.icao == icao else { return }
@@ -249,6 +265,7 @@ final class ChartsModel: ObservableObject {
         detail = nil
         image = nil
         imageError = nil
+        exportProgress = nil
         // Pinned charts open from the iPad's storage — no sim or network needed.
         if let item = pack.item(chart.guid) {
             if item.icao != icao {
@@ -260,7 +277,6 @@ final class ChartsModel: ObservableObject {
             Task { await loadPage() }
             return
         }
-        guard let icao else { return }
         #if DEBUG
         if let offline = offlineChart(guid: chart.guid) {
             detail = offline.detail
@@ -268,23 +284,49 @@ final class ChartsModel: ObservableObject {
             return
         }
         #endif
+        loadDetail(chart)
+    }
+
+    /// Asks the bridge for the chart's pages. If the sim still has to export them (202), `exportProgress` shows
+    /// that and the bridge's chartReady / chartError events finish the job. `refresh` has them exported again.
+    private func loadDetail(_ chart: ChartMeta, refresh: Bool = false) {
+        guard let icao else { return }
         Task { [weak self] in
             guard let self else { return }
             do {
-                let d: ChartDetail? = try await bridge.get("/api/charts/\(icao)/\(chart.guid.urlPathEncoded)")
+                let d: ChartDetail? = try await bridge.get("/api/charts/\(icao)/\(chart.guid.urlPathEncoded)\(refresh ? "?refresh=1" : "")")
                 guard selected?.guid == chart.guid, self.icao == icao else { return }
                 guard let d else {
-                    imageError = "Chart details are not ready. Select the chart again after export finishes."
+                    if detail == nil, exportProgress == nil { exportProgress = ExportProgress(done: 0, total: 0) }
                     return
                 }
+                exportProgress = nil
                 detail = d
                 await loadPage()
             } catch {
                 guard selected?.guid == chart.guid, self.icao == icao else { return }
+                exportProgress = nil
                 imageError = error.localizedDescription
                 DiagnosticLog.record(.error, "Charts", "Chart details could not be loaded.", error: error)
             }
         }
+    }
+
+    /// Whether "export again" applies: the selected chart comes from the sim (not a pinned or bundled chart).
+    var canReexport: Bool {
+        guard let chart = selected, bridge.isConnected, !isOfflineCharts, !pack.contains(chart.guid) else { return false }
+        return true
+    }
+
+    /// Tries the selected chart again; with `reexport` the sim exports its pages again even if they are saved.
+    func reloadSelected(reexport: Bool = false) {
+        guard let chart = selected else { return }
+        guard reexport else { return select(chart) }
+        detail = nil
+        image = nil
+        imageError = nil
+        exportProgress = nil
+        loadDetail(chart, refresh: reexport)
     }
 
     func step(_ delta: Int) {
@@ -396,12 +438,17 @@ final class ChartsModel: ObservableObject {
 
     private func handle(_ event: ChartEvent) {
         switch event {
-        case let .progress(i, done, total) where i == icao:
-            state = .waitingForSim(done: done, total: total)
         case let .ready(i) where i == icao:
-            if index == nil || state != .ready { reloadIndex() }
+            reloadIndex(silently: index != nil && state == .ready)
         case let .error(i, message) where i == icao:
-            state = .failed(message)
+            if state != .ready { state = .failed(message) }
+        case let .chartProgress(i, guid, done, total) where i == icao && guid == selected?.guid && exportProgress != nil:
+            exportProgress = ExportProgress(done: done, total: total)
+        case let .chartReady(i, guid) where i == icao && guid == selected?.guid:
+            if let chart = selected { loadDetail(chart) }
+        case let .chartError(i, guid, message) where i == icao && guid == selected?.guid:
+            exportProgress = nil
+            imageError = message
         default:
             break
         }

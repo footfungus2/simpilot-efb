@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { normalizeIndex, normalizePages, pickImageUrl, procedureLabel, runwayLabel } from '../src/charts/normalize.js';
+import { normalizeIndex, normalizePages, procedureLabel, runwayLabel } from '../src/charts/normalize.js';
 import { ChartStore, safeIcao, safeId } from '../src/charts/store.js';
 
 // Shape mirrors SimChartIndex from @microsoft/msfs-sdk.
@@ -94,7 +94,6 @@ describe('chart normalization', () => {
     expect(pages[0]!.areas).toHaveLength(3);
     expect(pages[0]!.areas[0]!.geoReferenced).toBe(true);
     expect(pages[0]!.areas[2]!.geoReferenced).toBe(false); // missing projection → not usable
-    expect(pickImageUrl(pages[0]!.urls)).toBe('https://x/p.png');
   });
 });
 
@@ -117,7 +116,11 @@ describe('ChartStore', () => {
 
     const chart = await store.getChart('EDDF', '{A1B2-C3}');
     expect(chart?.chart.pageCount).toBe(2);
-    expect(chart?.pages.map((p) => p.image)).toEqual([null, '/charts/EDDF/%7BA1B2-C3%7D/1.png']);
+    expect(chart?.pages[0]!.image).toBeNull();
+    expect(chart?.pages[1]!.image).toMatch(/^\/charts\/EDDF\/%7BA1B2-C3%7D\/1\.png\?v=\d+$/);
+
+    await store.removeChart('EDDF', '{A1B2-C3}');
+    expect(await store.getChart('EDDF', '{A1B2-C3}')).toBeUndefined();
     await fs.rm(dir, { recursive: true });
   });
 });

@@ -193,7 +193,7 @@ final class AppState: ObservableObject {
             ofp = loaded
             ofpError = nil
             if let data = try? JSONEncoder().encode(loaded) { defaults.set(data, forKey: "ofp") }
-            // Pre-load charts for every airport of the flight while the sim is running.
+            // Fetch the chart list of every airport of the flight (quick); the charts themselves are exported when opened.
             for icao in flightAirports.map(\.icao) { bridge.send(requestCharts: icao) }
             DiagnosticLog.record(.info, "Flight", "SimBrief flight loaded.")
         } catch {

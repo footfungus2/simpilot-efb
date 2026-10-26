@@ -26,6 +26,8 @@ export interface CaptureTile {
 }
 
 export interface Capturer {
+  /** Gets ready ahead of the first chart (the helper takes a few seconds to start); problems show up again at the first tile. */
+  warmUp?(): void;
   /** Captures one tile; tile (0, 0) starts a new page. Rejects with a message for the user if it can't. */
   tile(t: CaptureTile): Promise<void>;
   /** The stitched page as PNG. */
@@ -82,7 +84,7 @@ public static class SimPilotCapture {
         g.CopyFromScreen(screen.Left, screen.Top, 0, 0, screen.Size, CopyPixelOperation.SourceCopy);
       }
       Rectangle view = FindView(shot);
-      if (view.Width <= 0) throw new Exception("Can't see the SimPilot Link window. Keep it open and fully visible on screen (not minimised or covered).");
+      if (view.Width <= 0) throw new Exception("Can't see the SimPilot Link window. Keep it open and fully visible on screen (not minimised or covered), and run MSFS in windowed or borderless mode.");
       if (i == 0 && j == 0) {
         Reset();
         viewW = view.Width;
@@ -191,6 +193,10 @@ export class ScreenCapture implements Capturer {
   private lines: string[] = [];
   private waiters: ((line: string | undefined) => void)[] = [];
   private queue: Promise<unknown> = Promise.resolve();
+
+  warmUp(): void {
+    this.start().catch((err) => log.warn(`chart capture helper not ready: ${(err as Error).message}`));
+  }
 
   async tile(t: CaptureTile): Promise<void> {
     const n = (v: number) => String(Math.round(v * 1000) / 1000);

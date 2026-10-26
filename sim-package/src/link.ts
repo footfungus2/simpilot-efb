@@ -1,5 +1,6 @@
-// SimPilot Link: runs inside MSFS 2024 as a toolbar panel. It polls the bridge on this PC for
-// chart jobs and exports the sim's built-in Lido charts (index, page metadata, page images).
+// SimPilot Link: runs inside MSFS 2024 as a toolbar panel. It polls the bridge on this PC for jobs: an airport's
+// chart list from the sim's built-in Lido charts, or one chart's page metadata and page images. The bridge decides
+// what is needed and in which order (the chart the iPad is waiting for first).
 //
 // Page images can't be read inside the sim, so the bridge screen-captures them (see capturePage).
 
@@ -11,12 +12,16 @@ declare function checkAutoload(): void;
 // 127.0.0.1, not localhost: Windows may resolve localhost to IPv6 (::1), but the bridge listens on IPv4.
 const BRIDGE = 'http://127.0.0.1:8380';
 const POLL_MS = 2000;
+// What the panel and the bridge speak; the bridge refuses to hand out work to another number. Keep in sync with bridge/src/charts/link.ts.
+const LINK_PROTOCOL = 2;
 
 interface Job {
   id: string;
-  type: 'charts';
+  type: 'index' | 'chart';
   icao: string;
   provider: string;
+  /** Chart jobs: the chart to export. */
+  guid?: string;
 }
 
 let busy = false;
@@ -113,15 +118,16 @@ function captureStage(): NonNullable<typeof stage> {
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-function loadImage(image: HTMLImageElement, src: string): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const finish = (err?: Error) => {
+/** Resolves true once the image reports loading, false if it stays silent (a LiveView may be shown without ever saying so). */
+function loadImage(image: HTMLImageElement, src: string): Promise<boolean> {
+  return new Promise<boolean>((resolve, reject) => {
+    const finish = (err?: Error, loaded = true) => {
       clearTimeout(timer);
       image.onload = image.onerror = null;
       if (err) reject(err);
-      else resolve();
+      else resolve(loaded);
     };
-    const timer = setTimeout(() => finish(new Error('Chart image timed out')), 20000);
+    const timer = setTimeout(() => finish(undefined, false), 6000);
     image.onload = () => finish();
     image.onerror = () => finish(new Error('MSFS could not show the chart image'));
     image.src = src;
@@ -141,7 +147,7 @@ export function captureLayout(viewW: number, viewH: number, naturalW: number, na
 }
 
 /** Shows one page and has the bridge capture it. Capture errors (window hidden…) reject: they'd hit every page. */
-async function capturePage(job: Job, guid: string, page: number, url: string): Promise<boolean> {
+async function capturePage(job: Job, guid: string, page: number, url: string, shape: { width: number; height: number }): Promise<boolean> {
   let live: { imageUrl: string; release: () => void };
   try {
     live = await loadChartLiveView(url);
@@ -153,15 +159,18 @@ async function capturePage(job: Job, guid: string, page: number, url: string): P
   s.root.style.display = 'block';
   try {
     try {
-      await loadImage(s.image, live.imageUrl);
+      if (!(await loadImage(s.image, live.imageUrl))) log(`chart page ${page + 1}: MSFS didn't report the image as loaded; capturing it anyway`, 'warn');
     } catch (err) {
       log(`chart page ${page + 1}: ${(err as Error).message}`, 'warn');
       return false;
     }
     const viewW = s.view.clientWidth;
     const viewH = s.view.clientHeight;
-    if (viewW < 100 || viewH < 100) throw new Error('The SimPilot Link window is too small; make it bigger and request the charts again');
-    const { cols, rows, w, h } = captureLayout(viewW, viewH, s.image.naturalWidth || 1000, s.image.naturalHeight || 1414);
+    if (viewW < 100 || viewH < 100) throw new Error('The SimPilot Link window is hidden or too small; open it, make it bigger and export the chart again');
+    // Without a size from the image, assume a typical chart resolution in the page's own shape.
+    const naturalW = s.image.naturalWidth || 1500;
+    const naturalH = s.image.naturalWidth ? s.image.naturalHeight : (naturalW * shape.height) / shape.width;
+    const { cols, rows, w, h } = captureLayout(viewW, viewH, naturalW, naturalH);
     s.image.style.width = `${w}px`;
     s.image.style.height = `${h}px`;
     let saved = false;
@@ -187,60 +196,57 @@ async function capturePage(job: Job, guid: string, page: number, url: string): P
   }
 }
 
-async function runJob(job: Job): Promise<void> {
-  setText('spl-job', `${job.icao}: index…`);
-  log(`${job.icao}: fetching ${job.provider} chart index`);
+/** An airport's chart list: no screen needed, so the iPad shows it at once. */
+async function runIndexJob(job: Job): Promise<void> {
+  setText('spl-job', `${job.icao}: chart list…`);
+  log(`${job.icao}: fetching ${job.provider} chart list`);
   const index = await getIndexForAirport(job.icao, job.provider);
   await request('POST', '/link/index', { jobId: job.id, icao: job.icao, provider: job.provider, index }, 30000);
+  const count = index.charts.reduce((n, category) => n + category.charts.length, 0);
+  setText('spl-job', `${job.icao}: ${count} charts listed`, count > 0);
+  await request('POST', '/link/done', { jobId: job.id, icao: job.icao });
+}
 
-  const charts = [];
-  for (const category of index.charts) {
-    for (const chart of category.charts) charts.push(chart);
+/** One chart: its pages are captured from the screen, except those the bridge already has. */
+async function runChartJob(job: Job, guid: string): Promise<void> {
+  setText('spl-job', `${job.icao}: chart…`);
+  const { pages } = await getChartPages(guid);
+  if (!pages.length) throw new Error('This chart has no pages');
+  const { have = [] } = (await request('POST', '/link/pages', { jobId: job.id, icao: job.icao, guid, pages }, 30000)) as { have?: number[] };
+  let failed = 0;
+  for (let p = 0; p < pages.length; p++) {
+    if (have.indexOf(p) >= 0) continue; // indexOf: old Coherent builds lack newer Array methods (flatMap)
+    setText('spl-job', `${job.icao}: page ${p + 1}/${pages.length}`);
+    const url = pickPageUrl(pages[p]!.urls);
+    if (!url || !(await capturePage(job, guid, p, url, pages[p]!))) failed++;
   }
-  if (!charts.length) throw new Error('No charts available for this airport');
-  let pagesOk = 0;
-  let pagesFailed = 0;
-  for (let i = 0; i < charts.length; i++) {
-    const chart = charts[i]!;
-    setText('spl-job', `${job.icao}: ${i + 1}/${charts.length} charts`);
-    const { pages } = await getChartPages(chart.guid);
-    await request('POST', '/link/pages', { jobId: job.id, icao: job.icao, guid: chart.guid, pages }, 30000);
-    if (!pages.length) {
-      pagesFailed++;
-      log(`${job.icao}: chart ${i + 1} has no pages`, 'warn');
-    }
-
-    for (let p = 0; p < pages.length; p++) {
-      const url = pickPageUrl(pages[p]!.urls);
-      const exported = url ? await capturePage(job, chart.guid, p, url) : false;
-      if (exported) {
-        pagesOk++;
-      } else {
-        pagesFailed++;
-      }
-    }
-  }
-  const summary = `${job.icao}: ${charts.length} charts, ${pagesOk} pages${pagesFailed ? `, ${pagesFailed} failed` : ''}`;
-  log(summary, pagesFailed ? 'error' : 'info');
-  setText('spl-job', summary, pagesFailed === 0);
+  const summary = `${job.icao}: chart exported${failed ? `, ${failed} of ${pages.length} pages failed` : ` (${pages.length} pages)`}`;
+  log(summary, failed ? 'error' : 'info');
+  setText('spl-job', summary, failed === 0);
   await request('POST', '/link/done', {
     jobId: job.id,
     icao: job.icao,
-    error: pagesFailed ? `${pagesFailed} chart page(s) could not be exported; please retry` : undefined,
+    error: failed ? `${failed} chart page(s) could not be exported; please retry` : undefined,
   });
 }
 
 // ---------------------------------------------------------------- poll loop
 
 async function tick(): Promise<void> {
-  if (busy) return;
+  if (busy) {
+    // Still working: tell the bridge the panel is there, so the iPad doesn't think it was closed during a long export.
+    request('GET', `/link/poll?proto=${LINK_PROTOCOL}&busy=1`, undefined, 5000).catch(() => {});
+    return;
+  }
   busy = true;
   try {
-    const { jobs } = (await request('GET', '/link/poll', undefined, 5000)) as { jobs: Job[] };
+    const { jobs } = (await request('GET', `/link/poll?proto=${LINK_PROTOCOL}`, undefined, 5000)) as { jobs: Job[] };
     setText('spl-bridge', 'connected', true);
     for (const job of jobs) {
       try {
-        await runJob(job);
+        if (job.type === 'chart' && job.guid) await runChartJob(job, job.guid);
+        else if (job.type === 'index') await runIndexJob(job);
+        else throw new Error(`Unknown job type ${String(job.type)}; use the same version of SimPilot Bridge and SimPilot Link`);
       } catch (err) {
         const msg = (err as Error).message;
         log(`${job.icao}: ${msg}`, 'error');

@@ -57,7 +57,7 @@ export interface ChartPage {
   height: number;
   geoReferenced: boolean;
   areas: ChartArea[];
-  /** Relative URL of the cached PNG, or null if the image hasn't been fetched (yet). */
+  /** Relative URL of the cached PNG (it changes when the page is exported again), or null if it isn't exported yet. */
   image: string | null;
 }
 
@@ -65,9 +65,13 @@ export type BridgeToApp =
   | { t: 'hello'; v: 1; bridgeVersion: string; status: BridgeStatus }
   | ({ t: 'status' } & BridgeStatus)
   | ({ t: 'ownship' } & Ownship)
+  /** An airport's chart list is cached. */
   | { t: 'chartsReady'; icao: string }
-  | { t: 'chartsProgress'; icao: string; done: number; total: number }
   | { t: 'chartsError'; icao: string; message: string }
+  /** One chart's pages are exported (cached). */
+  | { t: 'chartReady'; icao: string; guid: string }
+  | { t: 'chartProgress'; icao: string; guid: string; done: number; total: number }
+  | { t: 'chartError'; icao: string; guid: string; message: string }
   | { t: 'lvars'; values: Record<string, number> }
   /** Outcome of an app command that carried an `id`. */
   | { t: 'commandResult'; id: string; ok: boolean; message?: string };

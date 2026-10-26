@@ -76,6 +76,11 @@ export class ChartStore {
     }
   }
 
+  /** Forgets a chart's exported pages, so the next request exports it again (e.g. after a bad capture). */
+  async removeChart(icao: string, guid: string): Promise<void> {
+    await fs.rm(this.chartDir(icao, guid), { recursive: true, force: true });
+  }
+
   /** Chart metadata + pages in wire format, with image URLs only for pages whose PNG is cached. */
   async getChart(icao: string, guid: string): Promise<{ chart: ChartMeta; pages: ChartPage[] } | undefined> {
     const index = await this.getIndex(icao);
@@ -84,14 +89,15 @@ export class ChartStore {
     if (!chart || !stored) return undefined;
     const pages: ChartPage[] = [];
     for (const p of stored) {
-      const has = await this.hasImage(icao, guid, p.index);
+      // The file's time is in the URL, so an exported-again page isn't served from the app's caches.
+      const version = await fs.stat(this.imagePath(icao, guid, p.index)).then((s) => Math.round(s.mtimeMs), () => undefined);
       pages.push({
         index: p.index,
         width: p.width,
         height: p.height,
         geoReferenced: p.geoReferenced,
         areas: p.areas,
-        image: has ? `/charts/${safeIcao(icao)}/${encodeURIComponent(guid)}/${p.index}.png` : null,
+        image: version === undefined ? null : `/charts/${safeIcao(icao)}/${encodeURIComponent(guid)}/${p.index}.png?v=${version}`,
       });
     }
     return { chart: { ...chart, pageCount: stored.length }, pages };

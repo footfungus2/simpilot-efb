@@ -91,24 +91,27 @@ test('rejected chart URL cleans up the view and listeners immediately', async (t
   assert.ok(calls.some(([name]) => name === 'DESTROY_CHART_VIEW'));
 });
 
-async function exportJob(t, pages, { captureError } = {}) {
+async function exportJob(t, pages, { captureError, have = [], savedPages = [0], pollWhileBusy = false, silentImage = false, natural = { w: 1200, h: 1700 }, job = { id: 'job', type: 'chart', icao: 'EGSS', provider: 'LIDO', guid: 'chart' } } = {}) {
   let finish;
   const done = new Promise((resolve) => { finish = resolve; });
   let released = 0;
   const tiles = [];
+  const posted = [];
+  const busyPolls = [];
+  let interval;
   const srcAtRelease = [];
   const image = {
     style: {},
-    naturalWidth: 1200,
-    naturalHeight: 1700,
+    naturalWidth: natural.w,
+    naturalHeight: natural.h,
     setAttribute() {},
     get src() { return this._src; },
-    set src(value) { this._src = value; if (value) queueMicrotask(() => this.onload?.()); },
+    set src(value) { this._src = value; if (value && !silentImage) queueMicrotask(() => this.onload?.()); },
   };
   const element = () => ({ style: {}, setAttribute() {}, appendChild() {}, clientWidth: 600, clientHeight: 400 });
   const { api } = run(t, 'link', {
     require: () => ({
-      getIndexForAirport: async () => ({ charts: [{ charts: [{ guid: 'chart' }] }] }),
+      getIndexForAirport: async () => ({ charts: [{ charts: [{ guid: 'chart' }, { guid: 'chart-2' }] }, { charts: [{ guid: 'chart-3' }] }] }),
       getChartPages: async () => ({ pages }),
       loadChartLiveView: async () => ({ imageUrl: 'live-view', release() { released++; srcAtRelease.push(image.src); } }),
     }),
@@ -120,7 +123,7 @@ async function exportJob(t, pages, { captureError } = {}) {
     TemplateElement: class {},
     window: { customElements: { define() {} } },
     checkAutoload() {},
-    setInterval() {},
+    setInterval(fn) { interval = fn; },
     XMLHttpRequest: class {
       open(method, url) { this.url = url; }
       setRequestHeader() {}
@@ -128,11 +131,15 @@ async function exportJob(t, pages, { captureError } = {}) {
         const body = raw ? JSON.parse(raw) : {};
         let response = {};
         this.status = 200;
-        if (this.url.endsWith('/link/poll')) response = { jobs: [{ id: 'job', icao: 'EGSS', provider: 'LIDO' }] };
+        if (!this.url.includes('/link/poll')) posted.push([this.url.replace('http://127.0.0.1:8380', ''), body]);
+        if (this.url.includes('busy=1')) busyPolls.push(this.url);
+        if (this.url.includes('/link/poll')) response = { jobs: this.url.includes('busy=1') ? [] : [job] };
+        else if (this.url.endsWith('/link/pages')) response = { ok: true, have };
         else if (this.url.endsWith('/link/capture')) {
           tiles.push(body);
+          if (pollWhileBusy && tiles.length === 1) interval();
           if (captureError) { this.status = 409; response = { error: captureError }; }
-          else response = { saved: body.page === 0 && body.i === body.cols - 1 && body.j === body.rows - 1 };
+          else response = { saved: savedPages.includes(body.page) && body.i === body.cols - 1 && body.j === body.rows - 1 };
         } else if (this.url.endsWith('/link/done')) finish(body);
         else if (!this.url.startsWith('http://127.0.0.1')) this.status = 500;
         this.responseText = JSON.stringify(response);
@@ -140,8 +147,20 @@ async function exportJob(t, pages, { captureError } = {}) {
       }
     },
   });
-  return { result: await done, released, tiles, srcAtRelease, api };
+  return { result: await done, released, tiles, srcAtRelease, api, posted, busyPolls };
 }
+
+test('an image that never reports loading is captured anyway', async (t) => {
+  const { result, tiles } = await exportJob(t, pageList(1), { silentImage: true });
+  assert.equal(result.error, undefined);
+  assert.ok(tiles.length > 1);
+});
+
+test('a page whose image size is unknown is captured in the shape of the page', async (t) => {
+  const { result, tiles } = await exportJob(t, [{ width: 1000, height: 2000, urls: [{ name: 'PNG', url: 'https://charts.invalid/0.png' }] }], { silentImage: true, natural: { w: 0, h: 0 } });
+  assert.equal(result.error, undefined);
+  assert.deepEqual(tiles[0].image, { w: 1200, h: 2400 });
+});
 
 const pageList = (n) => Array.from({ length: n }, (_, p) => ({ urls: [{ name: 'PNG', url: `https://charts.invalid/${p}.png` }] }));
 
@@ -153,7 +172,7 @@ test('partial export fails the job and releases each ChartView after detaching t
 });
 
 test('a chart with no pages fails the job', async (t) => {
-  assert.match((await exportJob(t, [])).result.error, /could not be exported/);
+  assert.match((await exportJob(t, [])).result.error, /no pages/);
 });
 
 test('a complete export captures every tile of the page', async (t) => {
@@ -180,4 +199,38 @@ test('the tile layout stays sharp but bounded', async (t) => {
   const small = api.captureLayout(300, 200, 2000, 2800);
   assert.ok(small.cols * small.rows <= 16 || small.cols === 1);
   assert.ok(small.rows * 200 >= small.h);
+});
+
+test('an airport job only sends the chart list, without opening a chart view', async (t) => {
+  const { result, released, tiles, posted } = await exportJob(t, pageList(1), { job: { id: 'list', type: 'index', icao: 'EGSS', provider: 'LIDO' } });
+  assert.equal(result.error, undefined);
+  assert.equal(released, 0);
+  assert.equal(tiles.length, 0);
+  assert.deepEqual(posted.map(([url]) => url), ['/link/log', '/link/index', '/link/done']);
+  assert.equal(posted.find(([url]) => url === '/link/index')[1].index.charts.length, 2);
+});
+
+test('a chart job skips the pages the bridge already has', async (t) => {
+  const { result, tiles, released } = await exportJob(t, pageList(3), { have: [0, 2], savedPages: [1] });
+  assert.equal(result.error, undefined);
+  assert.equal(released, 1);
+  assert.deepEqual([...new Set(tiles.map((b) => b.page))], [1]);
+});
+
+test('a chart job that has everything exported captures nothing', async (t) => {
+  const { result, tiles } = await exportJob(t, pageList(2), { have: [0, 1] });
+  assert.equal(result.error, undefined);
+  assert.equal(tiles.length, 0);
+});
+
+test('an unknown job type is reported back instead of being ignored', async (t) => {
+  const { result } = await exportJob(t, pageList(1), { job: { id: 'job', type: 'other', icao: 'EGSS', provider: 'LIDO' } });
+  assert.match(result.error, /Unknown job type/);
+});
+
+test('while an export runs the panel only tells the bridge it is still there', async (t) => {
+  const { result, busyPolls, tiles } = await exportJob(t, pageList(1), { pollWhileBusy: true, savedPages: [0] });
+  assert.equal(result.error, undefined);
+  assert.deepEqual(busyPolls, ['http://127.0.0.1:8380/link/poll?proto=2&busy=1']);
+  assert.ok(tiles.length > 1, 'the export carried on');
 });

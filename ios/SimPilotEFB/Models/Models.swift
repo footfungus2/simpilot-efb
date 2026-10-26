@@ -159,16 +159,20 @@ enum BridgeMessage {
     case status(BridgeStatus)
     case ownship(Ownship)
     case chartsReady(icao: String)
-    case chartsProgress(icao: String, done: Int, total: Int)
     case chartsError(icao: String, message: String)
+    case chartReady(icao: String, guid: String)
+    case chartProgress(icao: String, guid: String, done: Int, total: Int)
+    case chartError(icao: String, guid: String, message: String)
     case lvars([String: Double])
     case commandResult(id: String, ok: Bool, message: String?)
 
     private struct Envelope: Decodable { var t: String }
     private struct Hello: Decodable { var status: BridgeStatus }
     private struct Icao: Decodable { var icao: String }
-    private struct Progress: Decodable { var icao: String; var done: Int; var total: Int }
     private struct ErrorMsg: Decodable { var icao: String; var message: String }
+    private struct ChartRef: Decodable { var icao: String; var guid: String }
+    private struct ChartProgressMsg: Decodable { var icao: String; var guid: String; var done: Int; var total: Int }
+    private struct ChartErrorMsg: Decodable { var icao: String; var guid: String; var message: String }
     private struct LVarsMsg: Decodable { var values: [String: Double] }
     private struct ResultMsg: Decodable { var id: String; var ok: Bool; var message: String? }
 
@@ -180,8 +184,10 @@ enum BridgeMessage {
         case "status": return (try? dec.decode(BridgeStatus.self, from: data)).map { .status($0) }
         case "ownship": return (try? dec.decode(Ownship.self, from: data)).map { .ownship($0) }
         case "chartsReady": return (try? dec.decode(Icao.self, from: data)).map { .chartsReady(icao: $0.icao) }
-        case "chartsProgress": return (try? dec.decode(Progress.self, from: data)).map { .chartsProgress(icao: $0.icao, done: $0.done, total: $0.total) }
         case "chartsError": return (try? dec.decode(ErrorMsg.self, from: data)).map { .chartsError(icao: $0.icao, message: $0.message) }
+        case "chartReady": return (try? dec.decode(ChartRef.self, from: data)).map { .chartReady(icao: $0.icao, guid: $0.guid) }
+        case "chartProgress": return (try? dec.decode(ChartProgressMsg.self, from: data)).map { .chartProgress(icao: $0.icao, guid: $0.guid, done: $0.done, total: $0.total) }
+        case "chartError": return (try? dec.decode(ChartErrorMsg.self, from: data)).map { .chartError(icao: $0.icao, guid: $0.guid, message: $0.message) }
         case "lvars": return (try? dec.decode(LVarsMsg.self, from: data)).map { .lvars($0.values) }
         case "commandResult": return (try? dec.decode(ResultMsg.self, from: data)).map { .commandResult(id: $0.id, ok: $0.ok, message: $0.message) }
         default: return nil

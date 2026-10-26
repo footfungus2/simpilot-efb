@@ -182,7 +182,7 @@ struct AirportSearchSheet: View {
     var body: some View {
         NavigationView {
             Form {
-                Section(footer: Text("Opens the Lido charts for an airport. The SimPilot Link panel must be open in the sim the first time an airport is loaded.")) {
+                Section(footer: Text("Opens the Lido charts for an airport. Keep the SimPilot Link panel open in the sim: each chart is exported from the sim the first time you open it.")) {
                     TextField("ICAO code, e.g. EDDF", text: $query)
                         .textInputAutocapitalization(.characters)
                         .disableAutocorrection(true)

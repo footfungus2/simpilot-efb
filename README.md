@@ -67,7 +67,7 @@ weather, VATSIM and the maps all load directly on the iPad.
 - Data from OpenStreetMap, cached on the device so it works offline afterwards
 
 ### Charts
-- The sim's built-in charts, exported by an in-sim toolbar panel
+- The sim's built-in Lido charts, exported by an in-sim toolbar panel: the list loads at once, a chart takes a few seconds the first time you open it
 - **Your aircraft drawn on georeferenced charts**, with follow mode
 - **Show a chart on the map**, overlaid in place
 - **Apple Pencil annotations** (double-tap honours the system eraser and palette setting), plus split view of chart and map
@@ -173,9 +173,11 @@ A small **SimPilot Link** panel in the MSFS toolbar sends the sim's charts to th
    MSFS folder by itself. If it asks, choose the MSFS **Packages** folder.
 3. **Start MSFS 2024 again**; new add-ons load when the sim starts. In a flight, click the **gear icon** in the toolbar, switch **SimPilot Link** on, then open it. It shows
    *Bridge: connected*. Open it once per flight.
-4. **While charts download, keep the panel open and fully visible** (not minimised or covered). MSFS doesn't let add-ons
-   read its chart images, so the panel shows each page and SimPilot Bridge copies it from the screen. A bigger panel, or
-   one popped out into its own window, is faster and gives sharper charts. Each airport is downloaded once, then kept.
+4. **Keep the panel open and fully visible** (not minimised or covered). The chart list of an airport appears on the iPad
+   at once. A chart is exported from the sim the first time you open it, which takes a few seconds: MSFS doesn't let
+   add-ons read its chart images, so the panel shows each page and SimPilot Bridge copies it from the screen. A bigger
+   panel, or one popped out into its own window, is faster and gives sharper charts. Each chart is exported once, then
+   kept on the PC and the iPad.
 
 ### Not connecting?
 

@@ -17,9 +17,11 @@ Bridge → app:
 | `hello` | `{ v: 1, bridgeVersion, status }` |
 | `status` | `{ sim: { connected, aircraftTitle? }, link: { connected, lastSeenMs? } }` |
 | `ownship` | `{ lat, lon, altFt, gsKt, trkDeg, hdgDeg, vsFpm, onGround, magVarDeg, ts }` (≈10 Hz) |
-| `chartsReady` | `{ icao }`: the chart index and pages are now cached |
-| `chartsProgress` | `{ icao, done, total }` |
-| `chartsError` | `{ icao, message }` |
+| `chartsReady` | `{ icao }`: the airport's chart list is cached |
+| `chartsError` | `{ icao, message }`: the chart list couldn't be fetched |
+| `chartReady` | `{ icao, guid }`: every page of the chart is exported and cached |
+| `chartProgress` | `{ icao, guid, done, total }`: pages exported so far |
+| `chartError` | `{ icao, guid, message }`: the chart couldn't be exported |
 | `lvars` | `{ values: { [name]: number } }`: watched aircraft L:vars that changed, **as read back from the sim** (the bridge never echoes its own writes) |
 | `commandResult` | `{ id, ok, message? }`: outcome of an app command that carried an `id` |
 
@@ -27,7 +29,7 @@ App → bridge:
 
 | `t` | payload |
 |---|---|
-| `requestCharts` | `{ icao }`: queues a link job unless the airport is already cached |
+| `requestCharts` | `{ icao }`: queues the airport's chart list unless it is already cached (e.g. for the airports of a loaded flight) |
 | `lvarWatch` | `{ names: string[] }`: start sending these L:vars (e.g. `N_PED_RMP1_ACTIVE`) as they change |
 | `lvarRun` | `{ code, value?, id? }`: run an MSFS RPN snippet (HubHop preset syntax) on the aircraft's L:vars; `@` = `value`. Commands run in order; with an `id` the bridge answers `commandResult` once it has written the values |
 | `fenixSquawk` | `{ code, id? }`: Fenix only. Clears a half-typed entry, types the code key by key (waiting for each key in the sim) and checks the final code; one at a time |
@@ -38,8 +40,8 @@ App → bridge:
 | method & path | result |
 |---|---|
 | `GET /api/status` | same as the `status` message |
-| `GET /api/charts/:icao` | `ChartIndex` (below), or `202 { queued: true }` if not cached yet |
-| `GET /api/charts/:icao/:guid` | `{ chart: ChartMeta, pages: ChartPage[] }` |
+| `GET /api/charts/:icao` | `ChartIndex` (below), or `202 { queued: true, linkConnected }` if the list isn't cached yet. A list older than 24 h is served as is and fetched again in the background |
+| `GET /api/charts/:icao/:guid` | `{ chart: ChartMeta, pages: ChartPage[] }` once every page is exported. Otherwise `202 { queued: true, linkConnected, done, total }`: the sim exports the chart now and `chartProgress`, then `chartReady` or `chartError`, follow. `?refresh=1` forgets the exported pages first |
 | `GET /charts/:icao/:guid/:page.png` | the PNG image |
 | `GET /api/ofp?user=<simbrief username or id>` | `Ofp` (normalized SimBrief OFP) |
 | `GET /api/wx/metar?ids=EDDF,EGLL` | `Metar[]` |
@@ -65,9 +67,9 @@ type Rect = { upperLeft: [number, number]; lowerRight: [number, number]; orienta
 
 | method & path | body / result |
 |---|---|
-| `GET /link/poll` | heartbeat → `{ jobs: { id, type: 'charts', icao, provider }[] }` |
-| `POST /link/index` | `{ jobId, icao, provider, index: <raw SimChartIndex> }` |
-| `POST /link/pages` | `{ jobId, icao, guid, pages: <raw SimChartPage[]> }` |
-| `POST /link/image` | `{ jobId, icao, guid, page, pngBase64 }`, **or** `{ …, url }` so the bridge downloads it → `{ ok, saved }`; if `saved` is false the link tries its next export method |
-| `POST /link/done` | `{ jobId, icao, error? }` |
+| `GET /link/poll?proto=2` | heartbeat → `{ jobs: { id, type: 'index' \| 'chart', icao, provider, guid? }[] }`. Chart lists (`index`) come first, then only the chart that was asked for last (`chart`, with its `guid`); the bridge decides, the link just does the work. `proto` is the link protocol number: with another number the bridge hands out nothing and fails the waiting requests with an "out of date" message. While the link is busy it sends `&busy=1`, which only shows it is still there |
+| `POST /link/index` | `{ jobId, icao, provider, index: <raw SimChartIndex> }`: the bridge stores the list and tells the app at once |
+| `POST /link/pages` | `{ jobId, icao, guid, pages: <raw SimChartPage[]> }` → `{ ok, have: number[] }`: the pages that are exported already, which the link skips |
+| `POST /link/capture` | `{ jobId, icao, guid, page, i, j, cols, rows, view: { w, h }, image: { w, h } }` → `{ ok, saved }`: one screen-captured tile of the page the panel shows; `saved` is true once the last tile arrived and the stitched page is stored |
+| `POST /link/done` | `{ jobId, icao, error? }`: the bridge checks that every page is stored before it sends `chartReady` |
 | `POST /link/log` | `{ level, msg }` for spike diagnostics |

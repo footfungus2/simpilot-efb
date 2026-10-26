@@ -99,7 +99,8 @@ describe('HTTP boundary', () => {
   let base: string;
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'simpilot-http-'));
-    server = createServer(new Hub(), new ChartStore(dir));
+    // A fake capturer keeps the real Windows screen-capture helper from being started by chart polling.
+    server = createServer(new Hub(), new ChartStore(dir), undefined, undefined, { tile: async () => {}, finish: async () => Buffer.alloc(0) });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -135,6 +136,41 @@ describe('HTTP boundary', () => {
     expect((await fetch(`${base}/link/poll`, { headers: { origin: 'coui://html_ui' } })).status).toBe(200);
     expect((await fetch(`${base}/link/poll`, { headers: { origin: 'null' } })).status).toBe(403);
     expect((await fetch(`${base}/api/diagnostics`, { headers: { origin: 'null' } })).status).toBe(403);
+  });
+
+  it('lists an airport first and exports a chart only when it is asked for', async () => {
+    const post = (path: string, body: unknown) => fetch(`${base}${path}`, { method: 'POST', body: JSON.stringify(body) });
+    const poll = async () => ((await (await fetch(`${base}/link/poll?proto=2`)).json()) as { jobs: { id: string; type: string; guid?: string }[] }).jobs;
+    const store = new ChartStore(dir);
+    const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(16)]);
+
+    expect((await fetch(`${base}/api/charts/EDDF`)).status).toBe(202);
+    const [list] = await poll();
+    expect(list).toMatchObject({ type: 'index' });
+    await post('/link/index', { jobId: list!.id, index: { airportIcao: { ident: 'EDDF' }, charts: [{ name: 'SID', charts: [{ guid: '{chart-1}', name: 'OBOKA 2G' }] }] } });
+    await post('/link/done', { jobId: list!.id });
+    const index = await (await fetch(`${base}/api/charts/EDDF`)).json() as { categories: { charts: { guid: string }[] }[] };
+    expect(index.categories[0]!.charts[0]!.guid).toBe('{chart-1}');
+
+    expect((await fetch(`${base}/api/charts/EDDF/%7Bnope%7D`)).status).toBe(404);
+    const waiting = await fetch(`${base}/api/charts/EDDF/%7Bchart-1%7D`);
+    expect(waiting.status).toBe(202);
+    const [chartJob] = await poll();
+    expect(chartJob).toMatchObject({ type: 'chart', guid: '{chart-1}' });
+    expect(await (await post('/link/pages', { jobId: chartJob!.id, guid: '{chart-1}', pages: [{ width: 100, height: 140 }] })).json()).toEqual({ ok: true, have: [] });
+    await store.saveImage('EDDF', '{chart-1}', 0, png);
+    await post('/link/done', { jobId: chartJob!.id });
+
+    const ready = await fetch(`${base}/api/charts/EDDF/%7Bchart-1%7D`);
+    expect(ready.status).toBe(200);
+    const detail = await ready.json() as { pages: { image: string }[] };
+    expect(detail.pages[0]!.image).toMatch(/\.png\?v=\d+$/);
+    const image = await fetch(`${base}${detail.pages[0]!.image}`);
+    expect(image.headers.get('content-type')).toBe('image/png');
+
+    // "Reload from the sim" forgets the pages and asks the panel again.
+    expect((await fetch(`${base}/api/charts/EDDF/%7Bchart-1%7D?refresh=1`)).status).toBe(202);
+    expect((await fetch(`${base}${detail.pages[0]!.image}`)).status).toBe(404);
   });
 
   it('validates the complete weather box and hides internal cache errors', async () => {

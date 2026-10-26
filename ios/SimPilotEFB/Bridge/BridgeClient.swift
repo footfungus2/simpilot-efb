@@ -29,9 +29,13 @@ final class AircraftVars: ObservableObject {
 }
 
 enum ChartEvent {
+    /// An airport's chart list is available.
     case ready(icao: String)
-    case progress(icao: String, done: Int, total: Int)
     case error(icao: String, message: String)
+    /// One chart's pages were exported from the sim.
+    case chartReady(icao: String, guid: String)
+    case chartProgress(icao: String, guid: String, done: Int, total: Int)
+    case chartError(icao: String, guid: String, message: String)
 }
 
 /// Connection to the SimPilot bridge: WebSocket for live data, HTTP for everything else.
@@ -248,12 +252,18 @@ final class BridgeClient: ObservableObject {
             if ok { c.resume(returning: message) } else { c.resume(throwing: CommandFailure(message: message ?? "Command failed")) }
         case let .ownship(o): ownship.update(o)
         case let .chartsReady(icao):
-            DiagnosticLog.record(.info, "Charts", "Bridge finished exporting charts")
+            DiagnosticLog.record(.info, "Charts", "Bridge has the chart list")
             chartEvents.send(.ready(icao: icao))
-        case let .chartsProgress(icao, done, total): chartEvents.send(.progress(icao: icao, done: done, total: total))
         case let .chartsError(icao, message):
-            DiagnosticLog.record(.error, "Charts", "PC bridge reported a chart export failure; load PC logs for details")
+            DiagnosticLog.record(.error, "Charts", "PC bridge could not get the chart list; load PC logs for details")
             chartEvents.send(.error(icao: icao, message: message))
+        case let .chartReady(icao, guid):
+            DiagnosticLog.record(.info, "Charts", "Bridge finished exporting a chart")
+            chartEvents.send(.chartReady(icao: icao, guid: guid))
+        case let .chartProgress(icao, guid, done, total): chartEvents.send(.chartProgress(icao: icao, guid: guid, done: done, total: total))
+        case let .chartError(icao, guid, message):
+            DiagnosticLog.record(.error, "Charts", "PC bridge reported a chart export failure; load PC logs for details")
+            chartEvents.send(.chartError(icao: icao, guid: guid, message: message))
         }
     }
 

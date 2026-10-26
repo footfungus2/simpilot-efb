@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
+import type { Capturer } from './charts/capture.js';
 import { ChartLink } from './charts/link.js';
 import { type ChartStore, safeIcao } from './charts/store.js';
 import { HttpError, readJson, Router, sendJson, setCors } from './http.js';
@@ -9,16 +10,22 @@ import type { LVars } from './lvars.js';
 import type { Hub } from './hub.js';
 import { logEntries, logger } from './log.js';
 import { fetchOfp } from './simbrief.js';
+import type { ChartIndex } from './types.js';
 import { metars, metarsInBox, parseIds, sigmets, tafs } from './weather.js';
 
 const log = logger('http');
 
-export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?: FenixProcedures): http.Server {
-  const link = new ChartLink(store, hub);
+/** A cached chart list older than this is fetched again (in the background) when the link panel is there. */
+const INDEX_MAX_AGE_MS = 24 * 60 * 60_000;
+
+export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?: FenixProcedures, capturer?: Capturer): http.Server {
+  const link = new ChartLink(store, hub, capturer);
   const router = new Router();
 
   hub.onMessage((msg) => {
-    if (msg.t === 'requestCharts') void requestCharts(msg.icao).catch((err) => {
+    if (msg.t === 'requestCharts') void requestIndex(msg.icao).then((index) => {
+      if (index) hub.broadcast({ t: 'chartsReady', icao: safeIcao(msg.icao) });
+    }).catch((err) => {
       log.error('chart request failed', err);
       hub.broadcast({ t: 'chartsError', icao: msg.icao, message: 'Unable to load chart cache; check bridge diagnostics' });
     });
@@ -47,15 +54,12 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
     );
   }
 
-  /** Queues a chart download unless the airport is already cached. */
-  async function requestCharts(icaoRaw: string): Promise<'cached' | 'queued'> {
+  /** The cached chart list of an airport, if any. Without one the list is queued; an old one is refreshed in the background. */
+  async function requestIndex(icaoRaw: string): Promise<ChartIndex | undefined> {
     const icao = safeIcao(icaoRaw);
-    if (!link.isPending(icao) && (await store.getIndex(icao))) {
-      hub.broadcast({ t: 'chartsReady', icao });
-      return 'cached';
-    }
-    link.request(icao);
-    return 'queued';
+    const index = await store.getIndex(icao);
+    if (!index || (Date.now() - index.fetchedAt > INDEX_MAX_AGE_MS && hub.status().link.connected)) link.requestIndex(icao);
+    return index;
   }
 
   // ---- app ----
@@ -67,16 +71,19 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
     })
     .add('GET', '/api/ownship', (_req, res) => sendJson(res, hub.lastOwnship ? 200 : 204, hub.lastOwnship ?? null))
     .add('GET', '/api/charts/:icao', async (_req, res, p) => {
-      const icao = safeIcao(p.icao!);
-      const index = link.isPending(icao) ? undefined : await store.getIndex(icao);
+      const index = await requestIndex(p.icao!);
       if (index) return sendJson(res, 200, index);
-      await requestCharts(icao);
       sendJson(res, 202, { queued: true, linkConnected: hub.status().link.connected });
     })
-    .add('GET', '/api/charts/:icao/:guid', async (_req, res, p) => {
-      const chart = await store.getChart(p.icao!, p.guid!);
-      if (!chart) throw new HttpError(404, 'chart not cached');
-      sendJson(res, 200, chart);
+    // A chart is exported from the sim when it is first asked for: 202 until every page is cached (then chartReady).
+    // ?refresh=1 forgets the cached pages first.
+    .add('GET', '/api/charts/:icao/:guid', async (_req, res, p, url) => {
+      const icao = safeIcao(p.icao!);
+      if (url.searchParams.get('refresh') === '1') await store.removeChart(icao, p.guid!);
+      const chart = await store.getChart(icao, p.guid!);
+      if (chart?.pages.every((page) => page.image)) return sendJson(res, 200, chart);
+      const job = await link.requestChart(icao, p.guid!);
+      sendJson(res, 202, { queued: true, linkConnected: hub.status().link.connected, done: job.saved.size, total: job.total });
     })
     .add('GET', '/charts/:icao/:guid/:page.png', (_req, res, p) => {
       const file = store.imagePath(p.icao!, p.guid!, Number(p.page));
@@ -111,17 +118,14 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
 
   // ---- in-sim link ----
   router
-    .add('GET', '/link/poll', (_req, res) => sendJson(res, 200, link.poll()))
+    .add('GET', '/link/poll', (_req, res, _p, url) =>
+      sendJson(res, 200, link.poll(url.searchParams.get('busy') === '1', Number(url.searchParams.get('proto')))))
     .add('POST', '/link/index', async (req, res) => {
       await link.onIndex(await readJson(req));
       sendJson(res, 200, { ok: true });
     })
     .add('POST', '/link/pages', async (req, res) => {
-      await link.onPages(await readJson(req));
-      sendJson(res, 200, { ok: true });
-    })
-    .add('POST', '/link/image', async (req, res) => {
-      sendJson(res, 200, { ok: true, saved: await link.onImage(await readJson(req)) });
+      sendJson(res, 200, { ok: true, ...(await link.onPages(await readJson(req))) });
     })
     .add('POST', '/link/capture', async (req, res) => {
       sendJson(res, 200, { ok: true, saved: await link.onCapture(await readJson(req)) });

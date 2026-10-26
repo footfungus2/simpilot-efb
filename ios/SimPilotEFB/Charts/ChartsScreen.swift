@@ -13,6 +13,7 @@ struct ChartsScreen: View {
 
 private struct ChartsContent: View {
     @EnvironmentObject private var app: AppState
+    @EnvironmentObject private var bridge: BridgeClient
     @Environment(\.theme) private var theme
     @ObservedObject var model: ChartsModel
     @ObservedObject var ownshipStore: OwnshipStore
@@ -93,10 +94,14 @@ private struct ChartsContent: View {
                                       annotating: app.annotating, clearToken: app.annotationClearToken)
                         .transition(.screen)
                 } else if let error = model.imageError {
-                    message(error, systemImage: "exclamationmark.triangle")
-                        .transition(.opacity)
+                    VStack(spacing: 12) {
+                        message(error, systemImage: "exclamationmark.triangle")
+                        GreyPillButton(title: "Retry") { model.reloadSelected() }.frame(width: 160)
+                    }
+                    .transition(.opacity)
                 } else {
                     ChartPageSkeleton()
+                        .overlay(exportStatus)
                         .transition(.opacity)
                 }
             }
@@ -118,12 +123,34 @@ private struct ChartsContent: View {
         .animation(Motion.bouncy, value: app.annotating)
     }
 
-    /// Pin (always, so it stays put from chart to chart), plus Show on map and Follow aircraft on georeferenced pages.
+    /// While the sim exports the chart the skeleton stands in for the page; this says what is going on.
+    @ViewBuilder private var exportStatus: some View {
+        if let progress = model.exportProgress {
+            VStack(spacing: 6) {
+                Text(progress.total > 1 ? "Exporting from the sim… page \(min(progress.done + 1, progress.total)) of \(progress.total)" : "Exporting from the sim…")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(theme.text)
+                Text(bridge.status?.link.connected == true ? "Keep SimPilot Link open and visible in MSFS." : "Open SimPilot Link in the MSFS toolbar.")
+                    .font(.footnote)
+                    .foregroundColor(theme.textSecondary)
+            }
+            .multilineTextAlignment(.center)
+            .padding(16)
+            .background(RoundedRectangle(cornerRadius: 10).fill(theme.overlay))
+            .shadow(color: .black.opacity(0.2), radius: 6, y: 2)
+        }
+    }
+
+    /// Pin (always, so it stays put from chart to chart), export again for sim charts, plus Show on map and Follow aircraft on georeferenced pages.
     private func sideButtons(_ page: ChartPage?) -> some View {
         VStack(spacing: 10) {
             chartButton(model.isSelectedPinned ? "pin.fill" : "pin", label: model.isSelectedPinned ? "Unpin from flight" : "Pin to flight",
                         active: model.isSelectedPinned) {
                 Task { await model.togglePin() }
+            }
+            if model.canReexport {
+                chartButton("arrow.clockwise", label: "Export again from the sim", active: false) { model.reloadSelected(reexport: true) }
+                    .transition(.opacity)
             }
             if let page, page.geoReferenced {
                 chartButton("rectangle.on.rectangle", label: "Show on map", active: false) {
@@ -152,13 +179,16 @@ private struct ChartsContent: View {
         case .loading:
             // Same placeholder as a loading page, so index → first chart reads as one load.
             ChartPageSkeleton()
-        case let .waitingForSim(done, total):
+        case .waitingForSim:
+            let linkUp = bridge.status?.link.connected == true
             VStack(spacing: 14) {
                 ProgressView()
-                Text(total > 0 ? "Exporting charts from the sim… \(done)/\(total) pages" : "Waiting for the sim…")
+                Text(linkUp ? "Getting the chart list from the sim…" : "Open SimPilot Link in MSFS")
                     .foregroundColor(theme.text)
-                Text("Keep the SimPilot Link panel open in MSFS while charts load the first time.")
+                Text(linkUp ? "Each chart is exported from the sim the first time you open it."
+                            : "In a flight, click SimPilot Link in the MSFS toolbar. The chart list appears as soon as it is open.")
                     .font(.footnote)
+                    .multilineTextAlignment(.center)
                     .foregroundColor(theme.textSecondary)
             }
             .padding()

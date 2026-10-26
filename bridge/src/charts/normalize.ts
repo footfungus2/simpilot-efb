@@ -98,7 +98,7 @@ export interface StoredPage {
   height: number;
   geoReferenced: boolean;
   areas: ChartArea[];
-  /** Raw URL list from the sim, kept for diagnostics and re-downloads. */
+  /** Raw URL list from the sim, kept for diagnostics. */
   urls: { name: string; url: string }[];
 }
 
@@ -111,10 +111,4 @@ export function normalizePages(rawPages: Raw[]): StoredPage[] {
     areas: (Array.isArray(p?.areas) ? p.areas : []).map(normalizeArea).filter((a: ChartArea | undefined): a is ChartArea => !!a),
     urls: (Array.isArray(p?.urls) ? p.urls : []).map((u: Raw) => ({ name: String(u?.name ?? ''), url: String(u?.url ?? '') })),
   }));
-}
-
-/** Picks the PNG URL of a page (ChartView docs say page URLs point to PNG files). */
-export function pickImageUrl(urls: { name: string; url: string }[]): string | undefined {
-  const png = urls.find((u) => /png/i.test(u.name) || /\.png(\?|$)/i.test(u.url));
-  return (png ?? urls[0])?.url || undefined;
 }
