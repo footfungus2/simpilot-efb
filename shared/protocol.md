@@ -2,13 +2,13 @@
 
 Three parties:
 
-- **bridge**: Node server on the MSFS PC, port `8380` by default.
-- **link**: an in-sim toolbar panel. It reaches the bridge at `http://localhost:8380` (HTTP only; Coherent's WebSocket support is unreliable).
+- **bridge**: Node server on the MSFS PC, port `8386` by default.
+- **link**: an in-sim toolbar panel. It reaches the bridge at `http://127.0.0.1:8386` (not 8380, FlyByWire SimBridge's port) (HTTP only; Coherent's WebSocket support is unreliable).
 - **app**: the iPad. It finds the bridge through Bonjour `_simpilot._tcp` or a manually entered IP.
 
 All JSON fields are camelCase. Coordinates are decimal degrees, altitudes are feet, speeds are knots, angles are degrees true.
 
-## App ⇄ bridge: WebSocket `ws://<host>:8380/ws`
+## App ⇄ bridge: WebSocket `ws://<host>:8386/ws`
 
 Bridge → app:
 

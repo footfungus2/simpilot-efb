@@ -10,7 +10,9 @@ declare const TemplateElement: { new (): HTMLElement; prototype: HTMLElement };
 declare function checkAutoload(): void;
 
 // 127.0.0.1, not localhost: Windows may resolve localhost to IPv6 (::1), but the bridge listens on IPv4.
-const BRIDGE = 'http://127.0.0.1:8380';
+// Not 8380: that is FlyByWire SimBridge's port, so with it running the panel talked to the wrong program.
+const PORT = 8386;
+const BRIDGE = `http://127.0.0.1:${PORT}`;
 const POLL_MS = 2000;
 // What the panel and the bridge speak; the bridge refuses to hand out work to another number. Keep in sync with bridge/src/charts/link.ts.
 const LINK_PROTOCOL = 2;
@@ -240,7 +242,8 @@ async function tick(): Promise<void> {
   }
   busy = true;
   try {
-    const { jobs } = (await request('GET', `/link/poll?proto=${LINK_PROTOCOL}`, undefined, 5000)) as { jobs: Job[] };
+    const { jobs } = (await request('GET', `/link/poll?proto=${LINK_PROTOCOL}`, undefined, 5000)) as { jobs?: Job[] };
+    if (!Array.isArray(jobs)) throw new Error('not SimPilot Bridge');
     setText('spl-bridge', 'connected', true);
     for (const job of jobs) {
       try {
@@ -255,8 +258,11 @@ async function tick(): Promise<void> {
       }
     }
   } catch (err) {
-    // Show why, so a blocked or wrong address can be told apart from a bridge that isn't started.
-    setText('spl-bridge', `not reachable (${(err as Error).message.replace('GET /link/poll: ', '')})`, false);
+    // Nothing listening (bridge not started) reads as a network error or timeout; any other answer is another program.
+    const why = (err as Error).message.replace(/^GET \/link\/poll[^:]*: /, '');
+    setText('spl-bridge', /network error|timeout/.test(why)
+      ? 'not found: start SimPilot Bridge on this PC'
+      : `port ${PORT} is used by another program (${why})`, false);
   } finally {
     busy = false;
   }

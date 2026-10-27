@@ -79,14 +79,14 @@ final class BridgeClient: ObservableObject {
 
     var baseURL: URL? { host.flatMap { URL(string: "http://\($0)") } }
 
-    /// Connects to `manualHost` ("192.168.1.20:8380"), or discovers the bridge if it's empty.
+    /// Connects to `manualHost` ("192.168.1.20:8386"), or discovers the bridge if it's empty.
     func start(manualHost: String?) {
         let trimmed = manualHost?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         disconnect()
         lastError = nil
         self.manualHost = trimmed.isEmpty ? nil : BridgeAddress.normalize(trimmed)
         if !trimmed.isEmpty, self.manualHost == nil {
-            lastError = "Enter the PC's hostname or address, optionally followed by its port (for example 192.168.1.20:8380)."
+            lastError = "Enter the PC's hostname or address, optionally followed by its port (for example 192.168.1.20:8386)."
             DiagnosticLog.record(.warning, "Bridge", "Invalid bridge address; connection not started")
             return
         }

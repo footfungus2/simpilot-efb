@@ -131,7 +131,7 @@ async function exportJob(t, pages, { captureError, have = [], savedPages = [0], 
         const body = raw ? JSON.parse(raw) : {};
         let response = {};
         this.status = 200;
-        if (!this.url.includes('/link/poll')) posted.push([this.url.replace('http://127.0.0.1:8380', ''), body]);
+        if (!this.url.includes('/link/poll')) posted.push([this.url.replace('http://127.0.0.1:8386', ''), body]);
         if (this.url.includes('busy=1')) busyPolls.push(this.url);
         if (this.url.includes('/link/poll')) response = { jobs: this.url.includes('busy=1') ? [] : [job] };
         else if (this.url.endsWith('/link/pages')) response = { ok: true, have };
@@ -231,6 +231,40 @@ test('an unknown job type is reported back instead of being ignored', async (t) 
 test('while an export runs the panel only tells the bridge it is still there', async (t) => {
   const { result, busyPolls, tiles } = await exportJob(t, pageList(1), { pollWhileBusy: true, savedPages: [0] });
   assert.equal(result.error, undefined);
-  assert.deepEqual(busyPolls, ['http://127.0.0.1:8380/link/poll?proto=2&busy=1']);
+  assert.deepEqual(busyPolls, ['http://127.0.0.1:8386/link/poll?proto=2&busy=1']);
   assert.ok(tiles.length > 1, 'the export carried on');
+});
+
+async function bridgeStatus(t, answer) {
+  const status = { textContent: 'searching…' };
+  run(t, 'link', {
+    require: () => ({}),
+    document: { getElementById: (id) => (id === 'spl-bridge' ? status : null), body: { appendChild() {} } },
+    TemplateElement: class {},
+    window: { customElements: { define() {} } },
+    checkAutoload() {},
+    setInterval() {},
+    XMLHttpRequest: class {
+      open(method, url) { this.url = url; }
+      setRequestHeader() {}
+      send() { queueMicrotask(() => answer(this)); }
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  return status.textContent;
+}
+
+test('the panel says to start the bridge when nothing answers', async (t) => {
+  assert.equal(await bridgeStatus(t, (xhr) => xhr.onerror()), 'not found: start SimPilot Bridge on this PC');
+});
+
+test('the panel names another program on its port (e.g. FlyByWire SimBridge)', async (t) => {
+  const text = await bridgeStatus(t, (xhr) => { xhr.status = 404; xhr.responseText = 'Cannot GET'; xhr.onload(); });
+  assert.equal(text, 'port 8386 is used by another program (HTTP 404)');
+  const other = await bridgeStatus(t, (xhr) => { xhr.status = 200; xhr.responseText = '{"ok":true}'; xhr.onload(); });
+  assert.equal(other, 'port 8386 is used by another program (not SimPilot Bridge)');
+});
+
+test('the panel shows connected once SimPilot Bridge answers', async (t) => {
+  assert.equal(await bridgeStatus(t, (xhr) => { xhr.status = 200; xhr.responseText = '{"jobs":[]}'; xhr.onload(); }), 'connected');
 });

@@ -25,7 +25,8 @@ final class DiagnosticsTests: XCTestCase {
     }
 
     func testBridgeAddresses() {
-        XCTAssertEqual(BridgeAddress.normalize(" 192.168.1.2 "), "192.168.1.2:8380")
+        XCTAssertEqual(BridgeAddress.normalize(" 192.168.1.2 "), "192.168.1.2:8386")
+        XCTAssertEqual(BridgeAddress.normalize("192.168.1.2:8380"), "192.168.1.2:8386")
         XCTAssertEqual(BridgeAddress.normalize("http://flight-pc.local:8381/"), "flight-pc.local:8381")
         for input in ["", "bad host", "http://user:secret@pc", "https://pc", "pc/path", "pc?token=1", "pc:0", "pc:99999"] {
             XCTAssertNil(BridgeAddress.normalize(input), input)

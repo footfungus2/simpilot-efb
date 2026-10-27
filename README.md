@@ -186,7 +186,7 @@ A small **SimPilot Link** panel in the MSFS toolbar sends the sim's charts to th
 - If you cancelled the firewall prompt: **Windows Security → Firewall & network protection → Allow an app through
   firewall → Change settings**, find **Node.js JavaScript Runtime** and tick **Private**.
 - iPad: **Settings → Privacy → Local Network** → switch **SimPilot EFB** on.
-- Type the address shown in the SimPilot Bridge window, for example `192.168.1.20:8380`, into the app under
+- Type the address shown in the SimPilot Bridge window, for example `192.168.1.20:8386`, into the app under
   **Settings → Bridge**.
 - Choose the Wi-Fi or Ethernet address rather than a VPN or virtual adapter. If selecting text pauses the bridge
   window, press **Esc** to resume.

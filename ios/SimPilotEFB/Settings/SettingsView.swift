@@ -34,7 +34,7 @@ struct SettingsView: View {
                     }
                 }
 
-                Section(header: Text("Bridge"), footer: Text("Leave empty to find the bridge automatically. Otherwise enter the PC's address shown in the bridge window, e.g. 192.168.1.20:8380.")) {
+                Section(header: Text("Bridge"), footer: Text("Leave empty to find the bridge automatically. Otherwise enter the PC's address shown in the bridge window, e.g. 192.168.1.20:8386.")) {
                     TextField("Auto-discover", text: $hostDraft)
                         .keyboardType(.numbersAndPunctuation)
                         .disableAutocorrection(true)

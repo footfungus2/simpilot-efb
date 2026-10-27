@@ -16,8 +16,11 @@ function envInt(name: string, fallback: number, max: number): number {
 }
 
 export const config = {
-  /** HTTP + WebSocket port shared by the iPad app and the in-sim link panel. */
-  port: envInt('SIMPILOT_PORT', 8380, 65535),
+  /**
+   * HTTP + WebSocket port shared by the iPad app and the in-sim link panel (which always uses 8386). Not 8380: that is
+   * FlyByWire SimBridge's port.
+   */
+  port: envInt('SIMPILOT_PORT', 8386, 65535),
   /**
    * Where chart images, indexes and OFPs are cached on disk. The packaged app keeps them in the user's local app
    * data, so it works from any folder (Downloads, Desktop, Program Files).

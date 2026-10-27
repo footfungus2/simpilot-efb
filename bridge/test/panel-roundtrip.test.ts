@@ -87,7 +87,7 @@ describe('SimPilot Link panel and bridge together', () => {
       get src() { return this._src; }, set src(v: string) { this._src = v; if (v) queueMicrotask(() => this.onload?.()); } };
     const element = () => ({ style: {}, setAttribute() {}, appendChild() {}, clientWidth: 600, clientHeight: 400 });
     const code = transformSync(await fs.readFile(panelSource, 'utf8'), { loader: 'ts', format: 'cjs', target: 'es2017' }).code
-      .replace('http://127.0.0.1:8380', base);
+      .replace('PORT = 8386', `PORT = ${new URL(base).port}`);
     vm.runInNewContext(code, {
       module: { exports: {} },
       require: () => simCharts,
