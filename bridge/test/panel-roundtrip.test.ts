@@ -69,6 +69,7 @@ describe('SimPilot Link panel and bridge together', () => {
       private url = '';
       open(method: string, url: string) { this.method = method; this.url = url; }
       setRequestHeader() {}
+      abort() {}
       send(body: string | null) {
         const req = http.request(this.url, { method: this.method, headers: body ? { 'content-type': 'application/json' } : {} }, (res) => {
           const chunks: Buffer[] = [];
@@ -91,7 +92,7 @@ describe('SimPilot Link panel and bridge together', () => {
     vm.runInNewContext(code, {
       module: { exports: {} },
       require: () => simCharts,
-      setTimeout: (fn: () => void, ms: number) => setTimeout(fn, Math.min(ms, 20)),
+      setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms <= 1000 ? Math.min(ms, 20) : ms), // waits are shortened; request timeouts stay real (a slow runner must not trip them)
       clearTimeout,
       queueMicrotask,
       setInterval: (fn: () => void) => { tick = fn; return 0; },
