@@ -445,3 +445,13 @@ test('the panel build is deterministic and its manifest hashes the actual three 
   }
   assert.deepEqual(build(), first);
 });
+
+// MSFS's script engine (Coherent) fails to parse `!await x` and `a || await x` ("Unexpected identifier"), and esbuild
+// removes the parentheses that would hide them, so such code must never reach the shipped script.
+test('the shipped panel script has no await after an operator', () => {
+  for (const file of ['link', 'charts']) {
+    const source = readFileSync(`${__dirname}/../src/${file}.ts`, 'utf8');
+    const code = transformSync(source, { loader: 'ts', format: 'iife', target: 'es2017' }).code;
+    assert.doesNotMatch(code, /(!|&&|\|\||\?) ?await\b/, `${file}: await directly after an operator`);
+  }
+});

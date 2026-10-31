@@ -243,7 +243,9 @@ async function capturePage(job: Job, guid: string, page: number, url: string, sh
   s.root.style.display = 'block';
   try {
     try {
-      if (!(await loadImage(s.image, live.imageUrl))) log(`chart page ${page + 1}: MSFS didn't report the image as loaded; capturing it anyway`, 'warn');
+      // Never write `!await x`: esbuild drops the parentheses and MSFS's script engine can't parse `!await`.
+      const loaded = await loadImage(s.image, live.imageUrl);
+      if (!loaded) log(`chart page ${page + 1}: MSFS didn't report the image as loaded; capturing it anyway`, 'warn');
     } catch (err) {
       log(`chart page ${page + 1}: ${(err as Error).message}`, 'warn');
       return false;
@@ -306,7 +308,9 @@ async function runChartJob(job: Job, guid: string): Promise<void> {
     if (have.indexOf(p) >= 0) continue; // indexOf: old Coherent builds lack newer Array methods (flatMap)
     setText('spl-job', `${job.icao}: page ${p + 1}/${pages.length}`);
     const url = pickPageUrl(pages[p]!.urls);
-    if (!url || !(await capturePage(job, guid, p, url, pages[p]!))) failed++;
+    let captured = false;
+    if (url) captured = await capturePage(job, guid, p, url, pages[p]!);
+    if (!captured) failed++;
   }
   const summary = `${job.icao}: chart exported${failed ? `, ${failed} of ${pages.length} pages failed` : ` (${pages.length} pages)`}`;
   log(summary, failed ? 'error' : 'info');
