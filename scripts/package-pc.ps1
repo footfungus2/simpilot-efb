@@ -19,7 +19,9 @@ $linkJs = Join-Path $sim 'PackageSources\html_ui\InGamePanels\SimPilotLink\link.
 foreach ($file in @($runtime, $bundle, $launcher)) {
   if (-not (Test-Path -LiteralPath $file)) { throw "Missing $file - run 'npm run package:portable' in bridge first." }
 }
-if (-not (Test-Path -LiteralPath $linkJs)) { throw "Missing $linkJs - run 'npm run build' in sim-package first." }
+foreach ($file in @($linkJs, (Join-Path $sim 'PackageSources\panel-assets.json'))) {
+  if (-not (Test-Path -LiteralPath $file)) { throw "Missing $file - run 'npm run build' in sim-package first." }
+}
 $notices = Join-Path $root 'bridge\dist\app\Source and notices'
 if (-not (Test-Path -LiteralPath $notices)) { throw 'Source and license notices are missing. Rebuild SimPilot Bridge before packaging.' }
 
@@ -29,6 +31,8 @@ New-Item -ItemType Directory -Path $panel -Force | Out-Null
 foreach ($file in @($runtime, $bundle, $launcher)) { Copy-Item -LiteralPath $file -Destination $stage }
 Copy-Item -LiteralPath $notices -Destination $stage -Recurse
 Copy-Item -LiteralPath (Join-Path $sim 'install.bat') -Destination (Join-Path $panel 'Install SimPilot Link.bat')
+Copy-Item -LiteralPath (Join-Path $sim 'repair.bat') -Destination (Join-Path $panel 'Repair SimPilot Link.bat')
+Copy-Item -LiteralPath (Join-Path $sim 'diagnose.bat') -Destination (Join-Path $panel 'Diagnose SimPilot Link.bat')
 foreach ($item in 'build.ps1', 'package.xml', 'PackageDefinitions', 'PackageSources') {
   Copy-Item -LiteralPath (Join-Path $sim $item) -Destination $panel -Recurse
 }
@@ -62,6 +66,13 @@ Open the "SimPilot for PC" folder after choosing Extract All.
       MSFS must run in windowed or borderless mode, or the bridge can't see the panel.
 
 Not connecting?
+- If SimPilot Link is installed but stays on "Bridge searching", close MSFS and run
+  "Repair SimPilot Link.bat" from "Chart panel (optional)". It updates the installed
+  panel HTML, CSS and script without an SDK build, verifies the installed file hashes,
+  and keeps a backup beside Community2024. Check the panel's displayed build after restarting MSFS.
+- While the panel is still stuck, run "Diagnose SimPilot Link.bat" from that same folder.
+  Review its local SimPilot-Link-diagnostics.log before sharing it. It records installed
+  file hashes, the port owner and read-only bridge status; it does not impersonate the panel.
 - Windows: Settings > Network & internet > Wi-Fi (or Ethernet) > your home network > Private network.
 - If the firewall prompt was cancelled: Windows Security > Firewall & network protection >
   Allow an app through firewall > Change settings. Tick Private for Node.js JavaScript Runtime.

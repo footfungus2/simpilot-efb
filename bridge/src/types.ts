@@ -16,6 +16,8 @@ export interface Ownship {
 export interface BridgeStatus {
   sim: { connected: boolean; aircraftTitle?: string };
   link: { connected: boolean; lastSeenMs?: number };
+  /** Diagnostic identity supplied by GET /api/status; absent on older bridges and WebSocket status events. */
+  bridge?: { name: 'SimPilot Bridge'; version: string; buildId: string; linkProtocol: number; port: number };
 }
 
 export interface Rect {
@@ -77,7 +79,8 @@ export type BridgeToApp =
   | { t: 'commandResult'; id: string; ok: boolean; message?: string };
 
 export type AppToBridge =
-  | { t: 'requestCharts'; icao: string }
+  /** `role`, `procedures` and `runway` are optional: with them the bridge also exports the flight's own charts ahead of time. */
+  | { t: 'requestCharts'; icao: string; role?: 'origin' | 'destination' | 'alternate'; procedures?: string[]; runway?: string }
   /** Start sending these aircraft L:vars (names without "L:") as they change. */
   | { t: 'lvarWatch'; names: string[] }
   /** Run an MSFS RPN snippet against the aircraft's L:vars; `@` in the code is `value`. */

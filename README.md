@@ -171,16 +171,23 @@ A small **SimPilot Link** panel in the MSFS toolbar sends the sim's charts to th
 2. **Close MSFS 2024.** Inside **SimPilot for PC**, open **Chart panel (optional)** and double-click **Install SimPilot Link**
    (shown as **Install SimPilot Link.bat** if file extensions are visible). It finds your
    MSFS folder by itself. If it asks, choose the MSFS **Packages** folder.
-3. **Start MSFS 2024 again**; new add-ons load when the sim starts. In a flight, click the **gear icon** in the toolbar, switch **SimPilot Link** on, then open it. It shows
-   *Bridge: connected*. Open it once per flight.
-4. **Keep the panel open and fully visible** (not minimised or covered). The chart list of an airport appears on the iPad
-   at once. A chart is exported from the sim the first time you open it, which takes a few seconds: MSFS doesn't let
+3. **Start MSFS 2024 again**; new add-ons load when the sim starts. In a flight, click the **gear icon** in the toolbar,
+   switch **SimPilot Link** on, then open it. Check its **Startup**, **Panel build**, **Bridge build** and **Last request**
+   rows; a healthy connection shows *Bridge: connected*. Open it once per flight.
+4. **Keep the panel open and fully visible** (not minimised or covered). The panel requests the chart list, then
+   exports each selected chart on demand. MSFS doesn't let
    add-ons read its chart images, so the panel shows each page and SimPilot Bridge copies it from the screen. A bigger
    panel, or one popped out into its own window, is faster and gives sharper charts. Each chart is exported once, then
-   kept on the PC and the iPad.
+   kept on the PC and the iPad. Charts of your loaded flight (SID, STAR, approaches for the planned runway) are
+   exported in the background while the panel is open; charts you open yourself go first.
 
 ### Not connecting?
 
+- If an installed panel stays on **searching**, close MSFS and run **Repair SimPilot Link.bat** from the matching PC
+  download. It replaces and verifies the panel HTML, CSS and script without another SDK build, and keeps a backup.
+- **Diagnose SimPilot Link.bat** records the active package paths and asset hashes, bridge listener, read-only status
+  and bounded bridge logs. Review the local report before sharing it. Keep the panel's startup/error text too;
+  an installed hash does not prove MSFS loaded that copy.
 - Use the same local network, not a guest network. Wired Ethernet on the PC is fine.
 - Windows: **Settings → Network & internet → Wi-Fi** (or **Ethernet**) → your home network → **Private network**.
 - If you cancelled the firewall prompt: **Windows Security → Firewall & network protection → Allow an app through
@@ -262,6 +269,8 @@ cd sim-package && npm install && npm run build
   `SimPilot-for-PC.zip` with the ready-made chart panel. No separate Node.js installation is needed.
 - `sim-package/install.bat` builds the panel from source (Node.js + MSFS 2024 SDK) and installs it into `Community2024`.
   To choose the folder yourself: `build.ps1 -Community "D:\MSFS\Packages\Community2024"`.
+- `sim-package/repair.bat` updates and verifies the HTML, CSS and script in an existing panel without the SDK (`build.ps1 -UpdateScript`).
+  Close MSFS first. The previous panel is saved beside `Community2024`; a first installation still needs the SDK.
 
 To run the bridge on another machine, enable remote SimConnect on the sim PC (`SimConnect.xml`, address `0.0.0.0`,
 port 5111) and start the bridge with `SIMPILOT_SIMCONNECT=<pc-ip>:5111`.

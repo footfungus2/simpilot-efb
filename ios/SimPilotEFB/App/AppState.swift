@@ -152,6 +152,10 @@ final class AppState: ObservableObject {
         sidebarVisible = flightFolderAtLaunch
         // Re-publish bridge changes so views observing AppState see connection updates.
         bridge.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        // The PC is often off when the flight is loaded: ask again for its charts whenever the bridge connects.
+        bridge.$state.map { state -> Bool in if case .connected = state { return true } else { return false } }
+            .removeDuplicates().filter { $0 }
+            .sink { [weak self] _ in self?.requestFlightCharts() }.store(in: &cancellables)
         Publishers.CombineLatest3($companyTraffic, $companyCodeOverride, $ofp)
             .sink { [weak self] on, override, ofp in
                 guard let self else { return }
@@ -193,13 +197,22 @@ final class AppState: ObservableObject {
             ofp = loaded
             ofpError = nil
             if let data = try? JSONEncoder().encode(loaded) { defaults.set(data, forKey: "ofp") }
-            // Fetch the chart list of every airport of the flight (quick); the charts themselves are exported when opened.
-            for icao in flightAirports.map(\.icao) { bridge.send(requestCharts: icao) }
+            requestFlightCharts()
             DiagnosticLog.record(.info, "Flight", "SimBrief flight loaded.")
         } catch {
             ofpError = error.localizedDescription
             DiagnosticLog.record(.error, "Flight", "SimBrief flight could not be loaded.", error: error)
         }
+    }
+
+    /// Asks the PC bridge for the chart list of every airport of the flight and, at the origin and destination, to export
+    /// the SID / STAR / approaches ahead of time. Charts you open meanwhile always go first.
+    func requestFlightCharts() {
+        guard let ofp else { return }
+        for (airport, role) in [(ofp.origin, "origin"), (ofp.destination, "destination")] {
+            bridge.send(requestCharts: airport.icao, role: role, procedures: Array(flightProcedures(at: airport.icao)), runway: airport.planRwy)
+        }
+        for airport in ofp.alternates { bridge.send(requestCharts: airport.icao, role: "alternate") }
     }
 
     func clearFlight() {

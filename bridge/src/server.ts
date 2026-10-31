@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import type { Capturer } from './charts/capture.js';
-import { ChartLink } from './charts/link.js';
+import { ChartLink, LINK_PROTOCOL } from './charts/link.js';
 import { type ChartStore, safeIcao } from './charts/store.js';
+import { config } from './config.js';
 import { HttpError, readJson, Router, sendJson, setCors } from './http.js';
 import type { FenixProcedures } from './fenix.js';
 import type { LVars } from './lvars.js';
@@ -23,8 +24,11 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
   const router = new Router();
 
   hub.onMessage((msg) => {
-    if (msg.t === 'requestCharts') void requestIndex(msg.icao).then((index) => {
+    if (msg.t === 'requestCharts') void requestIndex(msg.icao).then(async (index) => {
       if (index) hub.broadcast({ t: 'chartsReady', icao: safeIcao(msg.icao) });
+      if (msg.role === 'origin' || msg.role === 'destination') {
+        await link.wantFlightCharts(msg.icao, { role: msg.role, procedures: msg.procedures ?? [], runway: msg.runway });
+      }
     }).catch((err) => {
       log.error('chart request failed', err);
       hub.broadcast({ t: 'chartsError', icao: msg.icao, message: 'Unable to load chart cache; check bridge diagnostics' });
@@ -64,7 +68,14 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
 
   // ---- app ----
   router
-    .add('GET', '/api/status', (_req, res) => sendJson(res, 200, hub.status()))
+    .add('GET', '/api/status', (_req, res) => {
+      res.setHeader('cache-control', 'no-store');
+      const address = server.address();
+      sendJson(res, 200, { ...hub.status(), bridge: {
+        name: 'SimPilot Bridge', version: config.bridgeVersion, buildId: config.buildId,
+        linkProtocol: LINK_PROTOCOL, port: address && typeof address !== 'string' ? address.port : config.port,
+      } });
+    })
     .add('GET', '/api/diagnostics', (_req, res) => {
       res.setHeader('cache-control', 'no-store');
       sendJson(res, 200, { entries: logEntries() });

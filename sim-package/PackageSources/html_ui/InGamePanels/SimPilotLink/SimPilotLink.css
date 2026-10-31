@@ -5,7 +5,7 @@
   font-size: 14px;
   background-color: var(--backgroundColorPanel);
   height: 100%;
-  overflow: hidden;
+  overflow: auto;
 }
 .spl-row {
   display: flex;
@@ -15,7 +15,10 @@
 }
 .spl-label {
   opacity: 0.6;
+  flex-shrink: 0;
+  padding-right: 10px;
 }
+.spl-row span:last-child { text-align: right; overflow-wrap: break-word; min-width: 0; }
 .spl-ok {
   color: #3fbf6a;
 }

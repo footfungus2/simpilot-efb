@@ -50,12 +50,17 @@ using System.Windows.Forms;
 
 public static class SimPilotCapture {
   [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr value);
   struct Block { public int X, Y, W, H; }
   static Bitmap page;
   static int viewW, viewH;
-  static double scale;
+  static double scale, scaleY;
 
-  static SimPilotCapture() { SetProcessDPIAware(); }
+  // Per-monitor aware (V2 = -4), so screen pixels are never bitmap-stretched on a mixed-DPI setup; older Windows falls back.
+  static SimPilotCapture() {
+    try { if (!SetProcessDpiAwarenessContext(new IntPtr(-4))) SetProcessDPIAware(); }
+    catch (EntryPointNotFoundException) { SetProcessDPIAware(); }
+  }
 
   public static string Run(string line) {
     try {
@@ -65,8 +70,7 @@ public static class SimPilotCapture {
         for (int k = 0; k < 4; k++) n[k] = int.Parse(a[k + 1], CultureInfo.InvariantCulture);
         double[] d = new double[4];
         for (int k = 0; k < 4; k++) d[k] = double.Parse(a[k + 5], CultureInfo.InvariantCulture);
-        Tile(n[0], n[1], n[2], n[3], d[0], d[1], d[2], d[3]);
-        return "ok";
+        return Tile(n[0], n[1], n[2], n[3], d[0], d[1], d[2], d[3]);
       }
       if (a[0] == "finish") return Finish();
       if (a[0] == "ping") return "ok";
@@ -77,37 +81,70 @@ public static class SimPilotCapture {
     }
   }
 
-  static void Tile(int i, int j, int cols, int rows, double vw, double vh, double iw, double ih) {
+  // The panel marks the tile it is showing with 8 black/white squares (bit k = square k, value = tile number + 1) along the
+  // top edge. Until that number is on screen the tile is stale or half drawn, so look again instead of stitching it in.
+  static string Tile(int i, int j, int cols, int rows, double vw, double vh, double iw, double ih) {
     Rectangle screen = SystemInformation.VirtualScreen;
-    using (Bitmap shot = new Bitmap(screen.Width, screen.Height, PixelFormat.Format32bppArgb)) {
-      using (Graphics g = Graphics.FromImage(shot)) {
-        g.CopyFromScreen(screen.Left, screen.Top, 0, 0, screen.Size, CopyPixelOperation.SourceCopy);
+    int want = j * cols + i + 1, seen = -1;
+    Rectangle view = Rectangle.Empty;
+    Block mark = new Block();
+    string why = null;
+    Bitmap shot = null;
+    try {
+      for (int attempt = 0; attempt < 10; attempt++) {
+        if (attempt > 0) System.Threading.Thread.Sleep(150);
+        if (shot != null) shot.Dispose();
+        shot = new Bitmap(screen.Width, screen.Height, PixelFormat.Format32bppArgb);
+        using (Graphics g = Graphics.FromImage(shot)) {
+          g.CopyFromScreen(screen.Left, screen.Top, 0, 0, screen.Size, CopyPixelOperation.SourceCopy);
+        }
+        view = FindView(shot, out mark, out why);
+        if (view.Width <= 0) { if (attempt >= 2) break; continue; }
+        seen = ReadCode(shot, mark);
+        if (seen == want) break;
       }
-      Rectangle view = FindView(shot);
-      if (view.Width <= 0) throw new Exception("Can't see the SimPilot Link window. Keep it open and fully visible on screen (not minimised or covered), and run MSFS in windowed or borderless mode.");
+      if (view.Width <= 0) throw new Exception(why);
+      if (seen != want) throw new Exception("The SimPilot Link window did not finish drawing chart tile " + want + " (it shows " + seen + "). Keep it open and uncovered, then export the chart again.");
+      string note = "ok";
       if (i == 0 && j == 0) {
         Reset();
         viewW = view.Width;
         viewH = view.Height;
         scale = view.Width / vw;
+        scaleY = view.Height / vh;
         int w = Math.Max(1, (int)Math.Round(iw * scale));
-        int h = Math.Max(1, (int)Math.Round(ih * scale));
+        int h = Math.Max(1, (int)Math.Round(ih * scaleY));
         if ((long)w * h > 100000000L) throw new Exception("Chart page is too large to capture.");
         page = new Bitmap(w, h, PixelFormat.Format24bppRgb);
         using (Graphics g = Graphics.FromImage(page)) g.Clear(Color.White);
+        note = "ok scale=" + scale.ToString("0.000", CultureInfo.InvariantCulture) + " page=" + w + "x" + h;
       } else if (page == null) {
         throw new Exception("Chart capture was interrupted; request the airport again.");
       } else if (Math.Abs(view.Width - viewW) > 2 || Math.Abs(view.Height - viewH) > 2) {
         throw new Exception("The SimPilot Link window was resized during capture; request the airport again.");
       }
-      int dx = (int)Math.Round(i * vw * scale);
-      int dy = (int)Math.Round(j * vh * scale);
+      // Whole screen pixels per tile, so neighbouring tiles meet exactly (no rounding seams).
       using (Graphics g = Graphics.FromImage(page)) {
         g.CompositingMode = CompositingMode.SourceCopy;
         g.InterpolationMode = InterpolationMode.NearestNeighbor;
-        g.DrawImage(shot, new Rectangle(dx, dy, view.Width, view.Height), view, GraphicsUnit.Pixel);
+        g.DrawImage(shot, new Rectangle(i * viewW, j * viewH, view.Width, view.Height), view, GraphicsUnit.Pixel);
       }
+      return note;
+    } finally {
+      if (shot != null) shot.Dispose();
     }
+  }
+
+  static int ReadCode(Bitmap shot, Block m) {
+    int value = 0;
+    int y = m.Y + m.H / 2;
+    for (int k = 0; k < 8; k++) {
+      int x = m.X + (int)Math.Round(m.W * (k + 1.5));
+      if (x < 0 || x >= shot.Width || y < 0 || y >= shot.Height) return -1;
+      Color c = shot.GetPixel(x, y);
+      if (c.R + c.G + c.B > 384) value |= 1 << k;
+    }
+    return value;
   }
 
   static string Finish() {
@@ -124,7 +161,9 @@ public static class SimPilotCapture {
   }
 
   // The view lies between the magenta block's bottom-right corner and the cyan block's top-left corner.
-  static Rectangle FindView(Bitmap bmp) {
+  static Rectangle FindView(Bitmap bmp, out Block mark, out string why) {
+    mark = new Block();
+    why = null;
     BitmapData data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
     try {
       byte[] px = new byte[data.Stride * bmp.Height];
@@ -139,8 +178,13 @@ public static class SimPilotCapture {
           int x = m.X + m.W, y = m.Y + m.H, w = c.X - x, h = c.Y - y;
           if (w < 50 || h < 50) continue;
           long area = (long)w * h;
-          if (area > bestArea) { bestArea = area; best = new Rectangle(x, y, w, h); }
+          if (area > bestArea) { bestArea = area; best = new Rectangle(x, y, w, h); mark = m; }
         }
+      }
+      if (best.Width <= 0) {
+        if (tl.Count == 0 && br.Count == 0) why = "Can't see the SimPilot Link window. Keep it open and fully visible on screen (not minimised or covered), and run MSFS in windowed or borderless mode. If it is open, turn HDR off in Windows: HDR washes out the colours the capture looks for.";
+        else if (tl.Count == 0 || br.Count == 0) why = "Only one corner marker of the SimPilot Link window is visible: it is partly covered or off screen. Make the panel bigger and fully visible.";
+        else why = "Found SimPilot Link markers, but they don't make up a window. Make the panel bigger and fully visible.";
       }
       return best;
     } finally {
@@ -150,7 +194,8 @@ public static class SimPilotCapture {
 
   static bool Is(byte[] p, int o, bool magenta) {
     int b = p[o], g = p[o + 1], r = p[o + 2];
-    return magenta ? (r >= 200 && g <= 60 && b >= 200) : (r <= 60 && g >= 200 && b >= 200);
+    // Wide enough to survive washed-out (HDR / colour-managed) captures; the shape test in Blocks keeps false hits out.
+    return magenta ? (r >= 170 && b >= 170 && g <= Math.Min(r, b) - 90) : (g >= 170 && b >= 170 && r <= Math.Min(g, b) - 90);
   }
 
   // Solid, roughly square blocks of the colour (thin magenta route lines elsewhere on screen don't qualify).
@@ -200,7 +245,8 @@ export class ScreenCapture implements Capturer {
 
   async tile(t: CaptureTile): Promise<void> {
     const n = (v: number) => String(Math.round(v * 1000) / 1000);
-    await this.command(`tile ${t.i} ${t.j} ${t.cols} ${t.rows} ${n(t.view.w)} ${n(t.view.h)} ${n(t.image.w)} ${n(t.image.h)}`);
+    const reply = await this.command(`tile ${t.i} ${t.j} ${t.cols} ${t.rows} ${n(t.view.w)} ${n(t.view.h)} ${n(t.image.w)} ${n(t.image.h)}`);
+    if (t.i === 0 && t.j === 0) log.info(`capture ${reply.replace(/^ok /, "")} (scale 1.000 = one screen pixel per panel pixel)`);
   }
 
   async finish(): Promise<Buffer> {

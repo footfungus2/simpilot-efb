@@ -17,19 +17,51 @@
     <link rel="import" href="/templates/ingameUiHeader/ingameUiHeader.html" />
 
     <script type="text/javascript" src="/JS/debug.js"></script>
-    <script type="text/javascript" src="link.js"></script>
 </head>
 
 <body class="border-box">
     <simpilot-link-panel>
         <ingame-ui id="SimPilotLink" panel-id="PANEL_SIMPILOT_LINK" title="SimPilot Link" class="ingameUiFrame panelInvisible" content-fit="true" min-width="160" min-height="120">
             <div id="spl-root">
-                <div class="spl-row"><span class="spl-label">Bridge</span><span id="spl-bridge" class="spl-bad">searching…</span></div>
+                <div class="spl-row"><span class="spl-label">Bridge</span><span id="spl-bridge" class="spl-bad">waiting for script…</span></div>
+                <div class="spl-row"><span class="spl-label">Startup</span><span id="spl-start" class="spl-bad">waiting…</span></div>
+                <div class="spl-row"><span class="spl-label">Panel build</span><span id="spl-build">not loaded</span></div>
+                <div class="spl-row"><span class="spl-label">Target</span><span id="spl-target">http://127.0.0.1:8386</span></div>
+                <div class="spl-row"><span class="spl-label">Bridge build</span><span id="spl-server">not received</span></div>
+                <div class="spl-row"><span class="spl-label">Last request</span><span id="spl-request">not sent</span></div>
                 <div class="spl-row"><span class="spl-label">Charts</span><span id="spl-job">idle</span></div>
                 <div class="spl-row"><span class="spl-label">Export</span><span id="spl-method">–</span></div>
                 <ul id="spl-log"></ul>
             </div>
         </ingame-ui>
     </simpilot-link-panel>
+    <script type="text/javascript">
+        // Keep this ES5 bootstrap independent of the bundle so parse/load failures remain visible.
+        (function () {
+            var started = false;
+            function fail(message) {
+                clearTimeout(timer);
+                var status = document.getElementById('spl-start');
+                var bridge = document.getElementById('spl-bridge');
+                if (status) { status.textContent = message; status.className = 'spl-bad'; }
+                if (bridge) { bridge.textContent = 'panel script failed'; bridge.className = 'spl-bad'; }
+            }
+            var timer = setTimeout(function () {
+                if (!started) fail('link.js did not start; run Repair SimPilot Link');
+            }, 5000);
+            window.simpilotLinkStarted = function (build) {
+                started = true;
+                clearTimeout(timer);
+                document.getElementById('spl-build').textContent = build;
+                document.getElementById('spl-start').textContent = 'running';
+                document.getElementById('spl-start').className = 'spl-ok';
+            };
+            window.simpilotLinkLoadFailed = function () { fail('link.js could not load; run Repair SimPilot Link'); };
+            window.addEventListener('error', function (event) {
+                if ((event.filename || '').indexOf('link.js') >= 0) fail(event.message || 'link.js error');
+            });
+        }());
+    </script>
+    <script type="text/javascript" src="link.js" onerror="window.simpilotLinkLoadFailed()"></script>
 </body>
 </html>

@@ -8,6 +8,10 @@ import { getChartPages, getIndexForAirport, loadChartLiveView } from './charts.j
 
 declare const TemplateElement: { new (): HTMLElement; prototype: HTMLElement };
 declare function checkAutoload(): void;
+declare const __SIMPILOT_LINK_BUILD__: string;
+declare global {
+  interface Window { simpilotLinkStarted?: (build: string) => void }
+}
 
 // 127.0.0.1, not localhost: Windows may resolve localhost to IPv6 (::1), but the bridge listens on IPv4.
 // Not 8380: that is FlyByWire SimBridge's port, so with it running the panel talked to the wrong program.
@@ -15,7 +19,8 @@ const PORT = 8386;
 const BRIDGE = `http://127.0.0.1:${PORT}`;
 const POLL_MS = 2000;
 // What the panel and the bridge speak; the bridge refuses to hand out work to another number. Keep in sync with bridge/src/charts/link.ts.
-const LINK_PROTOCOL = 2;
+const LINK_PROTOCOL = 3;
+const BUILD_ID = typeof __SIMPILOT_LINK_BUILD__ === 'string' ? __SIMPILOT_LINK_BUILD__ : 'development';
 
 interface Job {
   id: string;
@@ -27,6 +32,9 @@ interface Job {
 }
 
 let busy = false;
+let working = false;
+let bridgeChecked = false;
+let lastBridgeState = '';
 
 // ---------------------------------------------------------------- HTTP (XHR; fetch isn't reliable in Coherent)
 
@@ -36,23 +44,41 @@ function request(method: 'GET' | 'POST', path: string, body?: unknown, timeoutMs
     xhr.open(method, BRIDGE + path, true);
     xhr.timeout = timeoutMs;
     xhr.setRequestHeader('content-type', 'application/json');
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
+    const finish = (error?: Error, value?: unknown) => {
+      clearTimeout(timer);
+      xhr.onload = xhr.onreadystatechange = xhr.onerror = xhr.ontimeout = xhr.onabort = null;
+      if (path === '/api/status' || path.indexOf('/link/poll') === 0) {
+        setText('spl-request', error?.message ?? `${method} ${path}: HTTP ${xhr.status}`, !error);
+      }
+      if (error) reject(error);
+      else resolve(value);
+    };
+    // A silent request must not leave the poll loop busy forever, even if the sim never fires ontimeout.
+    const timer = setTimeout(() => {
+      finish(new Error(`${method} ${path}: timeout`));
+      xhr.abort();
+    }, timeoutMs);
+    const complete = () => {
+      if (xhr.status === 0) finish(new Error(`${method} ${path}: network error`));
+      else if (xhr.status >= 200 && xhr.status < 300) {
         try {
-          resolve(xhr.responseText ? JSON.parse(xhr.responseText) : {});
+          finish(undefined, xhr.responseText ? JSON.parse(xhr.responseText) : {});
         } catch {
-          reject(new Error(`${method} ${path}: invalid JSON response`));
+          finish(new Error(`${method} ${path}: invalid JSON response`));
         }
       } else {
         // The bridge explains capture problems (e.g. the window isn't visible); pass that on to the iPad.
         let reason = '';
         try { reason = JSON.parse(xhr.responseText).error ?? ''; } catch { /* not JSON */ }
-        reject(new Error(reason || `${method} ${path}: HTTP ${xhr.status}`));
+        finish(new Error(`${method} ${path}: HTTP ${xhr.status}${reason ? `: ${reason}` : ''}`));
       }
     };
-    xhr.onerror = () => reject(new Error(`${method} ${path}: network error`));
-    xhr.ontimeout = () => reject(new Error(`${method} ${path}: timeout`));
-    xhr.send(body === undefined ? null : JSON.stringify(body));
+    xhr.onload = complete;
+    xhr.onreadystatechange = () => { if (xhr.readyState === 4) complete(); };
+    xhr.onerror = xhr.onabort = () => finish(new Error(`${method} ${path}: network error`));
+    xhr.ontimeout = () => finish(new Error(`${method} ${path}: timeout`));
+    try { xhr.send(body === undefined ? null : JSON.stringify(body)); }
+    catch (err) { finish(err as Error); }
   });
 }
 
@@ -81,6 +107,34 @@ function log(msg: string, level: 'info' | 'warn' | 'error' = 'info'): void {
   request('POST', '/link/log', { level, msg }).catch(() => {});
 }
 
+function connectionStatus(text: string, ok: boolean): void {
+  setText('spl-bridge', text, ok);
+  if (text === lastBridgeState) return;
+  lastBridgeState = text;
+  if (bridgeChecked) log(`Bridge: ${text}`, ok ? 'info' : 'warn');
+  else uiLog(`Bridge: ${text}`);
+}
+
+async function checkBridge(): Promise<void> {
+  const status = await request('GET', '/api/status', undefined, 5000);
+  if (typeof status?.sim?.connected !== 'boolean' || typeof status?.link?.connected !== 'boolean'
+      || (status.bridge && status.bridge.name !== 'SimPilot Bridge')) throw new Error('not SimPilot Bridge');
+  const identity = status.bridge;
+  setText('spl-server', identity ? `${identity.version} · ${identity.buildId}` : 'legacy bridge (build unknown)');
+  if (identity && identity.linkProtocol !== LINK_PROTOCOL) {
+    throw new Error(`link protocol ${identity.linkProtocol} is incompatible; update SimPilot Bridge and SimPilot Link together`);
+  }
+  bridgeChecked = true;
+}
+
+function connectionFailure(error: Error): void {
+  bridgeChecked = false;
+  const why = error.message.replace(/^GET [^ ]+: /, '');
+  connectionStatus(/network error|timeout/.test(why)
+    ? 'not found: start SimPilot Bridge on this PC'
+    : why === 'not SimPilot Bridge' ? `port ${PORT}: not SimPilot Bridge` : `connection failed: ${why}`, false);
+}
+
 // ---------------------------------------------------------------- chart export
 
 function pickPageUrl(urls: readonly { name: string; url: string }[]): string | undefined {
@@ -92,11 +146,16 @@ function pickPageUrl(urls: readonly { name: string; url: string }[]): string | u
 // MSFS gives panels chart images only as GPU bitmaps (ChartView LiveViews): they can be shown, but reading them back
 // is blocked and drawing them into a canvas crashed the sim. So the panel shows each page between two marker squares
 // (magenta top-left, cyan bottom-right) and the bridge on this PC captures those screen pixels, piece by piece.
+// Along the top edge, 8 black/white squares spell the number of the tile on show (tile + 1, bit k = square k), so the
+// bridge only stitches a tile once the screen really shows it.
 const MARKER_PX = 16;
-const TARGET_WIDTH = 1800; // stitched page width to aim for, in panel pixels
-const MAX_TILES = 16;
+const CODE_BITS = 8;
+const MAX_TILES = 36; // the bridge accepts up to 36 columns and 36 rows
+const MIN_NATIVE_WIDTH = 800; // smaller page sizes from the sim are taken to be arbitrary units, not pixels
+const FALLBACK_WIDTH = 1800;
 
-let stage: { root: HTMLElement; view: HTMLElement; image: HTMLImageElement } | undefined;
+let urlsLogged = false;
+let stage: { root: HTMLElement; view: HTMLElement; image: HTMLImageElement; code: HTMLElement[] } | undefined;
 
 function captureStage(): NonNullable<typeof stage> {
   if (stage) return stage;
@@ -113,8 +172,14 @@ function captureStage(): NonNullable<typeof stage> {
   root.appendChild(div(`position:absolute;left:0;top:0;width:${MARKER_PX}px;height:${MARKER_PX}px;background:#ff00ff;`));
   root.appendChild(div(`position:absolute;right:0;bottom:0;width:${MARKER_PX}px;height:${MARKER_PX}px;background:#00ffff;`));
   root.appendChild(view);
+  const code: HTMLElement[] = [];
+  for (let k = 0; k < CODE_BITS; k++) {
+    const cell = div(`position:absolute;left:${MARKER_PX * (k + 1)}px;top:0;width:${MARKER_PX}px;height:${MARKER_PX}px;background:#000;`);
+    root.appendChild(cell);
+    code.push(cell);
+  }
   document.body.appendChild(root);
-  stage = { root, view, image };
+  stage = { root, view, image, code };
   return stage;
 }
 
@@ -136,16 +201,33 @@ function loadImage(image: HTMLImageElement, src: string): Promise<boolean> {
   });
 }
 
-/** Tile layout for a page: about TARGET_WIDTH wide (never above the image's own resolution), at most MAX_TILES. */
+export function setTileCode(code: HTMLElement[], tile: number): void {
+  for (let k = 0; k < code.length; k++) code[k]!.style.background = ((tile + 1) >> k) & 1 ? '#fff' : '#000';
+}
+
+/**
+ * Tile layout for a page: shown at its own resolution (one panel pixel per image pixel) so nothing is resampled, and
+ * only shrunk when that would take more than MAX_TILES.
+ */
 export function captureLayout(viewW: number, viewH: number, naturalW: number, naturalH: number) {
-  let cols = Math.max(1, Math.min(4, Math.ceil(Math.min(TARGET_WIDTH, naturalW) / viewW)));
+  let scale = 1;
   for (;;) {
-    const w = cols * viewW;
-    const h = (w * naturalH) / naturalW;
+    const w = naturalW * scale;
+    const h = naturalH * scale;
+    const cols = Math.max(1, Math.ceil(w / viewW - 0.001));
     const rows = Math.max(1, Math.ceil(h / viewH - 0.001));
-    if (cols === 1 || cols * rows <= MAX_TILES) return { cols, rows, w, h };
-    cols--;
+    if (cols * rows <= MAX_TILES || scale < 0.1) return { cols, rows, w, h };
+    scale *= 0.9;
   }
+}
+
+/** The size to show the page at: what the image itself reports, else the page size the sim gave (if it looks like pixels). */
+export function pageSize(img: { naturalWidth: number; naturalHeight: number }, shape: { width: number; height: number }) {
+  if (img.naturalWidth > 0 && img.naturalHeight > 0) return { w: img.naturalWidth, h: img.naturalHeight, from: 'image' };
+  const ok = shape.width > 0 && shape.height > 0;
+  if (ok && shape.width >= MIN_NATIVE_WIDTH) return { w: shape.width, h: shape.height, from: 'page size' };
+  const aspect = ok ? shape.height / shape.width : 1.4;
+  return { w: FALLBACK_WIDTH, h: FALLBACK_WIDTH * aspect, from: 'assumed' };
 }
 
 /** Shows one page and has the bridge capture it. Capture errors (window hidden…) reject: they'd hit every page. */
@@ -169,10 +251,9 @@ async function capturePage(job: Job, guid: string, page: number, url: string, sh
     const viewW = s.view.clientWidth;
     const viewH = s.view.clientHeight;
     if (viewW < 100 || viewH < 100) throw new Error('The SimPilot Link window is hidden or too small; open it, make it bigger and export the chart again');
-    // Without a size from the image, assume a typical chart resolution in the page's own shape.
-    const naturalW = s.image.naturalWidth || 1500;
-    const naturalH = s.image.naturalWidth ? s.image.naturalHeight : (naturalW * shape.height) / shape.width;
-    const { cols, rows, w, h } = captureLayout(viewW, viewH, naturalW, naturalH);
+    const natural = pageSize(s.image, shape);
+    const { cols, rows, w, h } = captureLayout(viewW, viewH, natural.w, natural.h);
+    log(`chart page ${page + 1}: ${Math.round(natural.w)}x${Math.round(natural.h)} from ${natural.from} (page size ${shape.width}x${shape.height}), view ${viewW}x${viewH}, ${cols}x${rows} tiles at ${(w / natural.w).toFixed(2)}x`);
     s.image.style.width = `${w}px`;
     s.image.style.height = `${h}px`;
     let saved = false;
@@ -180,8 +261,9 @@ async function capturePage(job: Job, guid: string, page: number, url: string, sh
       for (let i = 0; i < cols; i++) {
         s.image.style.left = `${-i * viewW}px`;
         s.image.style.top = `${-j * viewH}px`;
-        // Let the sim draw the new position before the bridge looks at the screen.
-        await wait(i === 0 && j === 0 ? 700 : 350);
+        setTileCode(s.code, j * cols + i);
+        // Let the sim draw the new position; the bridge also waits until the tile number is on screen.
+        await wait(i === 0 && j === 0 ? 600 : 250);
         const res = await request('POST', '/link/capture', {
           jobId: job.id, icao: job.icao, guid, page, i, j, cols, rows, view: { w: viewW, h: viewH }, image: { w, h },
         }, 60000) as { saved?: boolean };
@@ -215,6 +297,10 @@ async function runChartJob(job: Job, guid: string): Promise<void> {
   const { pages } = await getChartPages(guid);
   if (!pages.length) throw new Error('This chart has no pages');
   const { have = [] } = (await request('POST', '/link/pages', { jobId: job.id, icao: job.icao, guid, pages }, 30000)) as { have?: number[] };
+  if (!urlsLogged) {
+    urlsLogged = true;
+    log(`page URL names from the sim: ${pages[0]!.urls.map((u) => u.name).join(', ') || '(none)'}`);
+  }
   let failed = 0;
   for (let p = 0; p < pages.length; p++) {
     if (have.indexOf(p) >= 0) continue; // indexOf: old Coherent builds lack newer Array methods (flatMap)
@@ -235,17 +321,20 @@ async function runChartJob(job: Job, guid: string): Promise<void> {
 // ---------------------------------------------------------------- poll loop
 
 async function tick(): Promise<void> {
+  setText('spl-build', BUILD_ID);
   if (busy) {
     // Still working: tell the bridge the panel is there, so the iPad doesn't think it was closed during a long export.
-    request('GET', `/link/poll?proto=${LINK_PROTOCOL}&busy=1`, undefined, 5000).catch(() => {});
+    if (working) request('GET', `/link/poll?proto=${LINK_PROTOCOL}&busy=1`, undefined, 5000).catch(connectionFailure);
     return;
   }
   busy = true;
   try {
+    if (!bridgeChecked) await checkBridge();
     const { jobs } = (await request('GET', `/link/poll?proto=${LINK_PROTOCOL}`, undefined, 5000)) as { jobs?: Job[] };
     if (!Array.isArray(jobs)) throw new Error('not SimPilot Bridge');
-    setText('spl-bridge', 'connected', true);
+    connectionStatus('connected', true);
     for (const job of jobs) {
+      working = true;
       try {
         if (job.type === 'chart' && job.guid) await runChartJob(job, job.guid);
         else if (job.type === 'index') await runIndexJob(job);
@@ -255,20 +344,22 @@ async function tick(): Promise<void> {
         log(`${job.icao}: ${msg}`, 'error');
         setText('spl-job', `${job.icao}: failed`);
         await request('POST', '/link/done', { jobId: job.id, icao: job.icao, error: msg }).catch(() => {});
+      } finally {
+        working = false;
       }
     }
   } catch (err) {
-    // Nothing listening (bridge not started) reads as a network error or timeout; any other answer is another program.
-    const why = (err as Error).message.replace(/^GET \/link\/poll[^:]*: /, '');
-    setText('spl-bridge', /network error|timeout/.test(why)
-      ? 'not found: start SimPilot Bridge on this PC'
-      : `port ${PORT} is used by another program (${why})`, false);
+    connectionFailure(err as Error);
   } finally {
     busy = false;
   }
 }
 
-// Start polling first, as soon as the panel's view is loaded, so a UI registration error below can't stop it.
+// The script is loaded after the markup; poll independently of custom-element registration.
+window.simpilotLinkStarted?.(BUILD_ID);
+setText('spl-start', 'running', true);
+setText('spl-target', BRIDGE);
+uiLog(`SimPilot Link ${BUILD_ID} started`);
 setInterval(() => void tick(), POLL_MS);
 void tick();
 

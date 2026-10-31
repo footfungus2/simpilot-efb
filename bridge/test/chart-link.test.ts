@@ -140,10 +140,12 @@ describe('chart list and chart export', () => {
     await listed();
     await link.requestChart('EDDF', 'chart-1');
     link.requestIndex('EGLL');
-    expect(link.poll().jobs).toEqual([]);
+    expect(() => link.poll()).toThrow(/protocol 0.*expected 3/);
+    expect(hub.status().link.connected).toBe(false);
     expect(hub.broadcast).toHaveBeenCalledWith({ t: 'chartError', icao: 'EDDF', guid: 'chart-1', message: expect.stringContaining('out of date') });
     expect(hub.broadcast).toHaveBeenCalledWith({ t: 'chartsError', icao: 'EGLL', message: expect.stringContaining('Install SimPilot Link') });
-    expect(link.poll(false, LINK_PROTOCOL - 1).jobs).toEqual([]);
+    expect(() => link.poll(false, LINK_PROTOCOL - 1)).toThrow(HttpError);
+    expect(hub.status().link.connected).toBe(false);
     link.requestIndex('EGLL');
     expect(link.poll(false, LINK_PROTOCOL).jobs).toHaveLength(1);
   });
@@ -151,7 +153,7 @@ describe('chart list and chart export', () => {
   it('gets the screen capture ready once, when the panel first connects', () => {
     const warmUp = vi.fn();
     link = new ChartLink(store, hub, { ...capturer, warmUp });
-    link.poll(false, LINK_PROTOCOL - 1);
+    expect(() => link.poll(false, LINK_PROTOCOL - 1)).toThrow(/incompatible/);
     expect(warmUp).not.toHaveBeenCalled();
     link.poll(false, LINK_PROTOCOL);
     link.poll(true, LINK_PROTOCOL);

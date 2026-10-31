@@ -29,7 +29,7 @@ App → bridge:
 
 | `t` | payload |
 |---|---|
-| `requestCharts` | `{ icao }`: queues the airport's chart list unless it is already cached (e.g. for the airports of a loaded flight) |
+| `requestCharts` | `{ icao, role?, procedures?, runway? }`: queues the airport's chart list unless it is already cached (e.g. for the airports of a loaded flight). With `role` (`origin`/`destination`/`alternate`) the bridge also exports the flight's own charts in the background once the list is there: the SID (`procedures`) at the origin, the STAR and the approaches for `runway` at the destination. A chart the iPad opens always goes first |
 | `lvarWatch` | `{ names: string[] }`: start sending these L:vars (e.g. `N_PED_RMP1_ACTIVE`) as they change |
 | `lvarRun` | `{ code, value?, id? }`: run an MSFS RPN snippet (HubHop preset syntax) on the aircraft's L:vars; `@` = `value`. Commands run in order; with an `id` the bridge answers `commandResult` once it has written the values |
 | `fenixSquawk` | `{ code, id? }`: Fenix only. Clears a half-typed entry, types the code key by key (waiting for each key in the sim) and checks the final code; one at a time |
@@ -39,7 +39,7 @@ App → bridge:
 
 | method & path | result |
 |---|---|
-| `GET /api/status` | same as the `status` message |
+| `GET /api/status` | existing `sim` / `link` status plus `bridge: { name: 'SimPilot Bridge', version, buildId, linkProtocol: 3, port }`; read-only, `Cache-Control: no-store` |
 | `GET /api/charts/:icao` | `ChartIndex` (below), or `202 { queued: true, linkConnected }` if the list isn't cached yet. A list older than 24 h is served as is and fetched again in the background |
 | `GET /api/charts/:icao/:guid` | `{ chart: ChartMeta, pages: ChartPage[] }` once every page is exported. Otherwise `202 { queued: true, linkConnected, done, total }`: the sim exports the chart now and `chartProgress`, then `chartReady` or `chartError`, follow. `?refresh=1` forgets the exported pages first |
 | `GET /charts/:icao/:guid/:page.png` | the PNG image |
@@ -67,9 +67,17 @@ type Rect = { upperLeft: [number, number]; lowerRight: [number, number]; orienta
 
 | method & path | body / result |
 |---|---|
-| `GET /link/poll?proto=2` | heartbeat → `{ jobs: { id, type: 'index' \| 'chart', icao, provider, guid? }[] }`. Chart lists (`index`) come first, then only the chart that was asked for last (`chart`, with its `guid`); the bridge decides, the link just does the work. `proto` is the link protocol number: with another number the bridge hands out nothing and fails the waiting requests with an "out of date" message. While the link is busy it sends `&busy=1`, which only shows it is still there |
+| `GET /link/poll?proto=3` | heartbeat → `{ jobs: { id, type: 'index' \| 'chart', icao, provider, guid? }[] }`. Chart lists (`index`) come first, then only the chart that was asked for last (`chart`, with its `guid`). Wrong `proto` returns HTTP 409, fails waiting requests with an "out of date" message and does not renew link liveness. While working, the panel sends `&busy=1` heartbeats |
 | `POST /link/index` | `{ jobId, icao, provider, index: <raw SimChartIndex> }`: the bridge stores the list and tells the app at once |
 | `POST /link/pages` | `{ jobId, icao, guid, pages: <raw SimChartPage[]> }` → `{ ok, have: number[] }`: the pages that are exported already, which the link skips |
 | `POST /link/capture` | `{ jobId, icao, guid, page, i, j, cols, rows, view: { w, h }, image: { w, h } }` → `{ ok, saved }`: one screen-captured tile of the page the panel shows; `saved` is true once the last tile arrived and the stitched page is stored |
 | `POST /link/done` | `{ jobId, icao, error? }`: the bridge checks that every page is stored before it sends `chartReady` |
 | `POST /link/log` | `{ level, msg }` for spike diagnostics |
+
+The panel probes `/api/status` before polling, validates the bridge identity and protocol, and shows both builds.
+Older bridges without identity metadata are labelled as an unknown build; their existing status shape remains supported.
+`buildId` is a SHA256 fingerprint of the running portable bundle, or local code and dependency lockfile.
+These additive HTTP fields do not alter the app WebSocket protocol or cached chart formats.
+
+Use `/api/status` and `/api/diagnostics` for connection diagnosis. `/link/poll` changes link liveness and job attempts,
+so a manual poll is not evidence that the in-sim panel connected.

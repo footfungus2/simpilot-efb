@@ -102,8 +102,15 @@ final class BridgeClient: ObservableObject {
         }
     }
 
-    func send(requestCharts icao: String) {
-        send(["t": "requestCharts", "icao": icao])
+    /// With a role (origin / destination / alternate) the bridge also exports the flight's own charts ahead of time.
+    func send(requestCharts icao: String, role: String? = nil, procedures: [String] = [], runway: String = "") {
+        var message: [String: Any] = ["t": "requestCharts", "icao": icao]
+        if let role {
+            message["role"] = role
+            message["procedures"] = Array(procedures.prefix(8))
+            if !runway.isEmpty { message["runway"] = runway }
+        }
+        send(json: message)
     }
 
     /// Asks the bridge to stream these aircraft L:vars (names without "L:"); remembered across reconnects.

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,7 +39,21 @@ export const config = {
   /** The link panel counts as disconnected after this long without a poll. */
   linkTimeoutMs: 6000,
   bridgeVersion: '0.1.4',
+  buildId: bridgeBuildId(),
 };
+
+function bridgeBuildId(): string {
+  const hash = createHash('sha256');
+  if (packaged) {
+    hash.update(fs.readFileSync(process.argv[1]));
+  } else {
+    const files = fs.readdirSync(here, { recursive: true }).map(String)
+      .filter((name) => /\.(?:ts|js)$/.test(name)).sort();
+    for (const file of files) hash.update(file.replaceAll('\\', '/')).update('\0').update(fs.readFileSync(path.join(here, file))).update('\0');
+    hash.update(fs.readFileSync(path.join(here, '..', 'package-lock.json')));
+  }
+  return `sha256:${hash.digest('hex')}`;
+}
 
 function parseHostPort(v: string | undefined): { host: string; port: number } | undefined {
   if (!v) return undefined;

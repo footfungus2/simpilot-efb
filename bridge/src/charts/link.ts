@@ -8,13 +8,14 @@ import { HttpError } from '../http.js';
 import { logger } from '../log.js';
 import type { ChartIndex } from '../types.js';
 import { type Capturer, ScreenCapture } from './capture.js';
+import { type FlightWant, pickFlightCharts } from './prefetch.js';
 import { icaoIdent, normalizeIndex, normalizePages } from './normalize.js';
 import { type ChartStore, isPng, safeIcao } from './store.js';
 
 const log = logger('link');
 
 /** What the panel and the bridge speak; the panel sends its number with every poll. Keep in sync with sim-package/src/link.ts. */
-export const LINK_PROTOCOL = 2;
+export const LINK_PROTOCOL = 3;
 /** A job the panel keeps losing (e.g. the sim crashes on it) is given up after this many tries. */
 const MAX_ATTEMPTS = 3;
 const MAX_JOBS = 64;
@@ -30,6 +31,8 @@ export interface Job {
   /** How often the panel was given this job. */
   attempts: number;
   indexSaved: boolean;
+  /** Exported ahead of time for a loaded flight rather than because the iPad asked: runs after anything the iPad asks for, and fails quietly. */
+  prefetch: boolean;
   /** Chart jobs: page count once the panel has sent the pages, and the pages that are on disk. */
   total: number;
   saved: Set<number>;
@@ -40,6 +43,8 @@ const chartGuids = (index: ChartIndex) => index.categories.flatMap((c) => c.char
 export class ChartLink {
   private jobs = new Map<string, Job>();
   private warmedUp = false;
+  /** What each airport of the loaded flight needs, kept until its chart list arrives. */
+  private wants = new Map<string, FlightWant>();
 
   constructor(
     private readonly store: ChartStore,
@@ -47,15 +52,18 @@ export class ChartLink {
     private readonly capturer: Capturer = new ScreenCapture(),
   ) {}
 
-  private queue(type: Job['type'], icaoRaw: string, provider: string, guid?: string): Job {
+  private queue(type: Job['type'], icaoRaw: string, provider: string, guid?: string, prefetch = false): Job {
     const icao = safeIcao(icaoRaw);
     const existing = [...this.jobs.values()].find((j) => j.type === type && j.icao === icao && j.provider === provider && j.guid === guid);
     if (existing) {
-      existing.queuedAt = Date.now(); // asking again moves it to the front
+      if (!prefetch) {
+        existing.queuedAt = Date.now(); // asking again moves it to the front
+        existing.prefetch = false;
+      }
       return existing;
     }
     if (this.jobs.size >= MAX_JOBS) throw new HttpError(429, 'too many pending chart requests');
-    const job: Job = { id: randomUUID(), type, icao, provider, guid, queuedAt: Date.now(), attempts: 0, indexSaved: false, total: 0, saved: new Set() };
+    const job: Job = { id: randomUUID(), type, icao, provider, guid, queuedAt: Date.now(), attempts: 0, indexSaved: false, prefetch, total: 0, saved: new Set() };
     this.jobs.set(job.id, job);
     log.info(`queued ${provider} ${type === 'index' ? 'chart list' : 'chart'} for ${icao}`);
     return job;
@@ -73,24 +81,47 @@ export class ChartLink {
     return this.queue('chart', icao, provider, guid);
   }
 
+  /** Remembers what a loaded flight needs at an airport and queues it as soon as the airport's chart list is cached. */
+  async wantFlightCharts(icao: string, want: FlightWant, provider = 'LIDO'): Promise<void> {
+    this.wants.set(safeIcao(icao), want);
+    await this.queueWanted(icao, provider);
+  }
+
+  private async queueWanted(icaoRaw: string, provider: string): Promise<void> {
+    const icao = safeIcao(icaoRaw);
+    const want = this.wants.get(icao);
+    const index = want && (await this.store.getIndex(icao).catch(() => undefined));
+    if (!want || !index) return;
+    let queued = 0;
+    for (const guid of pickFlightCharts(index, want)) {
+      const chart = await this.store.getChart(icao, guid).catch(() => undefined);
+      // Already exported, or no room: leave it; the chart is still exported when someone opens it.
+      if (chart?.pages.length && chart.pages.every((p) => p.image)) continue;
+      if (this.jobs.size >= MAX_JOBS - 8) break;
+      this.queue('chart', icao, provider, guid, true);
+      queued++;
+    }
+    if (queued) log.info(`${icao}: ${queued} chart(s) of the flight will be exported ahead of time`);
+  }
+
   /**
    * The panel only asks for work when it has nothing in progress, so a job it was given before and never finished was
    * lost (panel reloaded, sim restarted): it is simply offered again, a few times at most. While it is busy it polls
    * with `busy` just to show it is still there.
    */
   poll(busy = false, protocol = 0): { jobs: { id: string; type: string; icao: string; provider: string; guid?: string }[] } {
-    this.hub.linkSeen();
-    if (!this.warmedUp && protocol === LINK_PROTOCOL) {
-      this.warmedUp = true;
-      this.capturer.warmUp?.();
-    }
     if (protocol !== LINK_PROTOCOL) {
       // A panel from another version would run the wrong kind of job; say so instead of handing it work.
       for (const job of [...this.jobs.values()]) {
         this.jobs.delete(job.id);
         this.fail(job, 'SimPilot Link in the sim is out of date. Close MSFS, run Install SimPilot Link again and start MSFS.');
       }
-      return { jobs: [] };
+      throw new HttpError(409, `SimPilot Link protocol ${protocol} is incompatible with this bridge (expected ${LINK_PROTOCOL}). Close MSFS and update SimPilot Bridge and SimPilot Link together.`);
+    }
+    this.hub.linkSeen();
+    if (!this.warmedUp) {
+      this.warmedUp = true;
+      this.capturer.warmUp?.();
     }
     if (busy) return { jobs: [] };
     for (const job of [...this.jobs.values()]) {
@@ -98,9 +129,10 @@ export class ChartLink {
       this.jobs.delete(job.id);
       this.fail(job, 'The sim stopped answering while exporting; try again');
     }
-    // Chart lists are quick, so they go first; of the charts only the newest request, the one being waited for.
+    // Chart lists are quick, so they go first; of the charts only one: the newest request from the iPad (the one being
+    // waited for), and only when there is none the oldest ahead-of-time chart (a flight's SID before its STAR).
     const jobs = [...this.jobs.values()];
-    const chart = jobs.filter((j) => j.type === 'chart').sort((a, b) => b.queuedAt - a.queuedAt)[0];
+    const chart = jobs.filter((j) => j.type === 'chart').sort((a, b) => Number(a.prefetch) - Number(b.prefetch) || (a.prefetch ? a.queuedAt - b.queuedAt : b.queuedAt - a.queuedAt))[0];
     const out = [...jobs.filter((j) => j.type === 'index'), ...(chart ? [chart] : [])];
     for (const j of out) j.attempts++;
     return { jobs: out.map(({ id, type, icao, provider, guid }) => ({ id, type, icao, provider, guid })) };
@@ -118,6 +150,7 @@ export class ChartLink {
     await this.store.saveIndex(index);
     job.indexSaved = true;
     if (!previous || chartGuids(previous) !== chartGuids(index)) this.hub.broadcast({ t: 'chartsReady', icao });
+    await this.queueWanted(icao, job.provider);
   }
 
   /** Stores a chart's page metadata. Returns the pages that are already exported, which the panel skips. */
@@ -145,7 +178,7 @@ export class ChartLink {
     const int = (v: unknown, max: number) => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= max;
     const size = (v: any, min: number, max: number) => [v?.w, v?.h].every((n) => Number.isFinite(n) && n >= min && n <= max);
     const { i, j, cols, rows } = body;
-    if (!int(cols, 16) || !int(rows, 64) || cols < 1 || rows < 1 || !int(i, cols - 1) || !int(j, rows - 1) ||
+    if (!int(cols, 36) || !int(rows, 36) || cols < 1 || rows < 1 || !int(i, cols - 1) || !int(j, rows - 1) ||
       !size(body.view, 50, 20_000) || !size(body.image, 1, 100_000)) {
       throw new HttpError(400, 'invalid capture tile');
     }
@@ -173,6 +206,7 @@ export class ChartLink {
 
   private fail(job: Job, message: string): void {
     log.warn(`${job.icao}: ${message}`);
+    if (job.prefetch) return; // nobody is waiting for it; it is tried again when the chart is opened
     this.hub.broadcast(job.type === 'index' ? { t: 'chartsError', icao: job.icao, message } : { t: 'chartError', icao: job.icao, guid: job.guid!, message });
   }
 

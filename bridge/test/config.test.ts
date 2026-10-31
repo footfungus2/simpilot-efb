@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -33,6 +36,28 @@ describe('runtime configuration', () => {
     const { config, packaged } = await import('../src/config.js');
     expect(packaged).toBe(false);
     expect(config.cacheDir).toBe(path.resolve(__dirname, '..', 'cache'));
+  });
+
+  it('identifies the packaged code by its actual content rather than its version number', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'simpilot-build-'));
+    const artifact = path.join(dir, 'bridge.cjs');
+    const previousArgv = process.argv;
+    vi.stubEnv('SIMPILOT_PACKAGED', '1');
+    process.argv = [process.execPath, artifact];
+    try {
+      await fs.writeFile(artifact, 'first packaged bridge');
+      vi.resetModules();
+      const first = (await import('../src/config.js')).config;
+      expect(first.buildId).toBe(`sha256:${createHash('sha256').update('first packaged bridge').digest('hex')}`);
+      await fs.writeFile(artifact, 'repaired packaged bridge');
+      vi.resetModules();
+      const second = (await import('../src/config.js')).config;
+      expect(second.bridgeVersion).toBe(first.bridgeVersion);
+      expect(second.buildId).not.toBe(first.buildId);
+    } finally {
+      process.argv = previousArgv;
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 
   it.each([

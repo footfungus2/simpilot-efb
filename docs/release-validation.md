@@ -1,4 +1,47 @@
-# Release validation — 23 October 2026
+# Release validation
+
+## Lido viewer and panel diagnostics — 29 October 2026
+
+Implemented locally; not published or installed on the user's devices.
+
+- Panel startup is reported independently of the main bundle. Its build, target and last request remain visible;
+  `/api/status` checks identity without marking the chart link connected or dispatching jobs.
+- Wrong link protocols return HTTP 409 without renewing link liveness. Existing app status fields and chart caches remain compatible.
+- Repair verifies the supplied, staged and actual installed HTML/CSS/JS against a SHA256 manifest, preserving the compiled
+  toolbar and a backup outside Community. Failed installed verification restores the old package.
+- Diagnostics records expected/installed hashes, package path, bridge listener, read-only status and bounded logs locally.
+  It does not call `/link/poll`; a matching disk hash still does not prove MSFS loaded that package.
+
+### Local checks
+
+- Unsigned iOS Release build succeeded; production IPA validation passed for **0.1.4 build 22**.
+- Generic iOS device test build succeeded. XCTest runtime execution is not counted as passed.
+- Panel and bridge identity/compatibility tests and TypeScript checks pass; exact counts are recorded with the delivered artifacts.
+- IPA packaging regression tests pass. Windows installer fixtures were added and reviewed, but PowerShell is unavailable on this Mac.
+- The socket-based bridge round-trip test is blocked by sandbox `listen EPERM`. An in-process test exercises the real panel's
+  status preflight and poll through the real server request handler without claiming TCP or MSFS validation.
+- Xcode's nested macro sandbox could not start inside the workspace sandbox. The local retry used Swift's
+  `-disable-sandbox` compiler option; the outer workspace restrictions remained in force. No project setting was changed.
+
+### Device and native-chart gates
+
+- [ ] Run **Diagnose SimPilot Link** before another repair and retain the local report. Close MSFS, apply the verified repair,
+      restart, and compare the displayed panel build with `PackageSources/panel-assets.json`.
+- [ ] Confirm connection within seven seconds, separate simulator/link status, bridge stop/restart recovery and link expiry
+      after closing the panel. Retain the first Coherent error and failed request if startup still fails.
+- [ ] First real-sim chart test, in order (each gates the next; the panel log and bridge window show the numbers):
+  1. The chart page appears in the panel (the LiveView shows in the `<img>`).
+  2. The bridge captures it: not a black frame (MSFS windowed or borderless). If black or covered, try `PrintWindow`
+     with `PW_RENDERFULLCONTENT`, then Windows.Graphics.Capture on a popped-out panel.
+  3. Bridge log `capture scale=… page=…`: scale 1.000 means one screen pixel per chart pixel. Panel log shows the image
+     size, its source (image / page size / assumed), the tile grid and the page URL names (needed for night charts).
+  4. Export EGSS CLN 5S: readable text, no seams or repeated tiles, correct crop, ownship lines up on the georeferenced page.
+  5. Load the EZY128W OFP with the panel open: CLN 5S, the LIRA STAR and runway approaches export on their own; open
+     another chart meanwhile and it goes first. A prefetched chart that fails shows no error until you open it.
+  Also check annotations and offline reopening of a pinned chart.
+
+
+## Earlier release candidate — 23 October 2026
 
 Status: release candidate. Local code, automated checks and packaging have been checked; physical-device and
 MSFS checks below still gate calling this production verified. CI publishes only after the build and test jobs pass.

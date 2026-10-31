@@ -50,7 +50,7 @@ async function start(): Promise<void> {
       process.exit(0);
     }
     stopSim = startSim(hub, lvars);
-    welcome(config.port, config.bridgeVersion);
+    welcome(config.port, config.bridgeVersion, config.buildId);
     // Discovery failures should not take down the working manual-address connection.
     discovery = new Bonjour(undefined, (err: Error) => log.warn('Local discovery unavailable; use the PC address in Settings > Bridge', err));
     discovery.publish({ name: `SimPilot Bridge (${os.hostname()})`, type: 'simpilot', port: config.port, txt: { v: '1' } });
@@ -58,8 +58,9 @@ async function start(): Promise<void> {
   });
 }
 
-function welcome(port: number, version: string): void {
+function welcome(port: number, version: string, buildId: string): void {
   console.log(`\n  SimPilot Bridge ${version} is running. Leave this window open while you fly.`);
+  console.log(`  Build: ${buildId}`);
   console.log('  Keep the iPad and PC on the same local network (Wi-Fi or Ethernet).');
   const adapters = Object.entries(os.networkInterfaces()).flatMap(([name, entries]) =>
     (entries ?? []).filter((i) => i.family === 'IPv4' && !i.internal).map((i) => ({ name, address: i.address })));

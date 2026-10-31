@@ -10,6 +10,7 @@ bridge/cache/
 sim-package/Packages/
 sim-package/_Temp/
 sim-package/PackageSources/html_ui/InGamePanels/SimPilotLink/link.js
+sim-package/PackageSources/panel-assets.json
 
 # iOS
 ios/SimPilotEFB.xcodeproj/

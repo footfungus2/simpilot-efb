@@ -133,14 +133,14 @@ describe('HTTP boundary', () => {
 
   it('blocks browser websites while retaining native and Coherent panel access', async () => {
     expect((await fetch(`${base}/api/status`, { headers: { origin: 'https://untrusted.example' } })).status).toBe(403);
-    expect((await fetch(`${base}/link/poll`, { headers: { origin: 'coui://html_ui' } })).status).toBe(200);
+    expect((await fetch(`${base}/link/poll?proto=3`, { headers: { origin: 'coui://html_ui' } })).status).toBe(200);
     expect((await fetch(`${base}/link/poll`, { headers: { origin: 'null' } })).status).toBe(403);
     expect((await fetch(`${base}/api/diagnostics`, { headers: { origin: 'null' } })).status).toBe(403);
   });
 
   it('lists an airport first and exports a chart only when it is asked for', async () => {
     const post = (path: string, body: unknown) => fetch(`${base}${path}`, { method: 'POST', body: JSON.stringify(body) });
-    const poll = async () => ((await (await fetch(`${base}/link/poll?proto=2`)).json()) as { jobs: { id: string; type: string; guid?: string }[] }).jobs;
+    const poll = async () => ((await (await fetch(`${base}/link/poll?proto=3`)).json()) as { jobs: { id: string; type: string; guid?: string }[] }).jobs;
     const store = new ChartStore(dir);
     const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(16)]);
 
