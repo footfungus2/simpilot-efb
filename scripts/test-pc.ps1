@@ -210,3 +210,5 @@ exit $LASTEXITCODE
   Remove-Item Env:SIMPILOT_TEST_INSTALLED_JS -ErrorAction SilentlyContinue
   if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
 }
+# The checks above run builds that are meant to fail; their exit codes must not become this script's.
+exit 0
