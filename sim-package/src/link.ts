@@ -264,8 +264,9 @@ async function capturePage(job: Job, guid: string, page: number, url: string, sh
         s.image.style.left = `${-i * viewW}px`;
         s.image.style.top = `${-j * viewH}px`;
         setTileCode(s.code, j * cols + i);
-        // Let the sim draw the new position; the bridge also waits until the tile number is on screen.
-        await wait(i === 0 && j === 0 ? 600 : 250);
+        // One or two frames for the sim to draw the new position (the first tile also needs the image itself); the bridge
+        // polls until the tile number is on screen, so this is only a head start, not the safety.
+        await wait(i === 0 && j === 0 ? 400 : 60);
         const res = await request('POST', '/link/capture', {
           jobId: job.id, icao: job.icao, guid, page, i, j, cols, rows, view: { w: viewW, h: viewH }, image: { w, h },
         }, 60000) as { saved?: boolean };

@@ -77,41 +77,100 @@ public static class SimPilotCapture {
       return "err unknown command";
     } catch (Exception e) {
       Reset();
+      haveView = false;
       return "err " + e.Message.Replace('\r', ' ').Replace('\n', ' ');
     }
+  }
+
+  // Where the panel was last found. Every page starts with a search of the whole screen; the tiles after it only look at
+  // this rectangle (the view, both markers and the tile-number squares), which is much less to copy and to scan.
+  static bool haveView;
+  static Rectangle cView, cRegion;
+  static Block cMark, cCyan;
+
+  static Bitmap Grab(Rectangle screen, Rectangle r) {
+    Bitmap b = new Bitmap(r.Width, r.Height, PixelFormat.Format32bppArgb);
+    using (Graphics g = Graphics.FromImage(b)) {
+      g.CopyFromScreen(screen.Left + r.X, screen.Top + r.Y, 0, 0, r.Size, CopyPixelOperation.SourceCopy);
+    }
+    return b;
+  }
+
+  static Block Shift(Block k, Rectangle r) {
+    Block s = new Block();
+    s.X = k.X - r.X; s.Y = k.Y - r.Y; s.W = k.W; s.H = k.H;
+    return s;
+  }
+
+  // Still the marker we found before? (Three points inside the block.)
+  static bool IsBlock(Bitmap b, Block k, bool magenta) {
+    int[] f = new int[] { 1, 2, 3 };
+    foreach (int n in f) {
+      int x = k.X + k.W * n / 4, y = k.Y + k.H * n / 4;
+      if (x < 0 || y < 0 || x >= b.Width || y >= b.Height) return false;
+      Color c = b.GetPixel(x, y);
+      if (!IsRgb(c.R, c.G, c.B, magenta)) return false;
+    }
+    return true;
   }
 
   // The panel marks the tile it is showing with 8 black/white squares (bit k = square k, value = tile number + 1) along the
   // top edge. Until that number is on screen the tile is stale or half drawn, so look again instead of stitching it in.
   static string Tile(int i, int j, int cols, int rows, double vw, double vh, double iw, double ih) {
+    System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
     Rectangle screen = SystemInformation.VirtualScreen;
-    int want = j * cols + i + 1, seen = -1;
-    Rectangle view = Rectangle.Empty;
-    Block mark = new Block();
+    int want = j * cols + i + 1, seen = -1, tries = 0, misses = 0;
+    bool fast = false;
+    Rectangle src = Rectangle.Empty; // the view, in the coordinates of shot
     string why = null;
     Bitmap shot = null;
     try {
-      for (int attempt = 0; attempt < 10; attempt++) {
-        if (attempt > 0) System.Threading.Thread.Sleep(150);
-        if (shot != null) shot.Dispose();
-        shot = new Bitmap(screen.Width, screen.Height, PixelFormat.Format32bppArgb);
-        using (Graphics g = Graphics.FromImage(shot)) {
-          g.CopyFromScreen(screen.Left, screen.Top, 0, 0, screen.Size, CopyPixelOperation.SourceCopy);
+      if (i == 0 && j == 0) haveView = false;
+      while (true) {
+        tries++;
+        if (shot != null) { shot.Dispose(); shot = null; }
+        if (haveView) {
+          shot = Grab(screen, cRegion);
+          Block m = Shift(cMark, cRegion);
+          if (!IsBlock(shot, m, true) || !IsBlock(shot, Shift(cCyan, cRegion), false)) {
+            haveView = false; // moved, resized or covered: look at the whole screen again
+            continue;
+          }
+          src = new Rectangle(cView.X - cRegion.X, cView.Y - cRegion.Y, cView.Width, cView.Height);
+          seen = ReadCode(shot, m);
+          fast = true;
+        } else {
+          fast = false;
+          shot = Grab(screen, new Rectangle(0, 0, screen.Width, screen.Height));
+          Block mark, cyan;
+          Rectangle view = FindView(shot, out mark, out cyan, out why);
+          if (view.Width <= 0) {
+            if (++misses >= 3) break;
+            System.Threading.Thread.Sleep(150);
+            continue;
+          }
+          src = view;
+          seen = ReadCode(shot, mark);
+          cView = view; cMark = mark; cCyan = cyan;
+          int x1 = Math.Min(shot.Width, Math.Max(cyan.X + cyan.W, mark.X + (int)Math.Ceiling(mark.W * 10.5)));
+          cRegion = new Rectangle(mark.X, mark.Y, x1 - mark.X, cyan.Y + cyan.H - mark.Y);
+          haveView = true;
         }
-        view = FindView(shot, out mark, out why);
-        if (view.Width <= 0) { if (attempt >= 2) break; continue; }
-        seen = ReadCode(shot, mark);
-        if (seen == want) break;
+        if (seen == want || clock.ElapsedMilliseconds > 3000) break;
+        System.Threading.Thread.Sleep(25);
       }
-      if (view.Width <= 0) throw new Exception(why);
-      if (seen != want) throw new Exception("The SimPilot Link window did not finish drawing chart tile " + want + " (it shows " + seen + "). Keep it open and uncovered, then export the chart again.");
+      if (src.Width <= 0) throw new Exception(why);
+      if (seen != want) {
+        haveView = false;
+        throw new Exception("The SimPilot Link window did not finish drawing chart tile " + want + " (it shows " + seen + "). Keep it open and uncovered, then export the chart again.");
+      }
       string note = "ok";
       if (i == 0 && j == 0) {
         Reset();
-        viewW = view.Width;
-        viewH = view.Height;
-        scale = view.Width / vw;
-        scaleY = view.Height / vh;
+        viewW = src.Width;
+        viewH = src.Height;
+        scale = src.Width / vw;
+        scaleY = src.Height / vh;
         int w = Math.Max(1, (int)Math.Round(iw * scale));
         int h = Math.Max(1, (int)Math.Round(ih * scaleY));
         if ((long)w * h > 100000000L) throw new Exception("Chart page is too large to capture.");
@@ -120,16 +179,16 @@ public static class SimPilotCapture {
         note = "ok scale=" + scale.ToString("0.000", CultureInfo.InvariantCulture) + " page=" + w + "x" + h;
       } else if (page == null) {
         throw new Exception("Chart capture was interrupted; request the airport again.");
-      } else if (Math.Abs(view.Width - viewW) > 2 || Math.Abs(view.Height - viewH) > 2) {
+      } else if (Math.Abs(src.Width - viewW) > 2 || Math.Abs(src.Height - viewH) > 2) {
         throw new Exception("The SimPilot Link window was resized during capture; request the airport again.");
       }
       // Whole screen pixels per tile, so neighbouring tiles meet exactly (no rounding seams).
       using (Graphics g = Graphics.FromImage(page)) {
         g.CompositingMode = CompositingMode.SourceCopy;
         g.InterpolationMode = InterpolationMode.NearestNeighbor;
-        g.DrawImage(shot, new Rectangle(i * viewW, j * viewH, view.Width, view.Height), view, GraphicsUnit.Pixel);
+        g.DrawImage(shot, new Rectangle(i * viewW, j * viewH, src.Width, src.Height), src, GraphicsUnit.Pixel);
       }
-      return note;
+      return note + " tries=" + tries + " fast=" + (fast ? 1 : 0) + " ms=" + clock.ElapsedMilliseconds;
     } finally {
       if (shot != null) shot.Dispose();
     }
@@ -161,8 +220,9 @@ public static class SimPilotCapture {
   }
 
   // The view lies between the magenta block's bottom-right corner and the cyan block's top-left corner.
-  static Rectangle FindView(Bitmap bmp, out Block mark, out string why) {
+  static Rectangle FindView(Bitmap bmp, out Block mark, out Block cyan, out string why) {
     mark = new Block();
+    cyan = new Block();
     why = null;
     BitmapData data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
     try {
@@ -178,7 +238,7 @@ public static class SimPilotCapture {
           int x = m.X + m.W, y = m.Y + m.H, w = c.X - x, h = c.Y - y;
           if (w < 50 || h < 50) continue;
           long area = (long)w * h;
-          if (area > bestArea) { bestArea = area; best = new Rectangle(x, y, w, h); mark = m; }
+          if (area > bestArea) { bestArea = area; best = new Rectangle(x, y, w, h); mark = m; cyan = c; }
         }
       }
       if (best.Width <= 0) {
@@ -193,7 +253,10 @@ public static class SimPilotCapture {
   }
 
   static bool Is(byte[] p, int o, bool magenta) {
-    int b = p[o], g = p[o + 1], r = p[o + 2];
+    return IsRgb(p[o + 2], p[o + 1], p[o], magenta);
+  }
+
+  static bool IsRgb(int r, int g, int b, bool magenta) {
     // Wide enough to survive washed-out (HDR / colour-managed) captures; the shape test in Blocks keeps false hits out.
     return magenta ? (r >= 170 && b >= 170 && g <= Math.Min(r, b) - 90) : (g >= 170 && b >= 170 && r <= Math.Min(g, b) - 90);
   }
@@ -238,6 +301,8 @@ export class ScreenCapture implements Capturer {
   private lines: string[] = [];
   private waiters: ((line: string | undefined) => void)[] = [];
   private queue: Promise<unknown> = Promise.resolve();
+  /** Timing of the page being captured, logged when it is finished: where the time goes. */
+  private stats = { startedAt: 0, tiles: 0, helperMs: 0, tries: 0, fast: 0 };
 
   warmUp(): void {
     this.start().catch((err) => log.warn(`chart capture helper not ready: ${(err as Error).message}`));
@@ -245,12 +310,27 @@ export class ScreenCapture implements Capturer {
 
   async tile(t: CaptureTile): Promise<void> {
     const n = (v: number) => String(Math.round(v * 1000) / 1000);
+    const began = Date.now();
     const reply = await this.command(`tile ${t.i} ${t.j} ${t.cols} ${t.rows} ${n(t.view.w)} ${n(t.view.h)} ${n(t.image.w)} ${n(t.image.h)}`);
-    if (t.i === 0 && t.j === 0) log.info(`capture ${reply.replace(/^ok /, "")} (scale 1.000 = one screen pixel per panel pixel)`);
+    if (t.i === 0 && t.j === 0) {
+      log.info(`capture ${reply.replace(/^ok /, "")} (scale 1.000 = one screen pixel per panel pixel)`);
+      this.stats = { startedAt: began, tiles: 0, helperMs: 0, tries: 0, fast: 0 };
+    }
+    const num = (key: string) => Number(new RegExp(`${key}=(\\d+)`).exec(reply)?.[1] ?? 0);
+    this.stats.tiles++;
+    this.stats.helperMs += num("ms");
+    this.stats.tries += num("tries");
+    this.stats.fast += num("fast");
   }
 
   async finish(): Promise<Buffer> {
+    const finishing = Date.now();
     const reply = await this.command('finish');
+    const { tiles, helperMs, tries, fast, startedAt } = this.stats;
+    if (tiles) {
+      log.info(`page captured: ${tiles} tiles in ${((Date.now() - startedAt) / 1000).toFixed(1)} s (capture ${helperMs} ms, avg ${(tries / tiles).toFixed(1)} looks per tile, ${fast} quick, stitching ${Date.now() - finishing} ms)`);
+      this.stats.tiles = 0;
+    }
     return Buffer.from(reply.replace(/^png /, ''), 'base64');
   }
 

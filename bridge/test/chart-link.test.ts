@@ -237,3 +237,19 @@ describe.runIf(process.platform === 'win32')('screen capture helper on Windows',
     }
   }, 120_000);
 });
+
+describe('capture timing summary', () => {
+  it('adds up what the helper reports for a page and logs it once the page is finished', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...a) => { lines.push(a.join(' ')); });
+    const capture = new ScreenCapture();
+    const replies = ['ok scale=1.000 page=1200x800 tries=1 fast=0 ms=90', 'ok tries=2 fast=1 ms=30', 'png ' + png.toString('base64')];
+    (capture as any).command = async () => replies.shift();
+    const base = { cols: 2, rows: 1, view: { w: 600, h: 400 }, image: { w: 1200, h: 400 } };
+    await capture.tile({ ...base, i: 0, j: 0 });
+    await capture.tile({ ...base, i: 1, j: 0 });
+    expect((await capture.finish()).equals(png)).toBe(true);
+    expect(lines.join('\n')).toMatch(/page captured: 2 tiles in [\d.]+ s \(capture 120 ms, avg 1\.5 looks per tile, 1 quick/);
+    vi.restoreAllMocks();
+  });
+});

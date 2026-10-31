@@ -1,4 +1,8 @@
+/* A big panel means fewer tiles per chart page, so exports are faster. */
 #spl-root {
+  min-width: 860px;
+  min-height: 620px;
+  box-sizing: border-box;
   padding: 8px 12px;
   color: var(--textColor);
   font-family: Roboto-Regular, sans-serif;

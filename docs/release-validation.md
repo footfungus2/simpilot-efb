@@ -14,7 +14,7 @@ Implemented locally; not published or installed on the user's devices.
 
 ### Local checks
 
-- Unsigned iOS Release build succeeded; production IPA validation passed for **0.1.4 build 22**.
+- Unsigned iOS Release build succeeded; production IPA validation passed for **build 22**.
 - Generic iOS device test build succeeded. XCTest runtime execution is not counted as passed.
 - Panel and bridge identity/compatibility tests and TypeScript checks pass; exact counts are recorded with the delivered artifacts.
 - IPA packaging regression tests pass. Windows installer fixtures were added and reviewed, but PowerShell is unavailable on this Mac.

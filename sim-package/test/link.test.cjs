@@ -257,7 +257,7 @@ test('while an export runs the panel only tells the bridge it is still there', a
   assert.ok(tiles.length > 1, 'the export carried on');
 });
 
-const healthyBridge = { sim: { connected: true }, link: { connected: false }, bridge: { name: 'SimPilot Bridge', version: '0.1.4', buildId: 'fixture', linkProtocol: 3, port: 8386 } };
+const healthyBridge = { sim: { connected: true }, link: { connected: false }, bridge: { name: 'SimPilot Bridge', version: '0.1.0', buildId: 'fixture', linkProtocol: 3, port: 8386 } };
 
 function bridgePanel(t, answer, { health = healthyBridge } = {}) {
   const status = { textContent: 'searching…' };

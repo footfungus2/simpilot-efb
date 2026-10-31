@@ -1,4 +1,4 @@
-<AssetPackage Name="simpilot-link" Version="0.1.4">
+<AssetPackage Name="simpilot-link" Version="0.1.0">
 	<PackageOrderHint>CUSTOM_INSTRUMENT</PackageOrderHint>
 	<ItemSettings>
 		<ContentType>MISC</ContentType>
