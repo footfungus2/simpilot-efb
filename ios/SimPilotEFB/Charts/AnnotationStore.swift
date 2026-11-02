@@ -16,6 +16,13 @@ enum AnnotationStore {
         return folder.appendingPathComponent(String(safe) + ".drawing")
     }
 
+    /// Deletes every saved drawing whose key starts with `prefix` (e.g. all pages of a removed document).
+    static func removeAll(prefix: String) {
+        let safe = String(prefix.map { $0.isLetter || $0.isNumber || "-_".contains($0) ? $0 : "_" })
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+        for file in files where file.lastPathComponent.hasPrefix(safe) { try? FileManager.default.removeItem(at: file) }
+    }
+
     static func load(_ key: String) -> PKDrawing? {
         guard let data = try? Data(contentsOf: file(key)) else { return nil }
         return try? PKDrawing(data: data)

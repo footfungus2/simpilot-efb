@@ -60,6 +60,7 @@ export function startSim(hub: Hub, lvars: LVars): () => void {
       ['VERTICAL SPEED', 'feet per minute'],
       ['SIM ON GROUND', 'bool'],
       ['MAGVAR', 'degrees'],
+      ['FUEL TOTAL QUANTITY WEIGHT', 'kilograms'],
     ];
     for (const [name, unit] of vars) {
       handle.addToDataDefinition(DEF_OWNSHIP, name, unit, SimConnectDataType.FLOAT64);
@@ -108,6 +109,7 @@ export function startSim(hub: Hub, lvars: LVars): () => void {
       const vsFpm = d.readFloat64();
       const onGround = d.readFloat64() !== 0;
       const magVarDeg = d.readFloat64();
+      const fuel = d.readFloat64();
       hub.ownship({
         lat,
         lon,
@@ -120,6 +122,8 @@ export function startSim(hub: Hub, lvars: LVars): () => void {
         onGround,
         magVarDeg,
         ts: now,
+        // Some aircraft report no total (0): leave it out rather than say the tanks are empty.
+        ...(Number.isFinite(fuel) && fuel > 0 ? { fuelKg: Math.round(fuel) } : {}),
       });
     });
 

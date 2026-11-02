@@ -16,7 +16,7 @@ Bridge → app:
 |---|---|
 | `hello` | `{ v: 1, bridgeVersion, status }` |
 | `status` | `{ sim: { connected, aircraftTitle? }, link: { connected, lastSeenMs? } }` |
-| `ownship` | `{ lat, lon, altFt, gsKt, trkDeg, hdgDeg, vsFpm, onGround, magVarDeg, ts }` (≈10 Hz) |
+| `ownship` | `{ lat, lon, altFt, gsKt, trkDeg, hdgDeg, vsFpm, onGround, magVarDeg, ts, fuelKg? }` (≈10 Hz); `fuelKg` is total fuel on board in kg, left out when the aircraft reports none |
 | `chartsReady` | `{ icao }`: the airport's chart list is cached |
 | `chartsError` | `{ icao, message }`: the chart list couldn't be fetched |
 | `chartReady` | `{ icao, guid }`: every page of the chart is exported and cached |

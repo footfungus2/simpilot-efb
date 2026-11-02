@@ -124,6 +124,7 @@ extension Module {
         case .map: return "map"
         case .charts: return "charts"
         case .aircraft: return "aircraft"
+        case .flight: return "flight"
         }
     }
 
@@ -132,6 +133,7 @@ extension Module {
         case "map": self = .map
         case "charts": self = .charts
         case "aircraft": self = .aircraft
+        case "flight": self = .flight
         default: return nil
         }
     }

@@ -75,7 +75,23 @@ weather, VATSIM and the maps all load directly on the iPad.
 
 ### Flight folder
 - Loads your latest **SimBrief** OFP: route, navlog, fuel, alternates and the full OFP document
+- **Edit Flight**: the runway and SID/STAR actually in use (VATSIM often differs from the plan); the briefing, the charts that
+  open first and the charts exported ahead of time follow it
 - Route notes and extra alternates
+- **Documents** opens your PDF library (below)
+
+### Flight tools
+A **Flight** screen (the checklist icon in the bottom bar) with everything you work with during a flight. None of it needs the PC, except fuel and automatic logging:
+- **Briefing**: departure, arrival and alternates on one screen: runway and SID/STAR, live QNH, wind and METAR, the VATSIM
+  ATIS text when someone is online, the minima you enter, and a shortcut to the airport's charts
+- **Clearances**: quick fields for cleared altitude, heading, speed, squawk and next frequency, a timestamped history of
+  the instructions, and a Pencil scratchpad. Kept per flight
+- **Checklists**: editable A320 normal checklists you tick by hand, with progress saved for each flight
+- **Fuel**: fuel on board against the SimBrief plan now and at each waypoint passed (needs the PC and an aircraft that reports its total fuel)
+- **Logbook**: takeoffs and landings are logged by themselves while the sim is connected; block times and notes can be typed
+  in and corrected, and the route and aircraft are saved with each flight
+- **Documents**: import your own PDFs from Files (airline procedures, airport documents) with bookmarks, a remembered
+  last page, night mode and Apple Pencil notes
 
 ### Fenix A320 cockpit panels
 - An **Aircraft** tab with the Fenix A320's controls in a clean EFB layout, live in both directions:

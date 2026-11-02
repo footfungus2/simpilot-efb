@@ -16,13 +16,13 @@ struct BottomToolbar: View {
             switch app.module {
             case .map: mapLeft
             case .charts: chartsLeft
-            case .aircraft: EmptyView()
+            case .aircraft, .flight: EmptyView()
             }
             Spacer()
             switch app.module {
             case .map: mapTools
             case .charts: chartTools
-            case .aircraft: EmptyView()
+            case .aircraft, .flight: EmptyView()
             }
             Spacer()
             PillGroup {
@@ -32,6 +32,8 @@ struct BottomToolbar: View {
                 }
                 PillIcon(systemName: "map", selected: app.module == .map, selectionNamespace: moduleSelection) { app.module = .map }
                 PillIcon(systemName: "airplane", selected: app.module == .aircraft, selectionNamespace: moduleSelection) { app.module = .aircraft }
+                PillIcon(systemName: "checklist", selected: app.module == .flight, selectionNamespace: moduleSelection) { app.module = .flight }
+                    .accessibilityLabel("Flight tools")
                 PillIcon(systemName: "pencil.tip", selected: app.annotating) {
                     if app.module != .charts {
                         if app.chartsAirport == nil { app.chartsAirport = app.ofp?.origin.icao }

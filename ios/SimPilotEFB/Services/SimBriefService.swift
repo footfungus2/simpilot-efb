@@ -45,6 +45,7 @@ enum SimBriefService {
         let aircraft = raw["aircraft"] as? [String: Any] ?? [:]
         let files = raw["files"] as? [String: Any] ?? [:]
 
+        let lbs = str(params["units"]).lowercased().hasPrefix("lb")
         var cum = 0.0
         let fixes = list((raw["navlog"] as? [String: Any])?["fix"]).map { f -> OfpFix in
             let leg = num(f["distance"])
@@ -52,7 +53,8 @@ enum SimBriefService {
             return OfpFix(ident: str(f["ident"]), name: str(f["name"]), type: str(f["type"]),
                           lat: num(f["pos_lat"]), lon: num(f["pos_long"]), altFt: num(f["altitude_feet"]),
                           airway: str(f["via_airway"]), stage: str(f["stage"]), isSidStar: str(f["is_sid_star"]) == "1",
-                          legNm: leg, cumNm: cum, frequency: str(f["frequency"]))
+                          legNm: leg, cumNm: cum, frequency: str(f["frequency"]),
+                          fuelPlanKg: Double(str(f["fuel_plan_onboard"])).flatMap { $0.isFinite ? $0 : nil }.map { lbs ? $0 * 0.45359237 : $0 })
         }
 
         let pdfLink = str((files["pdf"] as? [String: Any])?["link"])

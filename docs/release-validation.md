@@ -41,6 +41,20 @@ Implemented locally; not published or installed on the user's devices.
   Also check annotations and offline reopening of a pinned chart.
 
 
+## Flight tools — first device checks
+
+New in 0.1.0 and only compiled here (the iOS Release build and test build pass; no iPad or sim run yet):
+
+- [ ] iPad (iPadOS 15.3.1): open **Flight** from the bottom bar; every page opens and the Briefing loads weather for your SimBrief airports.
+- [ ] Briefing: QNH, wind and METAR match aviationweather.gov; the ATIS text shows when a VATSIM ATIS is online for that airport.
+- [ ] Clearances: log an instruction, it appears with the UTC time; draw with the Pencil, close and reopen the app, the notes are still there.
+- [ ] Checklists: tick items, change flight (or reload another OFP) and the progress starts clean; edit, add and remove items; restore defaults.
+- [ ] Documents: import a PDF from Files, open it, zoom, bookmark a page, annotate with the Pencil, quit and reopen (last page and notes kept).
+- [ ] Edit Flight: set a different runway and SID; the Briefing, the first chart opened and the bridge's ahead-of-time export follow it.
+- [ ] With the PC: fly a short hop; the logbook gets a takeoff and a landing by itself. Check that the times are right and can be corrected.
+- [ ] Fuel (Fenix): confirm the sim reports total fuel weight (FUEL TOTAL QUANTITY WEIGHT); the difference to the plan makes sense and each waypoint is noted once.
+      If the Fenix reports nothing, the Fuel page says so; tell me and the Fenix's own fuel variables can be used instead.
+
 ## Earlier release candidate — 23 October 2026
 
 Status: release candidate. Local code, automated checks and packaging have been checked; physical-device and

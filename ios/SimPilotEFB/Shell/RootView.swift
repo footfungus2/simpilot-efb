@@ -51,6 +51,7 @@ struct RootView: View {
                     case .map: EnrouteMapScreen().transition(.screen)
                     case .charts: ChartsScreen(navigation: $chartNav).transition(.screen)
                     case .aircraft: AircraftScreen().transition(.screen)
+                    case .flight: FlightToolsScreen().transition(.screen)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

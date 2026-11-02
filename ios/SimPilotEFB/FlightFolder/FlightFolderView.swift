@@ -8,6 +8,7 @@ struct FlightFolderView: View {
     @State private var showNotes = false
     @State private var showAddAlternate = false
     @State private var showPack = false
+    @State private var showEdit = false
     @AppStorage("extraAlternates") private var extraAlternatesRaw = ""
     /// Set once the folder is on screen: rows that arrive after that (a newly loaded OFP) stagger in, while the rows
     /// already there when the folder opens simply come in with it.
@@ -31,7 +32,9 @@ struct FlightFolderView: View {
                 .padding(.bottom, 22)
 
             HStack(spacing: 20) {
-                GreyPillButton(title: "Edit Flight") { app.showSettings = true }
+                GreyPillButton(title: "Edit Flight") { showEdit = true }
+                    .disabled(app.ofp == nil)
+                    .opacity(app.ofp == nil ? 0.5 : 1)
                 Menu {
                     Button { Task { await app.loadOfp() } } label: { Label("Load latest SimBrief OFP", systemImage: "arrow.down.circle") }
                     Button(role: .destructive) { app.clearFlight() } label: { Label("Clear flight", systemImage: "trash") }
@@ -63,7 +66,10 @@ struct FlightFolderView: View {
                         }
                     }
                     FlightChartsRow(pack: app.chartPack) { showPack = true }
-                    row(icon: AnyView(Image(systemName: "doc").font(.system(size: 18))), title: "Documents", subtitle: nil) { app.showOfp = true }
+                    row(icon: AnyView(Image(systemName: "doc").font(.system(size: 18))), title: "Documents", subtitle: "SimBrief OFP, your PDFs") {
+                        UserDefaults.standard.set("Documents", forKey: "flightPage")
+                        app.module = .flight
+                    }
                     row(icon: AnyView(Image(systemName: "mappin.and.ellipse").font(.system(size: 18))), title: "Route Notes", subtitle: nil) { showNotes = true }
                 }
             }
@@ -74,6 +80,7 @@ struct FlightFolderView: View {
         .background(theme.sidebar)
         .sheet(isPresented: $showRoute) { RouteSheet().environmentObject(app) }
         .sheet(isPresented: $showNotes) { RouteNotesSheet().environmentObject(app) }
+        .sheet(isPresented: $showEdit) { EditFlightSheet().environmentObject(app) }
         .sheet(isPresented: $showPack) { ChartPackSheet(pack: app.chartPack).environmentObject(app) }
         .sheet(isPresented: $showAddAlternate) {
             AddAlternateSheet { icao in
@@ -237,7 +244,7 @@ struct RouteSheet: View {
             List {
                 if let ofp = app.ofp {
                     Section(header: Text("Route")) {
-                        Text("\(ofp.origin.icao)/\(ofp.origin.planRwy) \(ofp.route) \(ofp.destination.icao)/\(ofp.destination.planRwy)")
+                        Text("\(ofp.origin.icao)/\(app.plannedRunway(at: ofp.origin.icao)) \(ofp.route) \(ofp.destination.icao)/\(app.plannedRunway(at: ofp.destination.icao))")
                             .font(.system(.body, design: .monospaced))
                             .textSelection(.enabled)
                     }
@@ -301,7 +308,7 @@ struct RouteNotesSheet: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("\(ofp.callsign) · \(ofp.origin.icao) → \(ofp.destination.icao) · FL\(ofp.cruiseFl) · \(Int(ofp.distanceNm.rounded())) NM")
                             .font(.system(size: 13, weight: .semibold)).foregroundColor(.secondary)
-                        Text("\(ofp.origin.icao)/\(ofp.origin.planRwy) \(ofp.route) \(ofp.destination.icao)/\(ofp.destination.planRwy)")
+                        Text("\(ofp.origin.icao)/\(app.plannedRunway(at: ofp.origin.icao)) \(ofp.route) \(ofp.destination.icao)/\(app.plannedRunway(at: ofp.destination.icao))")
                             .font(.system(size: 14, design: .monospaced))
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)

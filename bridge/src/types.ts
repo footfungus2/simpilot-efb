@@ -11,6 +11,8 @@ export interface Ownship {
   onGround: boolean;
   magVarDeg: number;
   ts: number;
+  /** Total fuel on board in kg (SimConnect FUEL TOTAL QUANTITY WEIGHT); absent when the aircraft reports none. */
+  fuelKg?: number;
 }
 
 export interface BridgeStatus {

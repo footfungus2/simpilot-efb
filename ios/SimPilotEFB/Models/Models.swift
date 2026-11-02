@@ -14,6 +14,8 @@ struct Ownship: Codable, Equatable {
     var onGround: Bool
     var magVarDeg: Double
     var ts: Double
+    /// Total fuel on board in kg; nil when the aircraft reports none.
+    var fuelKg: Double?
 
     var coordinate: CLLocationCoordinate2D { CLLocationCoordinate2D(latitude: lat, longitude: lon) }
 }
@@ -125,6 +127,8 @@ struct OfpFix: Codable, Equatable {
     var legNm: Double
     var cumNm: Double
     var frequency: String
+    /// Planned fuel remaining at this fix in kg (SimBrief `fuel_plan_onboard`, converted from the plan's units).
+    var fuelPlanKg: Double? = nil
 
     var coordinate: CLLocationCoordinate2D { CLLocationCoordinate2D(latitude: lat, longitude: lon) }
 }

@@ -6,6 +6,7 @@ enum Module: Equatable {
     case map
     case charts
     case aircraft
+    case flight
 }
 
 /// App-wide state: settings, the loaded flight, and what's on screen.
@@ -18,6 +19,7 @@ final class AppState: ObservableObject {
     let weather = WeatherStore()
     private(set) lazy var fenixCommander = FenixCommander(bridge: bridge)
     let chartPack = ChartPack()
+    let flightTools = FlightToolsStore()
     lazy var chartsModel = ChartsModel(bridge: bridge, pack: chartPack)
 
     // Settings (persisted)
@@ -152,6 +154,12 @@ final class AppState: ObservableObject {
         sidebarVisible = flightFolderAtLaunch
         // Re-publish bridge changes so views observing AppState see connection updates.
         bridge.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
+        // Takeoffs and landings go into the logbook by themselves.
+        bridge.ownship.$ownship.compactMap { $0 }
+            .sink { [weak self] o in
+                guard let self else { return }
+                self.flightTools.observe(o, ofp: self.ofp, aircraftTitle: self.bridge.status?.sim.aircraftTitle, flight: self.flightKey)
+            }.store(in: &cancellables)
         // The PC is often off when the flight is loaded: ask again for its charts whenever the bridge connects.
         bridge.$state.map { state -> Bool in if case .connected = state { return true } else { return false } }
             .removeDuplicates().filter { $0 }
@@ -210,7 +218,7 @@ final class AppState: ObservableObject {
     func requestFlightCharts() {
         guard let ofp else { return }
         for (airport, role) in [(ofp.origin, "origin"), (ofp.destination, "destination")] {
-            bridge.send(requestCharts: airport.icao, role: role, procedures: Array(flightProcedures(at: airport.icao)), runway: airport.planRwy)
+            bridge.send(requestCharts: airport.icao, role: role, procedures: Array(flightProcedures(at: airport.icao)), runway: plannedRunway(at: airport.icao))
         }
         for airport in ofp.alternates { bridge.send(requestCharts: airport.icao, role: "alternate") }
     }
@@ -225,6 +233,21 @@ final class AppState: ObservableObject {
         return [ofp.origin, ofp.destination] + ofp.alternates
     }
 
+    /// Identifies the loaded flight for per-flight data (checklist progress, clearances, minima).
+    var flightKey: String {
+        guard let ofp else { return "no-flight" }
+        return "\(ofp.callsign)-\(ofp.origin.icao)-\(ofp.destination.icao)-\(Int(ofp.times.schedOut))"
+    }
+
+    /// The runway in use at an airport of the flight: what you entered in Edit Flight, else SimBrief's plan.
+    func plannedRunway(at icao: String) -> String {
+        guard let ofp else { return "" }
+        let edit = flightTools.edit(flightKey)
+        if icao == ofp.origin.icao { return edit.originRunway.isEmpty ? ofp.origin.planRwy : edit.originRunway }
+        if icao == ofp.destination.icao { return edit.destinationRunway.isEmpty ? ofp.destination.planRwy : edit.destinationRunway }
+        return ofp.alternates.first { $0.icao == icao }?.planRwy ?? ""
+    }
+
     func openCharts(_ icao: String) {
         chartsModel.preferredProcedures = flightProcedures(at: icao)
         chartsAirport = icao
@@ -233,6 +256,15 @@ final class AppState: ObservableObject {
 
     /// The flight's SID (departure) or STAR (arrival) at an airport, as named in the OFP navlog (e.g. "CLN5S").
     func flightProcedures(at icao: String) -> Set<String> {
+        guard let ofp else { return [] }
+        let edit = flightTools.edit(flightKey)
+        if icao == ofp.origin.icao, !edit.sid.isEmpty { return [edit.sid] }
+        if icao == ofp.destination.icao, !edit.star.isEmpty { return [edit.star] }
+        return ofpProcedures(at: icao)
+    }
+
+    /// The SID (departure) or STAR (arrival) of the SimBrief plan itself, ignoring Edit Flight.
+    func ofpProcedures(at icao: String) -> Set<String> {
         guard let ofp else { return [] }
         let procs = ofp.navlog.filter(\.isSidStar).map(\.airway).filter { !$0.isEmpty && $0 != "DCT" }
         if icao == ofp.origin.icao, let sid = procs.first { return [sid] }
