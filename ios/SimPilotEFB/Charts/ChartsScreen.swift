@@ -43,7 +43,10 @@ private struct ChartsContent: View {
         }
         .animation(Motion.layout, value: app.splitView)
         .animation(Motion.layout, value: app.sidebarVisible)
-        .onAppear(perform: sync)
+        .onAppear {
+            model.airportChanged = { app.chartsAirport = $0 }
+            sync()
+        }
         .onChange(of: app.chartsAirport) { _ in sync() }
         .onChange(of: model.selected) { _ in updateNavigation() }
         .onChange(of: model.index) { _ in updateNavigation() }
@@ -147,6 +150,10 @@ private struct ChartsContent: View {
             chartButton(model.isSelectedPinned ? "pin.fill" : "pin", label: model.isSelectedPinned ? "Unpin from flight" : "Pin to flight",
                         active: model.isSelectedPinned) {
                 Task { await model.togglePin() }
+            }
+            chartButton(model.isSelectedFavourite ? "star.fill" : "star", label: model.isSelectedFavourite ? "Remove from favourites" : "Add to favourites",
+                        active: model.isSelectedFavourite) {
+                model.toggleFavourite()
             }
             if model.canReexport {
                 chartButton("arrow.clockwise", label: "Export again from the sim", active: false) { model.reloadSelected(reexport: true) }
@@ -297,7 +304,7 @@ private struct ChartListSidebar: View {
                     ForEach(Array(model.categories.enumerated()), id: \.element) { i, cat in
                         let active = activeCategory == cat
                         Button { model.category = cat } label: {
-                            Text(cat == ChartsModel.packCategory ? "★ FLIGHT" : cat)
+                            Text(cat == ChartsModel.packCategory ? "★ FLIGHT" : cat == ChartsModel.favouritesCategory ? "★ FAVOURITES" : cat)
                                 .font(.system(size: 13, weight: .semibold))
                                 .foregroundColor(active ? .white : theme.text)
                                 .padding(.horizontal, 10)

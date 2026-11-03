@@ -48,11 +48,23 @@ final class ChartsModel: ObservableObject {
     /// Pinned charts for the flight, shown as the "FLIGHT" category.
     let pack: ChartPack
     static let packCategory = "FLIGHT"
+    static let favouritesCategory = "FAVOURITES"
+    static let recentCategory = "RECENT"
+    /// Starred and recently opened charts, across airports.
+    let favourites = ChartFavourites()
+    /// Set while a chart of another airport is being opened from FAVOURITES / RECENT: it is selected once that airport's list is there.
+    private var pendingGuid: String?
+    /// Tells the screen the airport changed by itself (a favourite from another airport), so it doesn't switch back.
+    var airportChanged: ((String) -> Void)?
 
     init(bridge: BridgeClient, pack: ChartPack) {
         self.bridge = bridge
         self.pack = pack
         pack.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
+            .store(in: &cancellables)
+        favourites.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.objectWillChange.send() }
             .store(in: &cancellables)
@@ -135,7 +147,16 @@ final class ChartsModel: ObservableObject {
     var categories: [String] {
         let names = index?.categories.filter { !$0.charts.isEmpty }.map(\.name) ?? []
         let sorted = names.sorted { (Self.typeOrder.firstIndex(of: $0) ?? 99, $0) < (Self.typeOrder.firstIndex(of: $1) ?? 99, $1) }
-        return pack.items.isEmpty ? sorted : [Self.packCategory] + sorted
+        // The pinned flight charts first; starred and recent charts after the airport's own types.
+        return (pack.items.isEmpty ? [] : [Self.packCategory]) + sorted
+            + (favourites.favourites.isEmpty ? [] : [Self.favouritesCategory])
+            + (favourites.recents.isEmpty ? [] : [Self.recentCategory])
+    }
+
+    /// Starred or recent charts as list entries, labelled with their airport (they span airports).
+    private func metas(_ refs: [ChartRef]) -> [ChartMeta] {
+        refs.map { ChartMeta(guid: $0.guid, type: $0.type, name: "\($0.icao) · \($0.name)", runways: [], procedures: [],
+                             geoReferenced: false, pageCount: nil, validFrom: nil, validUntil: nil) }
     }
 
     /// Pinned charts, labelled with their airport since the pack spans the whole flight.
@@ -156,6 +177,8 @@ final class ChartsModel: ObservableObject {
     var visibleCharts: [ChartMeta] {
         let cat = category ?? categories.first
         if cat == Self.packCategory { return packCharts }
+        if cat == Self.favouritesCategory { return metas(favourites.favourites) }
+        if cat == Self.recentCategory { return metas(favourites.recents) }
         let charts = index?.categories.first { $0.name == cat }?.charts ?? []
         guard let rwy = runwayFilter else { return charts }
         return charts.filter { $0.runways.isEmpty || $0.runways.contains(rwy) }
@@ -164,6 +187,8 @@ final class ChartsModel: ObservableObject {
     /// Flat list across categories, in display order, for the toolbar's previous/next buttons.
     var allChartsInOrder: [ChartMeta] {
         if category == Self.packCategory { return packCharts }
+        if category == Self.favouritesCategory { return metas(favourites.favourites) }
+        if category == Self.recentCategory { return metas(favourites.recents) }
         return categories.flatMap { name in index?.categories.first { $0.name == name }?.charts ?? [] }
     }
 
@@ -178,6 +203,26 @@ final class ChartsModel: ObservableObject {
         category = nil
         runwayFilter = nil
         reloadIndex()
+    }
+
+    private func openRef(_ ref: ChartRef) {
+        if ref.icao == icao {
+            guard let real = index?.categories.flatMap(\.charts).first(where: { $0.guid == ref.guid }) else { return }
+            category = index?.categories.first { $0.charts.contains(real) }?.name
+            select(real)
+            return
+        }
+        pendingGuid = ref.guid
+        open(icao: ref.icao)
+        airportChanged?(ref.icao)
+    }
+
+    var isSelectedFavourite: Bool { selected.map { favourites.isFavourite($0.guid) } ?? false }
+
+    func toggleFavourite() {
+        guard let chart = selected, let icao = pack.item(chart.guid)?.icao ?? icao else { return }
+        let name = pack.item(chart.guid)?.detail.chart.name ?? chart.name
+        favourites.toggle(ChartRef(icao: icao, guid: chart.guid, name: name, type: chart.type))
     }
 
     /// `silently` keeps the list on screen while it is fetched again (a refreshed list from the sim).
@@ -200,7 +245,13 @@ final class ChartsModel: ObservableObject {
                     guard !Task.isCancelled, self.icao == icao else { return }
                     index = idx
                     state = idx.categories.allSatisfy(\.charts.isEmpty) ? .failed("No Lido charts for \(icao) in the sim.") : .ready
-                    if selected == nil, let first = defaultChart() { select(first) }
+                    if selected == nil, let guid = pendingGuid {
+                        pendingGuid = nil
+                        if let real = idx.categories.flatMap(\.charts).first(where: { $0.guid == guid }) {
+                            category = idx.categories.first { $0.charts.contains(real) }?.name
+                            select(real)
+                        } else if let first = defaultChart() { select(first) }
+                    } else if selected == nil, let first = defaultChart() { select(first) }
                 } else {
                     guard !Task.isCancelled, self.icao == icao else { return }
                     // 202: the bridge queued the list for the in-sim link; wait for chartsReady.
@@ -260,6 +311,15 @@ final class ChartsModel: ObservableObject {
     #endif
 
     func select(_ chart: ChartMeta) {
+        // A starred or recent chart: go to its airport and open the real entry of that airport's list.
+        if category == Self.favouritesCategory || category == Self.recentCategory, let ref = favourites.ref(chart.guid) {
+            openRef(ref)
+            return
+        }
+        let packed = pack.item(chart.guid)
+        if let refIcao = packed?.icao ?? icao {
+            favourites.recordOpen(ChartRef(icao: refIcao, guid: chart.guid, name: packed?.detail.chart.name ?? chart.name, type: chart.type))
+        }
         selected = chart
         pageIndex = 0
         detail = nil
