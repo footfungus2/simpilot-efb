@@ -7,12 +7,12 @@ struct FlightToolsScreen: View {
     @EnvironmentObject private var app: AppState
 
     var body: some View {
-        FlightToolsPanels(store: app.flightTools)
+        FlightToolsPanels(store: app.flightTools, hoppie: app.hoppie)
     }
 }
 
 private enum FlightPage: String, CaseIterable, Identifiable {
-    case briefing = "Briefing", clearances = "Clearances", checklists = "Checklists", fuel = "Fuel", logbook = "Logbook", documents = "Documents"
+    case briefing = "Briefing", clearances = "Clearances", checklists = "Checklists", fuel = "Fuel", logbook = "Logbook", documents = "Documents", acars = "ACARS"
     var id: String { rawValue }
 }
 
@@ -21,6 +21,7 @@ private struct FlightToolsPanels: View {
     @Environment(\.theme) private var theme
     @Environment(\.horizontalSizeClass) private var sizeClass
     @ObservedObject var store: FlightToolsStore
+    @ObservedObject var hoppie: HoppieStore
     @AppStorage("flightPage") private var pageRaw = FlightPage.briefing.rawValue
 
     private var page: FlightPage { FlightPage(rawValue: pageRaw) ?? .briefing }
@@ -40,6 +41,7 @@ private struct FlightToolsPanels: View {
                     case .fuel: FuelPage(store: store, compact: compact).transition(.screen)
                     case .logbook: LogbookPage(store: store, compact: compact).transition(.screen)
                     case .documents: DocumentsPage(store: store, compact: compact).transition(.screen)
+                    case .acars: AcarsPage(hoppie: hoppie, compact: compact).transition(.screen)
                     }
                 }
                 .padding(compact ? 12 : 20)
@@ -52,7 +54,10 @@ private struct FlightToolsPanels: View {
     }
 
     @ViewBuilder private var header: some View {
-        let picker = Segmented(options: FlightPage.allCases.map { ($0.rawValue, $0.rawValue) }, value: pageRaw) { pageRaw = $0 }
+        // New ACARS messages show as a count on its tab.
+        let picker = Segmented(options: FlightPage.allCases.map { page in
+            (page == .acars && hoppie.unreadCount > 0 && self.page != .acars ? "ACARS (\(hoppie.unreadCount))" : page.rawValue, page.rawValue)
+        }, value: pageRaw) { pageRaw = $0 }
         if compact {
             VStack(alignment: .leading, spacing: 10) {
                 title
@@ -62,7 +67,7 @@ private struct FlightToolsPanels: View {
         } else {
             HStack(spacing: 14) {
                 title
-                picker.frame(maxWidth: 760)
+                picker.frame(maxWidth: 860)
                 Spacer(minLength: 8)
             }
             .padding(.horizontal, 20).padding(.vertical, 12)

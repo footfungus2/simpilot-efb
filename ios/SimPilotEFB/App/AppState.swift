@@ -19,6 +19,8 @@ final class AppState: ObservableObject {
     let weather = WeatherStore()
     /// Radar frames for the map's WX layer.
     let radar = RadarStore()
+    /// Hoppie ACARS (pre-departure clearance, telex, CPDLC) for the Flight screen.
+    let hoppie = HoppieStore()
     private(set) lazy var fenixCommander = FenixCommander(bridge: bridge)
     let chartPack = ChartPack()
     let flightTools = FlightToolsStore()
