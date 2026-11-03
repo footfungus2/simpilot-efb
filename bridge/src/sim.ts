@@ -9,6 +9,7 @@ import {
 import { config } from './config.js';
 import type { Hub } from './hub.js';
 import { REQ_LVARS, type LVars } from './lvars.js';
+import { REQ_TRAFFIC, type Traffic } from './traffic.js';
 import { logger } from './log.js';
 
 const log = logger('sim');
@@ -22,7 +23,7 @@ const EVT_AIRCRAFT_LOADED = 1;
 const RETRY_MS = 5000;
 
 /** Keeps a SimConnect connection alive and publishes ownship state to the hub. */
-export function startSim(hub: Hub, lvars: LVars): () => void {
+export function startSim(hub: Hub, lvars: LVars, traffic?: Traffic): () => void {
   let lastSent = 0;
   let stopped = false;
   let retry: ReturnType<typeof setTimeout> | undefined;
@@ -47,6 +48,7 @@ export function startSim(hub: Hub, lvars: LVars): () => void {
 
     hub.setSim(true);
     lvars.attach(handle);
+    traffic?.attach(handle);
     let gone = false;
 
     // Order matters: values are read back in the same order.
@@ -87,6 +89,10 @@ export function startSim(hub: Hub, lvars: LVars): () => void {
         lvars.onData(rx.data);
         return;
       }
+      if (rx.requestID === REQ_TRAFFIC) {
+        traffic?.onData(rx);
+        return;
+      }
       if (rx.requestID === REQ_TITLE) {
         const title = rx.data.readString256();
         log.info(`aircraft: ${title}`);
@@ -95,6 +101,7 @@ export function startSim(hub: Hub, lvars: LVars): () => void {
       }
       if (rx.requestID !== REQ_OWNSHIP) return;
 
+      traffic?.setUser(rx.objectID, hub.lastOwnship?.lat ?? NaN, hub.lastOwnship?.lon ?? NaN);
       const now = Date.now();
       if (now - lastSent < minIntervalMs) return;
       lastSent = now;
@@ -135,6 +142,7 @@ export function startSim(hub: Hub, lvars: LVars): () => void {
       gone = true;
       if (current === handle) current = undefined;
       lvars.detach();
+      traffic?.detach();
       log.warn(`SimConnect ${why}; reconnecting in ${RETRY_MS / 1000}s`);
       hub.setSim(false);
       retry = setTimeout(connect, RETRY_MS);
@@ -154,6 +162,7 @@ export function startSim(hub: Hub, lvars: LVars): () => void {
     stopped = true;
     clearTimeout(retry);
     lvars.detach();
+    traffic?.detach();
     try { current?.close(); } catch (err) { log.warn('Could not close SimConnect', err); }
     current = undefined;
     hub.setSim(false);

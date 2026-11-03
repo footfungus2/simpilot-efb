@@ -15,6 +15,20 @@ export interface Ownship {
   fuelKg?: number;
 }
 
+/** One AI or multiplayer aircraft near the user. */
+export interface TrafficAircraft {
+  id: number;
+  callsign: string;
+  /** The aircraft's title in the sim, e.g. "Airbus A320neo easyJet". */
+  type: string;
+  lat: number;
+  lon: number;
+  altFt: number;
+  hdgDeg: number;
+  gsKt: number;
+  onGround: boolean;
+}
+
 export interface BridgeStatus {
   sim: { connected: boolean; aircraftTitle?: string };
   link: { connected: boolean; lastSeenMs?: number };
@@ -77,12 +91,16 @@ export type BridgeToApp =
   | { t: 'chartProgress'; icao: string; guid: string; done: number; total: number }
   | { t: 'chartError'; icao: string; guid: string; message: string }
   | { t: 'lvars'; values: Record<string, number> }
+  /** AI and multiplayer aircraft around the user, about every 3 s while the app has the traffic layer on. */
+  | { t: 'traffic'; aircraft: TrafficAircraft[] }
   /** Outcome of an app command that carried an `id`. */
   | { t: 'commandResult'; id: string; ok: boolean; message?: string };
 
 export type AppToBridge =
   /** `role`, `procedures` and `runway` are optional: with them the bridge also exports the flight's own charts ahead of time. */
   | { t: 'requestCharts'; icao: string; role?: 'origin' | 'destination' | 'alternate'; procedures?: string[]; runway?: string }
+  /** Turn the traffic feed (AI and multiplayer aircraft) on or off. */
+  | { t: 'trafficWatch'; on: boolean }
   /** Start sending these aircraft L:vars (names without "L:") as they change. */
   | { t: 'lvarWatch'; names: string[] }
   /** Run an MSFS RPN snippet against the aircraft's L:vars; `@` in the code is `value`. */

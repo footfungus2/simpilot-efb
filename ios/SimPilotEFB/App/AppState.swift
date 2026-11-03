@@ -52,6 +52,8 @@ final class AppState: ObservableObject {
     /// WX layer: METAR (or, with a time offset, TAF) indicators, and SIGMETs.
     @Published var wxMetars: Bool { didSet { defaults.set(wxMetars, forKey: "wxMetars") } }
     @Published var wxSigmets: Bool { didSet { defaults.set(wxSigmets, forKey: "wxSigmets") } }
+    /// AI and multiplayer aircraft around you, from the sim (TFC in the layer box). Needs the PC bridge.
+    @Published var showSimTraffic: Bool { didSet { defaults.set(showSimTraffic, forKey: "showSimTraffic"); bridge.send(trafficWatch: showSimTraffic); if !showSimTraffic { bridge.traffic.clear() } } }
     /// Radar precipitation layer (RainViewer frames).
     @Published var wxRadar: Bool { didSet { defaults.set(wxRadar, forKey: "wxRadar") } }
     /// Weather time offset from the top bar (+00:00 … +12:00): weather shows the forecast for now + this. Not persisted.
@@ -170,6 +172,7 @@ final class AppState: ObservableObject {
         wxMetars = defaults.object(forKey: "wxMetars") as? Bool ?? false
         wxSigmets = defaults.object(forKey: "wxSigmets") as? Bool ?? false
         wxRadar = defaults.object(forKey: "wxRadar") as? Bool ?? false
+        showSimTraffic = defaults.object(forKey: "showSimTraffic") as? Bool ?? false
         companyTraffic = defaults.object(forKey: "companyTraffic") as? Bool ?? true
         companyCodeOverride = defaults.string(forKey: "companyCode") ?? ""
         if let data = defaults.data(forKey: "ofp"), let saved = try? JSONDecoder().decode(Ofp.self, from: data) {
@@ -196,7 +199,10 @@ final class AppState: ObservableObject {
         // The PC is often off when the flight is loaded: ask again for its charts whenever the bridge connects.
         bridge.$state.map { state -> Bool in if case .connected = state { return true } else { return false } }
             .removeDuplicates().filter { $0 }
-            .sink { [weak self] _ in self?.requestFlightCharts() }.store(in: &cancellables)
+            .sink { [weak self] _ in
+                self?.requestFlightCharts()
+                if self?.showSimTraffic == true { self?.bridge.send(trafficWatch: true) }
+            }.store(in: &cancellables)
         Publishers.CombineLatest3($companyTraffic, $companyCodeOverride, $ofp)
             .sink { [weak self] on, override, ofp in
                 guard let self else { return }

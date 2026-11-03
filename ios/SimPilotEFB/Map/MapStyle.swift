@@ -7,6 +7,8 @@ enum MapStyle {
     static let routePointsSource = "route-points"
     static let airportsSource = "flight-airports"
     static let ownshipSource = "ownship"
+    static let trafficSource = "traffic"
+    static let trafficLayers = ["traffic-aircraft", "traffic-labels"]
     static let metarSource = "metars"
     static let sigmetSource = "sigmets"
     static let ammSource = "amm"
@@ -56,6 +58,7 @@ enum MapStyle {
                 "lakes": ["type": "geojson", "data": file("ne_50m_lakes.geojson")],
                 ammSource: emptySource(),
                 guidanceSource: emptySource(),
+                trafficSource: emptySource(),
                 vatsimSource: emptySource(),
                 "firs": ["type": "geojson", "data": file("firs.geojson")],
                 "fir-labels": ["type": "geojson", "data": file("fir-labels.geojson")],
@@ -312,6 +315,15 @@ enum MapStyle {
                  "layout": ["text-field": ["get", "label"], "text-font": ["Noto Sans Bold"], "text-size": 13,
                             "text-offset": [0, 1.2], "text-allow-overlap": true],
                  "paint": ["text-color": hex(theme.mapLabel), "text-halo-color": hex(theme.mapLabelHalo), "text-halo-width": 2]],
+                // Sim traffic (AI and multiplayer): small grey aircraft under the ownship, off until the TFC layer is on.
+                ["id": "traffic-aircraft", "type": "symbol", "source": trafficSource, "layout": [
+                    "visibility": "none", "icon-image": "traffic-plane", "icon-rotate": ["get", "hdg"], "icon-rotation-alignment": "map",
+                    "icon-allow-overlap": true, "icon-ignore-placement": true,
+                    "icon-size": ["interpolate", ["linear"], ["zoom"], 3, 0.4, 8, 0.7, 13, ["case", ["get", "ground"], 0.7, 1.0]]]],
+                ["id": "traffic-labels", "type": "symbol", "source": trafficSource, "minzoom": 7, "layout": [
+                    "visibility": "none", "text-field": ["get", "label"], "text-font": ["Noto Sans Bold"], "text-size": 11,
+                    "text-anchor": "top-left", "text-offset": [0.7, 0.5], "text-optional": true],
+                 "paint": ["text-color": "#9FB4CC", "text-halo-color": "rgba(0,0,0,0.6)", "text-halo-width": 1]],
                 ["id": "ownship-halo", "type": "circle", "source": ownshipSource,
                  "paint": ["circle-radius": 36, "circle-color": "#3D8BFF", "circle-opacity": 0.3, "circle-pitch-alignment": "map"]],
                 ["id": "ownship", "type": "symbol", "source": ownshipSource,

@@ -156,6 +156,19 @@ struct Ofp: Codable, Equatable {
     var pdfUrl: String?
 }
 
+/// One AI or multiplayer aircraft near the user, from the sim (PC bridge).
+struct TrafficAircraft: Codable, Identifiable, Equatable {
+    var id: Int
+    var callsign: String
+    var type: String
+    var lat: Double
+    var lon: Double
+    var altFt: Double
+    var hdgDeg: Double
+    var gsKt: Double
+    var onGround: Bool
+}
+
 // MARK: - WebSocket envelope
 
 enum BridgeMessage {
@@ -168,6 +181,7 @@ enum BridgeMessage {
     case chartProgress(icao: String, guid: String, done: Int, total: Int)
     case chartError(icao: String, guid: String, message: String)
     case lvars([String: Double])
+    case traffic([TrafficAircraft])
     case commandResult(id: String, ok: Bool, message: String?)
 
     private struct Envelope: Decodable { var t: String }
@@ -178,6 +192,7 @@ enum BridgeMessage {
     private struct ChartProgressMsg: Decodable { var icao: String; var guid: String; var done: Int; var total: Int }
     private struct ChartErrorMsg: Decodable { var icao: String; var guid: String; var message: String }
     private struct LVarsMsg: Decodable { var values: [String: Double] }
+    private struct TrafficMsg: Decodable { var aircraft: [TrafficAircraft] }
     private struct ResultMsg: Decodable { var id: String; var ok: Bool; var message: String? }
 
     static func decode(_ data: Data) -> BridgeMessage? {
@@ -193,6 +208,7 @@ enum BridgeMessage {
         case "chartProgress": return (try? dec.decode(ChartProgressMsg.self, from: data)).map { .chartProgress(icao: $0.icao, guid: $0.guid, done: $0.done, total: $0.total) }
         case "chartError": return (try? dec.decode(ChartErrorMsg.self, from: data)).map { .chartError(icao: $0.icao, guid: $0.guid, message: $0.message) }
         case "lvars": return (try? dec.decode(LVarsMsg.self, from: data)).map { .lvars($0.values) }
+        case "traffic": return (try? dec.decode(TrafficMsg.self, from: data)).map { .traffic($0.aircraft) }
         case "commandResult": return (try? dec.decode(ResultMsg.self, from: data)).map { .commandResult(id: $0.id, ok: $0.ok, message: $0.message) }
         default: return nil
         }

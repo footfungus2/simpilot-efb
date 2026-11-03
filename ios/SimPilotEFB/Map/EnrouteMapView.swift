@@ -23,6 +23,10 @@ struct EnrouteMapView: UIViewRepresentable {
     var wxSigmetVersion = 0
     /// Radar tile URL template of the frame to show (nil: radar off).
     var radarTemplate: String? = nil
+    /// Sim traffic (TFC layer): shown, with the store's data version and GeoJSON.
+    var trafficVisible = false
+    var trafficVersion = 0
+    var trafficData: Data? = nil
     /// Bump to re-centre on the ownship (if following) or fit the route.
     var recenterToken: Int
     let bridge: BridgeClient
@@ -111,6 +115,7 @@ struct EnrouteMapView: UIViewRepresentable {
         private var shownRulerStart: MapRuler.Point?
         private var shownTaxiRoute: String?
         private var shownGuidance: Data??
+        private var shownTrafficVersion = -1
         private var shownFrequencies: Bool?
         private var shownActiveRefs: [String]?
         private var overlayNight: Bool?
@@ -149,6 +154,8 @@ struct EnrouteMapView: UIViewRepresentable {
             style.setImage(MapIcons.runwayBadge(color: UIColor(hex: 0x2FA84F)), forName: "amm-rwy-green")
             shownTaxiRoute = nil
             shownGuidance = nil
+            shownTrafficVersion = -1
+            style.setImage(MapIcons.vatsimPlane(color: UIColor(hex: 0x9FB4CC)), forName: "traffic-plane")
             shownActiveRefs = nil
             style.setImage(MapIcons.windsock(), forName: "amm-windsock")
             style.setImage(MapIcons.vatsimPlane(), forName: "vatsim-plane")
@@ -573,6 +580,7 @@ struct EnrouteMapView: UIViewRepresentable {
         /// Never starts or cancels a download: this runs on every SwiftUI update (ownship at 10 Hz).
         private func updateWeather(style: MLNStyle) {
             updateRadar(style: style)
+            updateTraffic(style: style)
             for id in WeatherMapLayer.metarLayers { setVisible(style, id, parent.wxMetars) }
             for id in WeatherMapLayer.sigmetLayers { setVisible(style, id, parent.wxSigmets) }
             let wx = parent.weather
@@ -590,6 +598,15 @@ struct EnrouteMapView: UIViewRepresentable {
                 shownSelectedSigmet = wx.selectedSigmet
                 WeatherMapLayer.highlight(sigmet: wx.selectedSigmet, in: style)
             }
+        }
+
+        /// AI and multiplayer aircraft from the sim: shown with the TFC switch, data pushed when the store changes.
+        private func updateTraffic(style: MLNStyle) {
+            for id in MapStyle.trafficLayers { setVisible(style, id, parent.trafficVisible) }
+            guard parent.trafficVersion != shownTrafficVersion,
+                  let source = style.source(withIdentifier: MapStyle.trafficSource) as? MLNShapeSource else { return }
+            shownTrafficVersion = parent.trafficVersion
+            source.shape = parent.trafficData.flatMap { try? MLNShape(data: $0, encoding: String.Encoding.utf8.rawValue) }
         }
 
         /// Radar precipitation: one raster layer over the land, under everything else. A new frame replaces the source.

@@ -15,15 +15,16 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal
 void start().catch((err: Error) => finish(1, `SimPilot Bridge couldn't start: ${err.message}`));
 
 async function start(): Promise<void> {
-  const [{ config }, { Bonjour }, { ChartStore }, { Hub }, { FenixProcedures }, { LVars }, { createServer }, { startSim }] = await Promise.all([
+  const [{ config }, { Bonjour }, { ChartStore }, { Hub }, { FenixProcedures }, { LVars }, { createServer }, { startSim }, { Traffic }] = await Promise.all([
     import('./config.js'), import('bonjour-service'), import('./charts/store.js'), import('./hub.js'),
-    import('./fenix.js'), import('./lvars.js'), import('./server.js'), import('./sim.js'),
+    import('./fenix.js'), import('./lvars.js'), import('./server.js'), import('./sim.js'), import('./traffic.js'),
   ]);
   if (stopping) return;
   const hub = new Hub();
   const store = new ChartStore(config.cacheDir);
   const lvars = new LVars((values) => hub.broadcast({ t: 'lvars', values }));
-  const server = createServer(hub, store, lvars, new FenixProcedures(lvars));
+  const traffic = new Traffic(hub);
+  const server = createServer(hub, store, lvars, new FenixProcedures(lvars), undefined, traffic);
   let stopSim: (() => void) | undefined;
   let discovery: InstanceType<typeof Bonjour> | undefined;
   cleanup = async () => {
@@ -49,7 +50,7 @@ async function start(): Promise<void> {
       log.info(`startup check passed (port ${config.port})`);
       process.exit(0);
     }
-    stopSim = startSim(hub, lvars);
+    stopSim = startSim(hub, lvars, traffic);
     welcome(config.port, config.bridgeVersion, config.buildId);
     // Discovery failures should not take down the working manual-address connection.
     discovery = new Bonjour(undefined, (err: Error) => log.warn('Local discovery unavailable; use the PC address in Settings > Bridge', err));

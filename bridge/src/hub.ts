@@ -15,6 +15,7 @@ function isAppMessage(value: unknown): value is AppToBridge {
         (m.role === undefined || m.role === 'origin' || m.role === 'destination' || m.role === 'alternate') &&
         (m.procedures === undefined || Array.isArray(m.procedures) && m.procedures.length <= 8 && m.procedures.every((p) => typeof p === 'string' && p.length <= 32)) &&
         (m.runway === undefined || typeof m.runway === 'string' && m.runway.length <= 8);
+    case 'trafficWatch': return typeof m.on === 'boolean';
     case 'lvarWatch': return Array.isArray(m.names) && m.names.length <= 256 && m.names.every((n) => typeof n === 'string' && /^[A-Za-z0-9_:.-]{1,128}$/.test(n));
     case 'lvarRun': return typeof m.code === 'string' && m.code.length <= 4096 && (m.value === undefined || typeof m.value === 'number' && Number.isFinite(m.value));
     case 'fenixSquawk': return typeof m.code === 'string' && /^[0-7]{4}$/.test(m.code);
@@ -97,6 +98,10 @@ export class Hub {
       log.info(`app disconnected from ${remote} (${this.clients.size} left)`);
     });
     ws.on('error', (err) => log.warn(`socket error from ${remote}: ${err.message}`));
+  }
+
+  clientCount(): number {
+    return this.clients.size;
   }
 
   onMessage(handler: (msg: AppToBridge) => void): void {

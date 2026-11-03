@@ -5,7 +5,7 @@ struct EnrouteMapScreen: View {
     @EnvironmentObject private var bridge: BridgeClient
 
     var body: some View {
-        EnrouteMapContent(ownshipStore: bridge.ownship, vatsim: app.vatsim, weather: app.weather, radar: app.radar)
+        EnrouteMapContent(ownshipStore: bridge.ownship, vatsim: app.vatsim, weather: app.weather, radar: app.radar, traffic: bridge.traffic)
     }
 }
 
@@ -17,6 +17,7 @@ private struct EnrouteMapContent: View {
     @ObservedObject var vatsim: VatsimStore
     @ObservedObject var weather: WeatherStore
     @ObservedObject var radar: RadarStore
+    @ObservedObject var traffic: TrafficStore
     @State private var recenterToken = 0
     @State private var selectedFl: Int?
 
@@ -39,6 +40,9 @@ private struct EnrouteMapContent: View {
                            wxIndicatorVersion: weather.indicatorVersion,
                            wxSigmetVersion: weather.sigmetVersion,
                            radarTemplate: app.wxRadar ? radar.tileTemplate : nil,
+                           trafficVisible: app.showSimTraffic,
+                           trafficVersion: traffic.version,
+                           trafficData: traffic.geojson,
                            recenterToken: recenterToken,
                            bridge: bridge,
                            vatsimVisible: vatsim.enabled,
@@ -147,7 +151,7 @@ private struct EnrouteMapContent: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
             VStack(alignment: .trailing, spacing: 8) {
-                LayerBox(filters: $app.mapFilters, weather: weather, radar: radar, vatsim: vatsim, ownship: ownshipStore.ownship)
+                LayerBox(filters: $app.mapFilters, weather: weather, radar: radar, traffic: traffic, vatsim: vatsim, ownship: ownshipStore.ownship)
                 FlightLevelSelector(levels: flightLevels, selected: $selectedFl)
                 Spacer()
                 Button {
@@ -214,6 +218,7 @@ struct LayerBox: View {
     /// Observed by the WX popover itself; the WX count comes from the settings.
     let weather: WeatherStore
     let radar: RadarStore
+    @ObservedObject var traffic: TrafficStore
     @ObservedObject var vatsim: VatsimStore
     let ownship: Ownship?
     @State private var showNav = false
@@ -231,6 +236,23 @@ struct LayerBox: View {
             divider
             cell(title: "WX", count: (app.wxMetars ? 1 : 0) + (app.wxSigmets ? 1 : 0) + (app.wxRadar ? 1 : 0), icon: false) { showWx = true }
                 .popover(isPresented: $showWx) { WeatherLayerPanel(store: weather, radar: radar).environmentObject(app).themed(theme) }
+            divider
+            // TFC: AI and multiplayer aircraft from the sim (needs the PC bridge); a tap switches the layer.
+            Button { withAnimation(Motion.snappy) { app.showSimTraffic.toggle() } } label: {
+                VStack(spacing: 2) {
+                    Text("TFC").font(.system(size: 8, weight: .semibold)).foregroundColor(theme.textSecondary)
+                    Image(systemName: "airplane.circle").font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(app.showSimTraffic ? Theme.ownshipBlue : theme.text)
+                }
+                .frame(width: 54, height: 50)
+                .overlay(
+                    Text(app.showSimTraffic ? (app.bridge.isConnected ? "\(traffic.aircraft.count)" : "–") : "off")
+                        .font(.system(size: 9, weight: .semibold)).foregroundColor(theme.text).padding(3),
+                    alignment: .bottomTrailing
+                )
+            }
+            .buttonStyle(.pressable)
+            .accessibilityLabel(app.showSimTraffic ? "Sim traffic on" : "Sim traffic off")
             divider
             Button { showVatsim = true } label: {
                 VStack(spacing: 2) {

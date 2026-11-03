@@ -11,6 +11,42 @@ final class OwnshipStore: ObservableObject {
     }
 }
 
+/// AI and multiplayer aircraft around the user (the map's TFC layer), as GeoJSON for the map.
+@MainActor
+final class TrafficStore: ObservableObject {
+    @Published private(set) var aircraft: [TrafficAircraft] = []
+    /// Changes with every update, so the map knows to push new data.
+    @Published private(set) var version = 0
+    private(set) var geojson: Data?
+
+    func update(_ list: [TrafficAircraft]) {
+        aircraft = list
+        geojson = Self.geoJSON(list)
+        version += 1
+    }
+
+    func clear() {
+        guard !aircraft.isEmpty || geojson != nil else { return }
+        update([])
+    }
+
+    /// "EZY12AB" over its flight level ("FL350" or the altitude in feet below transition); ground traffic is flagged.
+    static func label(_ a: TrafficAircraft) -> String {
+        let name = a.callsign.isEmpty ? "–" : a.callsign
+        if a.onGround { return name }
+        return "\(name)\n" + (a.altFt >= 6000 ? String(format: "FL%03.0f", (a.altFt / 100).rounded()) : "\(Int((a.altFt / 100).rounded()) * 100) ft")
+    }
+
+    static func geoJSON(_ list: [TrafficAircraft]) -> Data? {
+        guard !list.isEmpty else { return nil }
+        let features: [[String: Any]] = list.map { a in
+            ["type": "Feature", "geometry": ["type": "Point", "coordinates": [a.lon, a.lat]],
+             "properties": ["label": label(a), "hdg": a.hdgDeg, "ground": a.onGround, "id": a.id]]
+        }
+        return try? JSONSerialization.data(withJSONObject: ["type": "FeatureCollection", "features": features])
+    }
+}
+
 /// Aircraft L:vars the bridge is watching (e.g. the Fenix A320 cockpit), kept separate so their updates only
 /// redraw the cockpit panels.
 @MainActor
@@ -52,6 +88,7 @@ final class BridgeClient: ObservableObject {
     @Published private(set) var status: BridgeStatus?
     @Published private(set) var lastError: String?
     let ownship = OwnshipStore()
+    let traffic = TrafficStore()
     let chartEvents = PassthroughSubject<ChartEvent, Never>()
     let aircraft = AircraftVars()
     private var watchedVars = Set<String>()
@@ -111,6 +148,11 @@ final class BridgeClient: ObservableObject {
             if !runway.isEmpty { message["runway"] = runway }
         }
         send(json: message)
+    }
+
+    /// Turns the bridge's AI/multiplayer traffic feed on or off.
+    func send(trafficWatch on: Bool) {
+        send(json: ["t": "trafficWatch", "on": on])
     }
 
     /// Asks the bridge to stream these aircraft L:vars (names without "L:"); remembered across reconnects.
@@ -248,11 +290,13 @@ final class BridgeClient: ObservableObject {
             if status?.sim.aircraftTitle != s.sim.aircraftTitle || !s.sim.connected {
                 aircraft.reset()
                 ownship.update(nil)
+                traffic.clear()
                 // The bridge only streams changes, so values it sent before this reset would never come back.
                 if s.sim.connected, !watchedVars.isEmpty { send(json: ["t": "lvarWatch", "names": Array(watchedVars)]) }
             }
             status = s
         case let .lvars(values): aircraft.merge(values)
+        case let .traffic(list): traffic.update(list)
         case let .commandResult(id, ok, message):
             guard let c = results.removeValue(forKey: id) else { return }
             DiagnosticLog.record(ok ? .info : .error, "Aircraft", ok ? "Bridge confirmed command execution" : "Bridge rejected an aircraft command")

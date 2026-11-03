@@ -19,6 +19,7 @@ Bridge → app:
 | `ownship` | `{ lat, lon, altFt, gsKt, trkDeg, hdgDeg, vsFpm, onGround, magVarDeg, ts, fuelKg? }` (≈10 Hz); `fuelKg` is total fuel on board in kg, left out when the aircraft reports none |
 | `chartsReady` | `{ icao }`: the airport's chart list is cached |
 | `chartsError` | `{ icao, message }`: the chart list couldn't be fetched |
+| `traffic` | `{ aircraft: [{ id, callsign, type, lat, lon, altFt, hdgDeg, gsKt, onGround }] }`: AI and multiplayer aircraft within about 80 NM of the user (the user's own aircraft left out), about every 3 s, only while the app has sent `trafficWatch` on |
 | `chartReady` | `{ icao, guid }`: every page of the chart is exported and cached |
 | `chartProgress` | `{ icao, guid, done, total }`: pages exported so far |
 | `chartError` | `{ icao, guid, message }`: the chart couldn't be exported |
@@ -30,6 +31,7 @@ App → bridge:
 | `t` | payload |
 |---|---|
 | `requestCharts` | `{ icao, role?, procedures?, runway? }`: queues the airport's chart list unless it is already cached (e.g. for the airports of a loaded flight). With `role` (`origin`/`destination`/`alternate`) the bridge also exports the flight's own charts in the background once the list is there: the SID (`procedures`) at the origin, the STAR and the approaches for `runway` at the destination. A chart the iPad opens always goes first |
+| `trafficWatch` | `{ on: boolean }`: turn the sim traffic feed on or off. The bridge asks SimConnect for nearby aircraft only while it is on and an app is connected; turning it off sends an empty `traffic` list |
 | `lvarWatch` | `{ names: string[] }`: start sending these L:vars (e.g. `N_PED_RMP1_ACTIVE`) as they change |
 | `lvarRun` | `{ code, value?, id? }`: run an MSFS RPN snippet (HubHop preset syntax) on the aircraft's L:vars; `@` = `value`. Commands run in order; with an `id` the bridge answers `commandResult` once it has written the values |
 | `fenixSquawk` | `{ code, id? }`: Fenix only. Clears a half-typed entry, types the code key by key (waiting for each key in the sim) and checks the final code; one at a time |

@@ -8,6 +8,7 @@ import { config } from './config.js';
 import { HttpError, readJson, Router, sendJson, setCors } from './http.js';
 import type { FenixProcedures } from './fenix.js';
 import type { LVars } from './lvars.js';
+import type { Traffic } from './traffic.js';
 import type { Hub } from './hub.js';
 import { logEntries, logger } from './log.js';
 import { fetchOfp } from './simbrief.js';
@@ -19,7 +20,7 @@ const log = logger('http');
 /** A cached chart list older than this is fetched again (in the background) when the link panel is there. */
 const INDEX_MAX_AGE_MS = 24 * 60 * 60_000;
 
-export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?: FenixProcedures, capturer?: Capturer): http.Server {
+export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?: FenixProcedures, capturer?: Capturer, traffic?: Traffic): http.Server {
   const link = new ChartLink(store, hub, capturer);
   const router = new Router();
 
@@ -33,6 +34,7 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
       log.error('chart request failed', err);
       hub.broadcast({ t: 'chartsError', icao: msg.icao, message: 'Unable to load chart cache; check bridge diagnostics' });
     });
+    else if (msg.t === 'trafficWatch') traffic?.watch(msg.on);
     else if (msg.t === 'lvarWatch' && Array.isArray(msg.names)) {
       lvars?.watch(msg.names);
       const known = lvars?.snapshot(msg.names) ?? {};
