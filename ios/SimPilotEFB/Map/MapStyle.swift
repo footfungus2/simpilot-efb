@@ -10,6 +10,7 @@ enum MapStyle {
     static let metarSource = "metars"
     static let sigmetSource = "sigmets"
     static let ammSource = "amm"
+    static let guidanceSource = "guidance"
     static let vatsimSource = "vatsim"
     static let vatsimLayers = ["vatsim-sector-fill", "vatsim-sector-line", "vatsim-vg-fill", "vatsim-vg-line", "vatsim-approach-line", "vatsim-pilots", "vatsim-company-labels",
                                "vatsim-pilot-labels", "vatsim-airport-dot", "vatsim-airport-bar", "vatsim-airport-badge",
@@ -54,6 +55,7 @@ enum MapStyle {
                 "land": ["type": "geojson", "data": file("ne_50m_land.geojson")],
                 "lakes": ["type": "geojson", "data": file("ne_50m_lakes.geojson")],
                 ammSource: emptySource(),
+                guidanceSource: emptySource(),
                 vatsimSource: emptySource(),
                 "firs": ["type": "geojson", "data": file("firs.geojson")],
                 "fir-labels": ["type": "geojson", "data": file("fir-labels.geojson")],
@@ -142,6 +144,12 @@ enum MapStyle {
                  "filter": ["==", ["get", "kind"], "taxi-line"],
                  "layout": ["line-join": "round", "line-cap": "round"],
                  "paint": ["line-color": hex(theme.ammTaxiLine), "line-width": ["interpolate", ["linear"], ["zoom"], 12, 0.6, 16, 1.8, 18, 3]]],
+                // Taxiways of the route already driven (the coordinator fills the filter), under the part still to go.
+                ["id": "amm-taxi-done", "type": "line", "source": ammSource, "minzoom": ammZoom,
+                 "filter": ["==", ["get", "kind"], "none"],
+                 "layout": ["line-join": "round", "line-cap": "round"],
+                 "paint": ["line-color": "#8A8F98", "line-opacity": 0.8,
+                           "line-width": ["interpolate", ["linear"], ["zoom"], 12, 3, 16, 7, 18, 12]]],
                 // ATC taxi route: filled in by the map coordinator (taxi-line features of the route, in magenta).
                 ["id": "amm-taxi-route", "type": "line", "source": ammSource, "minzoom": ammZoom,
                  "filter": ["==", ["get", "kind"], "none"],
@@ -166,6 +174,21 @@ enum MapStyle {
                             "text-size": ["interpolate", ["linear"], ["zoom"], 14, 9, 16, 12, 18, 15],
                             "text-offset": [0, 1.3], "text-optional": true],
                  "paint": ["text-color": hex(theme.ammLabel), "text-halo-color": hex(theme.ammGround), "text-halo-width": 1.2]],
+                // Guidance: the selected stand's lead-in and marker (green) and the chosen holding point (red).
+                ["id": "amm-guide-stand-line", "type": "line", "source": guidanceSource, "minzoom": ammZoom,
+                 "filter": ["==", ["get", "kind"], "g-stand-line"],
+                 "layout": ["line-join": "round", "line-cap": "round"],
+                 "paint": ["line-color": "#2FB24F", "line-width": ["interpolate", ["linear"], ["zoom"], 14, 2.5, 18, 6]]],
+                ["id": "amm-guide-stand", "type": "circle", "source": guidanceSource, "minzoom": ammZoom,
+                 "filter": ["==", ["get", "kind"], "g-stand"],
+                 "paint": [
+                    "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 7, 18, 17],
+                    "circle-color": "rgba(47,178,79,0.25)", "circle-stroke-color": "#2FB24F", "circle-stroke-width": 3]],
+                ["id": "amm-guide-hold", "type": "circle", "source": guidanceSource, "minzoom": ammZoom,
+                 "filter": ["==", ["get", "kind"], "g-hold"],
+                 "paint": [
+                    "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 7, 18, 17],
+                    "circle-color": "rgba(255,59,48,0.25)", "circle-stroke-color": "#FF3B30", "circle-stroke-width": 3]],
                 ["id": "amm-runway-end", "type": "symbol", "source": ammSource, "minzoom": ammZoom,
                  "filter": ["==", ["get", "kind"], "runway-end"],
                  "layout": ["icon-image": "amm-rwy", "icon-allow-overlap": true, "text-allow-overlap": true,

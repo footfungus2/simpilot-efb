@@ -52,6 +52,8 @@ private struct EnrouteMapContent: View {
                            onAirportData: { icao, feats in app.setAirportData(icao: icao, features: feats) },
                            taxiRoute: app.taxiRoute,
                            taxiRouteAirport: app.taxiRouteAirport,
+                           taxiDone: app.taxiProgress.reached,
+                           guidanceJSON: app.guidanceJSON,
                            activeRunwayRefs: app.runwayStatus(ownshipStore.ownship)?.activeRefs ?? [],
                            onMapTap: { pick in withAnimation(Motion.bouncy) { app.mapPick = pick } },
                            onSigmetTap: { id in withAnimation(Motion.bouncy) { weather.selectedSigmet = id } })
@@ -60,6 +62,20 @@ private struct EnrouteMapContent: View {
             if let status = app.runwayStatus(ownshipStore.ownship) {
                 VStack {
                     RunwayBanner(status: status).padding(.top, 14)
+                        .transition(.dropDown)
+                    Spacer()
+                }
+                .allowsHitTesting(false)
+            }
+
+            // Taxi guidance: route progress, the holding point and the stand, while on the ground.
+            if let o = ownshipStore.ownship, o.onGround, app.taxiGuidanceActive {
+                let g = app.taxiRouteAirport.flatMap { app.ground[$0] }
+                VStack {
+                    TaxiGuidanceBanner(route: app.taxiRoute, progress: app.taxiProgress,
+                                       stand: app.selectedStand.flatMap { g?.stand($0) },
+                                       hold: app.selectedHold.flatMap { g?.hold($0) }, position: o.coordinate)
+                        .padding(.top, app.runwayStatus(o) != nil ? 64 : 14)
                         .transition(.dropDown)
                     Spacer()
                 }

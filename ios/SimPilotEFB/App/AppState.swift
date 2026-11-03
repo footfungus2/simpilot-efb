@@ -98,20 +98,47 @@ final class AppState: ObservableObject {
     @Published private(set) var runways: [String: RunwayAwareness] = [:]
     @Published private(set) var taxiwayNames: [String: [String]] = [:]
     /// Taxi route given by ATC, highlighted on the airport map (taxiway names in order).
-    @Published var taxiRoute: [String] = []
+    @Published var taxiRoute: [String] = [] { didSet { if taxiRoute != oldValue { taxiProgress = TaxiProgress() } } }
     @Published var taxiRouteAirport: String?
+    /// Ground layout of the airports whose map has loaded (stands, holding points, named taxiways).
+    @Published private(set) var ground: [String: AirportGround] = [:]
+    /// The stand and the holding point (id in `AirportGround.holds`) picked in the taxi panel.
+    @Published var selectedStand: String?
+    @Published var selectedHold: Int?
+    /// Where the aircraft is along `taxiRoute`.
+    @Published private(set) var taxiProgress = TaxiProgress()
+    private var lastTaxiCheckMs = 0.0
     /// NAV filters for the enroute map, and the waypoint/navaid/airport whose details card is open.
     @Published var mapFilters = MapFilters.load() { didSet { mapFilters.save() } }
     @Published var mapPick: MapPick?
 
     func setAirportData(icao: String, features: [[String: Any]]) {
         runways[icao] = RunwayAwareness(features: features)
+        ground[icao] = AirportGround(features: features)
         let names = features.compactMap { f -> String? in
             guard let p = f["properties"] as? [String: Any], p["kind"] as? String == "taxi-line" else { return nil }
             let ref = (p["ref"] as? String ?? "").trimmingCharacters(in: .whitespaces)
             return ref.isEmpty ? nil : ref
         }
         taxiwayNames[icao] = Array(Set(names)).sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    /// Anything to guide on the ground: a taxi route, a stand or a holding point.
+    var taxiGuidanceActive: Bool { !taxiRoute.isEmpty || selectedStand != nil || selectedHold != nil }
+
+    /// The stand lead-in and the holding point to highlight on the airport map.
+    var guidanceJSON: Data? {
+        guard let icao = taxiRouteAirport, let g = ground[icao] else { return nil }
+        let stand = selectedStand.flatMap { g.stand($0) }
+        return TaxiGuidanceShapes.json(stand: stand, leadIn: stand.flatMap { g.leadIn(of: $0) }, hold: selectedHold.flatMap { g.hold($0) })
+    }
+
+    private func updateTaxiProgress(_ o: Ownship) {
+        guard o.onGround, !taxiRoute.isEmpty, let icao = taxiRouteAirport, let g = ground[icao], o.ts - lastTaxiCheckMs >= 500 else { return }
+        lastTaxiCheckMs = o.ts
+        var next = taxiProgress
+        next.update(route: taxiRoute, ground: g, position: o.coordinate)
+        if next != taxiProgress { taxiProgress = next }
     }
 
     /// Runway banner for the current aircraft position, if any.
@@ -163,6 +190,7 @@ final class AppState: ObservableObject {
         bridge.ownship.$ownship.compactMap { $0 }
             .sink { [weak self] o in
                 guard let self else { return }
+                self.updateTaxiProgress(o)
                 self.flightTools.observe(o, ofp: self.ofp, aircraftTitle: self.bridge.status?.sim.aircraftTitle, flight: self.flightKey)
             }.store(in: &cancellables)
         // The PC is often off when the flight is loaded: ask again for its charts whenever the bridge connects.

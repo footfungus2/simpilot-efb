@@ -37,6 +37,10 @@ struct EnrouteMapView: UIViewRepresentable {
     var onAirportData: (String, [[String: Any]]) -> Void = { _, _ in }
     var taxiRoute: [String] = []
     var taxiRouteAirport: String?
+    /// Taxiways of `taxiRoute` already driven (the first N names).
+    var taxiDone = 0
+    /// The selected stand's lead-in and the holding point, as GeoJSON.
+    var guidanceJSON: Data? = nil
     var activeRunwayRefs: [String] = []
     var onMapTap: (MapPick?) -> Void = { _ in }
     /// A tapped SIGMET (its id), nil when something else was tapped.
@@ -106,6 +110,7 @@ struct EnrouteMapView: UIViewRepresentable {
         private var shownRuler: MapRuler?
         private var shownRulerStart: MapRuler.Point?
         private var shownTaxiRoute: String?
+        private var shownGuidance: Data??
         private var shownFrequencies: Bool?
         private var shownActiveRefs: [String]?
         private var overlayNight: Bool?
@@ -143,6 +148,7 @@ struct EnrouteMapView: UIViewRepresentable {
             shownFrequencies = nil
             style.setImage(MapIcons.runwayBadge(color: UIColor(hex: 0x2FA84F)), forName: "amm-rwy-green")
             shownTaxiRoute = nil
+            shownGuidance = nil
             shownActiveRefs = nil
             style.setImage(MapIcons.windsock(), forName: "amm-windsock")
             style.setImage(MapIcons.vatsimPlane(), forName: "vatsim-plane")
@@ -333,6 +339,7 @@ struct EnrouteMapView: UIViewRepresentable {
             (style.layer(withIdentifier: "fir-lines") as? MLNLineStyleLayer)?.lineOpacity = NSExpression(forConstantValue: parent.vatsimVisible ? 0.3 : 1)
             updateChartOverlay(map: map, style: style)
             updateTaxiRoute(style: style)
+            updateGuidance(style: style)
             updateActiveRunways(style: style)
             updateRuler(style: style)
 
@@ -426,15 +433,34 @@ struct EnrouteMapView: UIViewRepresentable {
         // MARK: Taxi route and runway awareness
 
         private func updateTaxiRoute(style: MLNStyle) {
-            let key = "\(parent.taxiRouteAirport ?? "")|\(parent.taxiRoute.joined(separator: " "))"
-            guard key != shownTaxiRoute, let layer = style.layer(withIdentifier: "amm-taxi-route") as? MLNLineStyleLayer else { return }
+            let route = parent.taxiRoute
+            let done = min(max(parent.taxiDone, 0), route.count)
+            let key = "\(parent.taxiRouteAirport ?? "")|\(route.joined(separator: " "))|\(done)"
+            guard key != shownTaxiRoute,
+                  let layer = style.layer(withIdentifier: "amm-taxi-route") as? MLNLineStyleLayer,
+                  let doneLayer = style.layer(withIdentifier: "amm-taxi-done") as? MLNLineStyleLayer else { return }
             shownTaxiRoute = key
-            if let icao = parent.taxiRouteAirport, !parent.taxiRoute.isEmpty {
-                layer.predicate = NSPredicate(mglJSONObject: ["all", ["==", ["get", "kind"], "taxi-line"], ["==", ["get", "apt"], icao],
-                                                              ["in", ["get", "ref"], ["literal", parent.taxiRoute]]])
-            } else {
-                layer.predicate = NSPredicate(mglJSONObject: ["==", ["get", "kind"], "none"])
+            func predicate(_ names: [String], _ icao: String) -> NSPredicate {
+                NSPredicate(mglJSONObject: ["all", ["==", ["get", "kind"], "taxi-line"], ["==", ["get", "apt"], icao],
+                                            ["in", ["get", "ref"], ["literal", names]]])
             }
+            let none = NSPredicate(mglJSONObject: ["==", ["get", "kind"], "none"])
+            if let icao = parent.taxiRouteAirport, !route.isEmpty {
+                layer.predicate = done < route.count ? predicate(Array(route.dropFirst(done)), icao) : none
+                doneLayer.predicate = done > 0 ? predicate(Array(route.prefix(done)), icao) : none
+            } else {
+                layer.predicate = none
+                doneLayer.predicate = none
+            }
+        }
+
+        /// The chosen stand's lead-in and the holding point to stop at.
+        private func updateGuidance(style: MLNStyle) {
+            let data = parent.guidanceJSON
+            if let shown = shownGuidance, shown == data { return }
+            shownGuidance = .some(data)
+            guard let source = style.source(withIdentifier: MapStyle.guidanceSource) as? MLNShapeSource else { return }
+            source.shape = data.flatMap { try? MLNShape(data: $0, encoding: String.Encoding.utf8.rawValue) }
         }
 
         /// The runway you're on or approaching gets green end badges, like mPilot.
