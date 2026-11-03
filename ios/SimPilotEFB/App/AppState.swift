@@ -102,13 +102,17 @@ final class AppState: ObservableObject {
     @Published private(set) var runways: [String: RunwayAwareness] = [:]
     @Published private(set) var taxiwayNames: [String: [String]] = [:]
     /// Taxi route given by ATC, highlighted on the airport map (taxiway names in order).
-    @Published var taxiRoute: [String] = [] { didSet { if taxiRoute != oldValue { taxiProgress = TaxiProgress() } } }
-    @Published var taxiRouteAirport: String?
+    @Published var taxiRoute: [String] = [] { didSet { if taxiRoute != oldValue { taxiProgress = TaxiProgress(); rebuildTaxiPath() } } }
+    @Published var taxiRouteAirport: String? { didSet { rebuildTaxiPath() } }
     /// Ground layout of the airports whose map has loaded (stands, holding points, named taxiways).
     @Published private(set) var ground: [String: AirportGround] = [:]
+    /// Names of the holding points ("N1", "H3") of every loaded airport, for labels on the airport map.
+    @Published private(set) var holdNamesJSON: Data?
     /// The stand and the holding point (id in `AirportGround.holds`) picked in the taxi panel.
-    @Published var selectedStand: String?
-    @Published var selectedHold: Int?
+    @Published var selectedStand: String? { didSet { rebuildTaxiPath() } }
+    @Published var selectedHold: Int? { didSet { rebuildTaxiPath() } }
+    /// The route as the line you will drive (junction to junction); nil when the names don't connect, then the map lights the taxiways.
+    @Published private(set) var taxiPath: TaxiPath?
     /// Where the aircraft is along `taxiRoute`.
     @Published private(set) var taxiProgress = TaxiProgress()
     private var lastTaxiCheckMs = 0.0
@@ -119,6 +123,11 @@ final class AppState: ObservableObject {
     func setAirportData(icao: String, features: [[String: Any]]) {
         runways[icao] = RunwayAwareness(features: features)
         ground[icao] = AirportGround(features: features)
+        if icao == taxiRouteAirport { rebuildTaxiPath() }
+        let named: [[String: Any]] = ground.values.flatMap { $0.holds }.filter { !$0.name.isEmpty }.map { hold in
+            ["type": "Feature", "properties": ["name": hold.name], "geometry": ["type": "Point", "coordinates": [hold.coordinate.longitude, hold.coordinate.latitude]]]
+        }
+        holdNamesJSON = named.isEmpty ? nil : try? JSONSerialization.data(withJSONObject: ["type": "FeatureCollection", "features": named])
         let names = features.compactMap { f -> String? in
             guard let p = f["properties"] as? [String: Any], p["kind"] as? String == "taxi-line" else { return nil }
             let ref = (p["ref"] as? String ?? "").trimmingCharacters(in: .whitespaces)
@@ -130,11 +139,29 @@ final class AppState: ObservableObject {
     /// Anything to guide on the ground: a taxi route, a stand or a holding point.
     var taxiGuidanceActive: Bool { !taxiRoute.isEmpty || selectedStand != nil || selectedHold != nil }
 
-    /// The stand lead-in and the holding point to highlight on the airport map.
+    /// Works out the line to drive from the taxiway names, starting where the aircraft is (if it is on the ground) and
+    /// stopping at the holding point or stand you picked.
+    private func rebuildTaxiPath() {
+        var next: TaxiPath?
+        if !taxiRoute.isEmpty, let icao = taxiRouteAirport, let g = ground[icao] {
+            let o = bridge.ownship.ownship
+            let stand = selectedStand.flatMap { g.stand($0)?.coordinate }
+            // Where the route begins: the aircraft if it is on the ground; else, for a route to a holding point, the stand.
+            let start = o.flatMap { $0.onGround ? $0.coordinate : nil } ?? (selectedHold != nil ? stand : nil)
+            let end = selectedHold.flatMap { g.hold($0)?.coordinate } ?? stand
+            next = g.path(route: taxiRoute, start: start, end: end, stopAtEnd: selectedHold != nil)
+        }
+        if next != taxiPath { taxiPath = next }
+    }
+
+    /// The route line (driven part grey, the rest magenta), the stand lead-in and the holding point for the airport map.
     var guidanceJSON: Data? {
         guard let icao = taxiRouteAirport, let g = ground[icao] else { return nil }
         let stand = selectedStand.flatMap { g.stand($0) }
-        return TaxiGuidanceShapes.json(stand: stand, leadIn: stand.flatMap { g.leadIn(of: $0) }, hold: selectedHold.flatMap { g.hold($0) })
+        let o = bridge.ownship.ownship
+        let parts = taxiPath?.split(at: o.flatMap { $0.onGround ? $0.coordinate : nil })
+        return TaxiGuidanceShapes.json(stand: stand, leadIn: stand.flatMap { g.leadIn(of: $0) }, hold: selectedHold.flatMap { g.hold($0) },
+                                       routeDone: parts?.done ?? [], routeTodo: parts?.todo ?? [])
     }
 
     private func updateTaxiProgress(_ o: Ownship) {

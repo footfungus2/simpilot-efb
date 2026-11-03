@@ -27,7 +27,11 @@ enum AirportMapService {
             throw Failure(message: "Enter a valid four-character airport ICAO.")
         }
         let file = cacheURL(icao)
-        if let age = cacheAge(file), age < cacheTTL, let cached = readCache(file) { return fixStands(cached) }
+        if let age = cacheAge(file), age < cacheTTL, let cached = readCache(file) {
+            // A map from before holding points had names is drawn at once and refreshed in the background (never make the ground wait).
+            if lacksHoldNames(cached) { refreshInBackground(icao, file) }
+            return fixStands(cached)
+        }
         // Caches written before the move to Application Support (iOS may purge Caches when storage is low).
         if let age = cacheAge(oldCacheURL(icao)), age < cacheTTL, let cached = readCache(oldCacheURL(icao)) {
             try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -49,6 +53,28 @@ enum AirportMapService {
             if let legacy = readCache(legacyCacheURL(icao)) { return fixStands(upgradeLegacy(legacy)) }
             throw error
         }
+    }
+
+    private static let refreshing = Backoff()
+
+    private static func refreshInBackground(_ icao: String, _ file: URL) {
+        guard !refreshing.isSet else { return } // one refresh at a time; a failed one is not retried for ten minutes
+        refreshing.set(for: 600)
+        Task.detached(priority: .utility) {
+            guard let elements = try? await download(icao: icao) else { return }
+            let feats = fixStands(convert(elements, icao: icao))
+            guard !feats.isEmpty, let out = try? JSONSerialization.data(withJSONObject: feats) else { return }
+            try? out.write(to: file, options: .atomic)
+        }
+    }
+
+    /// A map saved before holding points kept their names: it has holding points but none with a "ref" key.
+    static func lacksHoldNames(_ features: [[String: Any]]) -> Bool {
+        let holds = features.compactMap { f -> [String: Any]? in
+            guard let p = f["properties"] as? [String: Any], p["kind"] as? String == "hold" else { return nil }
+            return p
+        }
+        return !holds.isEmpty && !holds.contains { $0["ref"] != nil }
     }
 
     /// Main Overpass server, then the OpenStreetMap API (a separate service, so it still works when Overpass
@@ -338,7 +364,7 @@ enum AirportMapService {
     static func convert(_ elements: [[String: Any]], icao: String) -> [[String: Any]] {
         var out: [[String: Any]] = []
         var taxiLines: [[Coord]] = []
-        var holds: [(Coord, String)] = []
+        var holds: [(Coord, String, String)] = []
 
         func add(_ kind: String, _ geometry: [String: Any], _ props: [String: Any] = [:]) {
             var p = props
@@ -356,7 +382,7 @@ enum AirportMapService {
             if type == "node", let lat = e["lat"] as? Double, let lon = e["lon"] as? Double {
                 let c: Coord = [lon, lat]
                 switch aeroway {
-                case "holding_position": holds.append((c, tags["holding_position:type"] ?? ""))
+                case "holding_position": holds.append((c, tags["holding_position:type"] ?? "", ref))
                 case "parking_position": add("stand", point(c), ["ref": ref, "rot": 0])
                 case "windsock": add("windsock", point(c))
                 default: break
@@ -414,9 +440,10 @@ enum AirportMapService {
 
         // Holding points: a bar across the nearest taxiway centreline (the bar icon is horizontal,
         // so rotating it by the taxiway's bearing puts it perpendicular to the taxiway).
-        for (c, holdType) in holds {
+        for (c, holdType, holdRef) in holds {
             let rot = nearestSegmentBearing(to: c, in: taxiLines) ?? 0
-            add("hold", point(c), ["rot": rot, "type": holdType])
+            // "ref" is always present (even empty), which tells a map saved before holding points had names from a new one.
+            add("hold", point(c), ["rot": rot, "type": holdType, "ref": holdRef])
         }
         return out
     }

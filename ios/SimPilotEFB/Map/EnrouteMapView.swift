@@ -45,6 +45,8 @@ struct EnrouteMapView: UIViewRepresentable {
     var taxiDone = 0
     /// The selected stand's lead-in and the holding point, as GeoJSON.
     var guidanceJSON: Data? = nil
+    /// Holding point names for labels on the airport map.
+    var holdNamesJSON: Data? = nil
     var activeRunwayRefs: [String] = []
     var onMapTap: (MapPick?) -> Void = { _ in }
     /// A tapped SIGMET (its id), nil when something else was tapped.
@@ -115,6 +117,7 @@ struct EnrouteMapView: UIViewRepresentable {
         private var shownRulerStart: MapRuler.Point?
         private var shownTaxiRoute: String?
         private var shownGuidance: Data??
+        private var shownHoldNames: Data??
         private var shownTrafficVersion = -1
         private var shownFrequencies: Bool?
         private var shownActiveRefs: [String]?
@@ -154,6 +157,7 @@ struct EnrouteMapView: UIViewRepresentable {
             style.setImage(MapIcons.runwayBadge(color: UIColor(hex: 0x2FA84F)), forName: "amm-rwy-green")
             shownTaxiRoute = nil
             shownGuidance = nil
+            shownHoldNames = nil
             shownTrafficVersion = -1
             style.setImage(MapIcons.vatsimPlane(color: UIColor(hex: 0x9FB4CC)), forName: "traffic-plane")
             shownActiveRefs = nil
@@ -379,6 +383,7 @@ struct EnrouteMapView: UIViewRepresentable {
 
         private func setRoute(style: MLNStyle) {
             guard let ofp = parent.ofp else {
+                (style.source(withIdentifier: MapStyle.routeAirwaysSource) as? MLNShapeSource)?.shape = nil
                 (style.source(withIdentifier: MapStyle.routeSource) as? MLNShapeSource)?.shape = nil
                 (style.source(withIdentifier: MapStyle.routePointsSource) as? MLNShapeSource)?.shape = nil
                 (style.source(withIdentifier: MapStyle.airportsSource) as? MLNShapeSource)?.shape = nil
@@ -388,6 +393,13 @@ struct EnrouteMapView: UIViewRepresentable {
             if coords.last.map({ abs($0.latitude - ofp.destination.lat) > 1e-6 }) ?? true { coords.append(ofp.destination.coordinate) }
             let line = MLNPolylineFeature(coordinates: coords, count: UInt(coords.count))
             (style.source(withIdentifier: MapStyle.routeSource) as? MLNShapeSource)?.shape = line
+
+            let airways: [MLNPolylineFeature] = RouteAirways.runs(in: ofp).map { run in
+                let f = MLNPolylineFeature(coordinates: run.coordinates, count: UInt(run.coordinates.count))
+                f.attributes = ["awy": run.name]
+                return f
+            }
+            (style.source(withIdentifier: MapStyle.routeAirwaysSource) as? MLNShapeSource)?.shape = MLNShapeCollectionFeature(shapes: airways)
 
             let points: [MLNPointFeature] = ofp.navlog.enumerated()
                 .filter { $0.element.type != "apt" && $0.element.ident != "TOC" && $0.element.ident != "TOD" }
@@ -463,6 +475,11 @@ struct EnrouteMapView: UIViewRepresentable {
 
         /// The chosen stand's lead-in and the holding point to stop at.
         private func updateGuidance(style: MLNStyle) {
+            let names = parent.holdNamesJSON
+            if shownHoldNames == nil || shownHoldNames! != names, let source = style.source(withIdentifier: MapStyle.holdNamesSource) as? MLNShapeSource {
+                shownHoldNames = .some(names)
+                source.shape = names.flatMap { try? MLNShape(data: $0, encoding: String.Encoding.utf8.rawValue) }
+            }
             let data = parent.guidanceJSON
             if let shown = shownGuidance, shown == data { return }
             shownGuidance = .some(data)

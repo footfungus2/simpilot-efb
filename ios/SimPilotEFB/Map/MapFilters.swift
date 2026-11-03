@@ -10,9 +10,26 @@ struct MapFilters: Codable, Equatable {
     var ndb = false
     var dme = false
     var navaidFrequencies = false
+    /// Grid MORA numbers (approximate, from open terrain data).
+    var mora = false
+
+    init() {}
+
+    // Filters saved by older builds lack newer keys; they keep the user's choices and default the rest.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        route = try c.decodeIfPresent(Bool.self, forKey: .route) ?? true
+        airports = try c.decodeIfPresent(Bool.self, forKey: .airports) ?? true
+        firs = try c.decodeIfPresent(Bool.self, forKey: .firs) ?? true
+        vor = try c.decodeIfPresent(Bool.self, forKey: .vor) ?? true
+        ndb = try c.decodeIfPresent(Bool.self, forKey: .ndb) ?? false
+        dme = try c.decodeIfPresent(Bool.self, forKey: .dme) ?? false
+        navaidFrequencies = try c.decodeIfPresent(Bool.self, forKey: .navaidFrequencies) ?? false
+        mora = try c.decodeIfPresent(Bool.self, forKey: .mora) ?? false
+    }
 
     /// Number of active groups, shown on the NAV button like mPilot's layer counts.
-    var activeCount: Int { [route, airports, firs, vor, ndb, dme].filter { $0 }.count }
+    var activeCount: Int { [route, airports, firs, vor, ndb, dme, mora].filter { $0 }.count }
 
     static func levels(high: Bool, cruise: Int) -> [Int] {
         let cruise = cruise > 0 ? max(60, cruise) : 350

@@ -52,6 +52,13 @@ weather, VATSIM and the maps all load directly on the iPad.
 - **Vertical profile** and **flight progress strip** (next fix, top of descent, destination)
 - **Weather layer**: METAR indicators for 5 000+ stations worldwide (green / amber / red by flight category) and SIGMET areas
   with hazard and level labels. Tap an indicator for the airport's METAR and TAF, raw or in plain language, or a SIGMET for its details
+- **Radar**: a precipitation layer in the WX panel (RainViewer, the last two hours, stepped in ten-minute frames). The free tiles stop at zoom 7, and
+  the radar is real-world weather: it matches the sim only with live weather
+- **TFC**: AI and multiplayer aircraft from the sim drawn on the map with callsign and level (needs the PC bridge)
+- **Airways on your route** are labelled along the route line from the SimBrief plan, and **grid MORA** (NAV panel) shows approximate minimum
+  off-route altitudes in hundreds of feet. MORA is worked out from open terrain data for Europe, the Mediterranean, North Africa, the Middle East and
+  the North Atlantic: no obstacles, no guarantee, never for real navigation. Other airways and unflown intersections need navigation data that
+  isn't openly available, so they are not included
 - **Weather time**: the `+00:00` menu in the top bar shows the forecast up to 12 hours ahead (TAF-based indicators, SIGMETs valid at that time)
 - **ATIS & weather briefing**: the speech-bubble button in the top bar opens VATSIM ATIS, METAR and TAF for your departure,
   destination, alternates, the nearest airport or any ICAO, with a *Decoded* switch for plain language
@@ -63,10 +70,17 @@ weather, VATSIM and the maps all load directly on the iPad.
 
 ### Airport moving map
 - Zoom into any airport for a ground map with taxiways, runways, **stands and holding points**, without roads or clutter
-- Taxi-route highlighting and an **ON RWY / APPROACHING RWY** awareness banner
+- Taxi route drawn as the line you will actually drive (only the stretch of each taxiway between the junctions you use, with an outline and
+  direction arrows and rounded corners, greyed out as you taxi it); a taxiway and its EAST/WEST/NORTH/SOUTH parts count as one, and the unnamed
+  connectors between taxiways are driven over. If the names still don't connect it lights up the taxiways instead
+- **Holding points carry their chart names** (N1, H3…, from OpenStreetMap) on the map and in the picker; choose one and the route line ends exactly there
+- An **ON RWY / APPROACHING RWY** awareness banner
+- **Taxi guidance** (the taxi button): pick your stand (its lead-in line turns green) and the holding point to stop at (red), and while taxiing a
+  banner shows progress along the entered taxi route (taxiways done, the one you are on, the next) and the distance to the stand and hold point
 - Data from OpenStreetMap, cached on the device so it works offline afterwards
 
 ### Charts
+- **Favourites and recent charts**: star a chart (viewer side button) and it appears in **★ FAVOURITES**, with the last twelve opened in **RECENT**, across airports
 - The sim's built-in Lido charts, exported by an in-sim toolbar panel: the list loads at once, a chart takes a few seconds the first time you open it
 - **Your aircraft drawn on georeferenced charts**, with follow mode
 - **Show a chart on the map**, overlaid in place
@@ -90,6 +104,9 @@ A **Flight** screen (the checklist icon in the bottom bar) with everything you w
 - **Fuel**: fuel on board against the SimBrief plan now and at each waypoint passed (needs the PC and an aircraft that reports its total fuel)
 - **Logbook**: takeoffs and landings are logged by themselves while the sim is connected; block times and notes can be typed
   in and corrected, and the route and aircraft are saved with each flight
+- **ACARS**: Hoppie's ACARS network for VATSIM: pre-departure clearance request, telex to ATC, METAR/TAF/ATIS requests and CPDLC
+  replies (WILCO, UNABLE, ROGER). You need a free logon code from hoppie.nl, kept in the iPad's Keychain. CPDLC follows how other clients use the
+  network and has not been tried against real ATC yet
 - **Documents**: import your own PDFs from Files (airline procedures, airport documents) with bookmarks, a remembered
   last page, night mode and Apple Pencil notes
 
@@ -312,7 +329,7 @@ Build/test and packaging checks run before publication; the remaining device che
 - [ ] Confirm the globe build of MapLibre on iPadOS 15.3
 - [ ] Verify Fenix controls and installer updates on physical devices
 
-Future features: airways, enroute intersections from sim navigation data, grid MORA.
+Not included: airways and enroute intersections beyond your own route (they need navigation data without an open licence), weather forecasts for icing and turbulence.
 
 Issues and pull requests are welcome.
 
@@ -338,6 +355,9 @@ the sources listed below. The zlib License does not override those terms.
 | Airport moving maps | © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors, fetched at runtime | ODbL |
 | Live traffic | [VATSIM](https://vatsim.net) data feed | |
 | Weather | [aviationweather.gov](https://aviationweather.gov) | |
+| Radar | [RainViewer](https://www.rainviewer.com) public radar frames | Personal use |
+| Grid MORA terrain | [AWS Terrain Tiles](https://registry.opendata.aws/terrain-tiles/) (built into `mora.geojson` by `scripts/build-mora.py`) | Open data, see the registry page for the sources |
+| ACARS | [Hoppie's ACARS](https://www.hoppie.nl/acars/) | Your own logon code |
 | Map rendering | [MapLibre Native](https://github.com/maplibre/maplibre-native) | BSD-2-Clause |
 | Fenix A320 control presets | [HubHop](https://hubhop.mobiflight.com) community presets (MobiFlight) | |
 

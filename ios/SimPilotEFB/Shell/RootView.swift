@@ -9,6 +9,7 @@ struct RootView: View {
     @StateObject private var updates = UpdateChecker()
     @Environment(\.openURL) private var openURL
     @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
+    @State private var changelog: ChangelogEntry?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -75,6 +76,10 @@ struct RootView: View {
                 .preferredColorScheme(app.preferredColorScheme)
         }
         .task { await updates.check() }
+        .onAppear { if hasCompletedOnboarding { changelog = Changelog.unseen(freshInstall: false) } else { _ = Changelog.unseen(freshInstall: true) } }
+        .sheet(item: $changelog, onDismiss: { Changelog.markSeen() }) { entry in
+            ChangelogView(entries: [entry], title: "Updated to \(entry.version)").themed(theme)
+        }
         .onAppear(perform: syncAppearance)
         .onChange(of: colorScheme) { _ in syncAppearance() }
         .onChange(of: scenePhase) { _ in syncAppearance() }

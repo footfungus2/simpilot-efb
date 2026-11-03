@@ -8,6 +8,7 @@ struct SettingsView: View {
     @Environment(\.presentationMode) private var presentationMode
     @Environment(\.theme) private var theme
     @State private var hostDraft = ""
+    @State private var showChangelog = false
     @State private var simbriefDraft = ""
 
     var body: some View {
@@ -115,8 +116,9 @@ struct SettingsView: View {
                     Link("Release notes / manual download", destination: AppRelease.page)
                 }
 
-                Section(header: Text("About"), footer: Text("SimPilot EFB is an unofficial flight-sim tool for personal use. Chart data comes from your own MSFS 2024 installation. FIR boundaries: VATSpy Data Project (CC BY-SA 4.0). Basemap: Natural Earth. Airports: OurAirports. Airport maps © OpenStreetMap contributors (ODbL). VATSIM data: data.vatsim.net, TRACONs: SimAware TRACON Project (CC BY-SA 4.0). Sector ownership: VATGlasses Data Project (CC BY-NC-SA 4.0).")) {
+                Section(header: Text("About"), footer: Text("SimPilot EFB is an unofficial flight-sim tool for personal use. Chart data comes from your own MSFS 2024 installation. FIR boundaries: VATSpy Data Project (CC BY-SA 4.0). Basemap: Natural Earth. Airports: OurAirports. Airport maps © OpenStreetMap contributors (ODbL). VATSIM data: data.vatsim.net, TRACONs: SimAware TRACON Project (CC BY-SA 4.0). Sector ownership: VATGlasses Data Project (CC BY-NC-SA 4.0). Radar: RainViewer. Grid MORA: derived from AWS Terrain Tiles (approximate, not for real navigation). ACARS: Hoppie.")) {
                     LabeledRow("Version", Bundle.main.shortVersion)
+                    Button("What's new") { showChangelog = true }
                 }
             }
             // Status rows that come and go (errors, spinners, the update button) fade instead of popping.
@@ -127,6 +129,7 @@ struct SettingsView: View {
             .animation(Motion.smooth, value: updates.checking)
             .animation(Motion.smooth, value: updates.message)
             .animation(Motion.smooth, value: updates.available?.version)
+            .sheet(isPresented: $showChangelog) { ChangelogView(entries: Changelog.entries) }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

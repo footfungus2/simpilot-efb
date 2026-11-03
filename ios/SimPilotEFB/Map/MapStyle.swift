@@ -5,6 +5,7 @@ import UIKit
 enum MapStyle {
     static let routeSource = "route"
     static let routePointsSource = "route-points"
+    static let routeAirwaysSource = "route-airways"
     static let airportsSource = "flight-airports"
     static let ownshipSource = "ownship"
     static let trafficSource = "traffic"
@@ -13,6 +14,7 @@ enum MapStyle {
     static let sigmetSource = "sigmets"
     static let ammSource = "amm"
     static let guidanceSource = "guidance"
+    static let holdNamesSource = "hold-names"
     static let vatsimSource = "vatsim"
     static let vatsimLayers = ["vatsim-sector-fill", "vatsim-sector-line", "vatsim-vg-fill", "vatsim-vg-line", "vatsim-approach-line", "vatsim-pilots", "vatsim-company-labels",
                                "vatsim-pilot-labels", "vatsim-airport-dot", "vatsim-airport-bar", "vatsim-airport-badge",
@@ -28,7 +30,8 @@ enum MapStyle {
     /// Layers behind each NAV filter.
     static func layers(for filters: MapFilters, high: Bool) -> [(String, Bool)] {
         let groups: [([String], Bool)] = [
-            (["route-line", "route-points", "route-labels", "airports", "airport-labels"], filters.route),
+            (["route-line", "route-airways", "route-points", "route-labels", "airports", "airport-labels"], filters.route),
+            (["mora"], filters.mora),
             (["all-airports-major"], filters.airports),
             (["all-airports-minor"], filters.airports && !high),
             (["fir-lines", "fir-labels"], filters.firs),
@@ -58,6 +61,7 @@ enum MapStyle {
                 "lakes": ["type": "geojson", "data": file("ne_50m_lakes.geojson")],
                 ammSource: emptySource(),
                 guidanceSource: emptySource(),
+                holdNamesSource: emptySource(),
                 trafficSource: emptySource(),
                 vatsimSource: emptySource(),
                 "firs": ["type": "geojson", "data": file("firs.geojson")],
@@ -68,6 +72,8 @@ enum MapStyle {
                 "graticule": ["type": "geojson", "data": graticule()],
                 routeSource: emptySource(),
                 routePointsSource: emptySource(),
+                routeAirwaysSource: emptySource(),
+                "mora": ["type": "geojson", "data": file("mora.geojson")],
                 airportsSource: emptySource(),
                 ownshipSource: emptySource(),
                 metarSource: emptySource(),
@@ -95,6 +101,11 @@ enum MapStyle {
                 ["id": "fir-labels", "maxzoom": ammZoom + 0.5, "type": "symbol", "source": "fir-labels", "minzoom": 3.5,
                  "layout": ["text-field": ["get", "label"], "text-font": ["Noto Sans Italic"], "text-size": 11, "text-max-width": 12],
                  "paint": ["text-color": hex(theme.firLine), "text-halo-color": hex(theme.mapLabelHalo), "text-halo-width": 1]],
+                // Grid MORA in hundreds of feet (214 = 21,400 ft), red like mPilot; approximate, from open terrain data.
+                ["id": "mora", "minzoom": 4.5, "maxzoom": ammZoom + 0.5, "type": "symbol", "source": "mora",
+                 "layout": ["text-field": ["to-string", ["get", "m"]], "text-font": ["Noto Sans Italic"],
+                            "text-size": ["interpolate", ["linear"], ["zoom"], 4.5, 11, 8, 20], "text-allow-overlap": false],
+                 "paint": ["text-color": "#D23A3A", "text-halo-color": hex(theme.mapLabelHalo), "text-halo-width": 1.2]],
                 // WX: METAR/TAF indicators below the airports, so airports and labels win the space (WeatherMapLayer).
                 WeatherMapLayer.metarLayer(flight: false, theme: theme),
                 // All airports as blue Lido gears; minor ones appear when zoomed in.
@@ -159,10 +170,36 @@ enum MapStyle {
                  "layout": ["line-join": "round", "line-cap": "round"],
                  "paint": ["line-color": "#FF4FD8", "line-opacity": 0.9,
                            "line-width": ["interpolate", ["linear"], ["zoom"], 12, 3, 16, 7, 18, 12]]],
+                // The route as a line: dark outline, grey where already driven, magenta ahead, with arrows in the driving direction.
+                ["id": "amm-route-casing", "type": "line", "source": guidanceSource, "minzoom": ammZoom,
+                 "filter": ["in", ["get", "kind"], ["literal", ["g-route-done", "g-route-todo"]]],
+                 "layout": ["line-join": "round", "line-cap": "round"],
+                 "paint": ["line-color": "#6B1A5A", "line-opacity": 0.85,
+                           "line-width": ["interpolate", ["linear"], ["zoom"], 12, 5, 16, 11, 18, 17]]],
+                ["id": "amm-route-done", "type": "line", "source": guidanceSource, "minzoom": ammZoom,
+                 "filter": ["==", ["get", "kind"], "g-route-done"],
+                 "layout": ["line-join": "round", "line-cap": "round"],
+                 "paint": ["line-color": "#8A8F98", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 3, 16, 7, 18, 11]]],
+                ["id": "amm-route-todo", "type": "line", "source": guidanceSource, "minzoom": ammZoom,
+                 "filter": ["==", ["get", "kind"], "g-route-todo"],
+                 "layout": ["line-join": "round", "line-cap": "round"],
+                 "paint": ["line-color": "#FF4FD8", "line-width": ["interpolate", ["linear"], ["zoom"], 12, 3, 16, 7, 18, 11]]],
+                ["id": "amm-route-arrows", "type": "symbol", "source": guidanceSource, "minzoom": ammZoom + 2,
+                 "filter": ["==", ["get", "kind"], "g-route-todo"],
+                 "layout": ["symbol-placement": "line", "symbol-spacing": ["interpolate", ["linear"], ["zoom"], 14, 60, 18, 110], "text-field": ">",
+                            "text-font": ["Noto Sans Bold"], "text-size": ["interpolate", ["linear"], ["zoom"], 14, 12, 18, 20],
+                            "text-keep-upright": false, "text-rotation-alignment": "map", "text-allow-overlap": true, "text-ignore-placement": true],
+                 "paint": ["text-color": "#FFFFFF"]],
                 ["id": "amm-hold", "type": "symbol", "source": ammSource, "minzoom": ammZoom + 1,
                  "filter": ["==", ["get", "kind"], "hold"],
                  "layout": ["icon-image": "amm-hold", "icon-rotate": ["get", "rot"], "icon-rotation-alignment": "map",
                             "icon-allow-overlap": true, "icon-size": ["interpolate", ["linear"], ["zoom"], 13, 0.5, 16, 1.1, 18, 1.8]]],
+                // Holding point names from the chart ("N1", "H3"), beside the hold bars.
+                ["id": "amm-hold-label", "type": "symbol", "source": holdNamesSource, "minzoom": ammZoom + 2.5,
+                 "layout": ["text-field": ["get", "name"], "text-font": ["Noto Sans Bold"],
+                            "text-size": ["interpolate", ["linear"], ["zoom"], 14, 10, 18, 15], "text-offset": [0, 1.4],
+                            "text-optional": true, "text-allow-overlap": false],
+                 "paint": ["text-color": "#FFD23F", "text-halo-color": hex(theme.ammGround), "text-halo-width": 1.4]],
                 ["id": "amm-taxi-label", "type": "symbol", "source": ammSource, "minzoom": ammZoom + 1,
                  "filter": ["all", ["==", ["get", "kind"], "taxi-line"], ["!=", ["get", "ref"], ""]],
                  "layout": ["symbol-placement": "line", "symbol-spacing": 250, "text-field": ["get", "ref"],
@@ -288,6 +325,11 @@ enum MapStyle {
                 ["id": "route-line", "type": "line", "source": routeSource,
                  "layout": ["line-join": "round", "line-cap": "round"],
                  "paint": ["line-color": customization.routeColor.cssHex, "line-width": 3]],
+                // Airway names along the planned route (from the SimBrief navlog).
+                ["id": "route-airways", "minzoom": 4, "maxzoom": ammZoom + 0.5, "type": "symbol", "source": routeAirwaysSource,
+                 "layout": ["symbol-placement": "line", "symbol-spacing": 350, "text-field": ["get", "awy"], "text-font": ["Noto Sans Bold"],
+                            "text-size": ["interpolate", ["linear"], ["zoom"], 4, 11, 9, 14], "text-keep-upright": true, "text-letter-spacing": 0.05],
+                 "paint": ["text-color": "#E8B04A", "text-halo-color": hex(theme.mapLabelHalo), "text-halo-width": 1.5]],
                 ["id": "route-points", "maxzoom": ammZoom + 0.5, "type": "symbol", "source": routePointsSource,
                  "layout": ["icon-image": "wpt-triangle", "icon-allow-overlap": true, "icon-size": 1]],
                 ["id": "route-labels", "maxzoom": ammZoom + 0.5, "type": "symbol", "source": routePointsSource,

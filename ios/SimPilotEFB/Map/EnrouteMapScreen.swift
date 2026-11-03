@@ -54,10 +54,11 @@ private struct EnrouteMapContent: View {
                            chartOverlay: app.chartOverlay,
                            chartOverlayOpacity: app.chartOverlayOpacity,
                            onAirportData: { icao, feats in app.setAirportData(icao: icao, features: feats) },
-                           taxiRoute: app.taxiRoute,
+                           taxiRoute: app.taxiPath == nil ? app.taxiRoute : [], // with a path the line is drawn from it instead
                            taxiRouteAirport: app.taxiRouteAirport,
-                           taxiDone: app.taxiProgress.reached,
+                           taxiDone: app.taxiPath == nil ? app.taxiProgress.reached : 0,
                            guidanceJSON: app.guidanceJSON,
+                           holdNamesJSON: app.holdNamesJSON,
                            activeRunwayRefs: app.runwayStatus(ownshipStore.ownship)?.activeRefs ?? [],
                            onMapTap: { pick in withAnimation(Motion.bouncy) { app.mapPick = pick } },
                            onSigmetTap: { id in withAnimation(Motion.bouncy) { weather.selectedSigmet = id } })
@@ -390,6 +391,7 @@ struct NavFilterPanel: View {
             Toggle("Route and route waypoints", isOn: $filters.route)
             Toggle("Airports", isOn: $filters.airports)
             Toggle("FIR boundaries", isOn: $filters.firs)
+            Toggle("Grid MORA (approximate)", isOn: $filters.mora)
             Divider()
             Text("NAVAIDS").font(.caption.weight(.semibold)).foregroundColor(.secondary)
             Toggle("VOR / VOR-DME / VORTAC", isOn: $filters.vor)
@@ -401,7 +403,7 @@ struct NavFilterPanel: View {
                 Text("High chart: NDBs and small airfields are hidden. Switch to Low to see them.")
                     .font(.caption).foregroundColor(.secondary)
             }
-            Text("Named enroute waypoints (intersections) will come from the sim's navdata once the bridge is connected. Tap any waypoint, navaid or airport for details.")
+            Text("Your route's airways are labelled along the route (from the SimBrief plan). Other airways and enroute intersections aren't included: no open data exists for them. Grid MORA is worked out from open terrain data (Europe, the Mediterranean, North Africa, the Middle East and the North Atlantic), in hundreds of feet. It is approximate: never use it for real navigation. Tap any waypoint, navaid or airport for details.")
                 .font(.caption).foregroundColor(.secondary)
         }
         .padding()

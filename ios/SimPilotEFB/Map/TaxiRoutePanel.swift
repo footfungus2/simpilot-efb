@@ -50,7 +50,7 @@ struct TaxiRoutePanel: View {
                         }
                     }
                 }
-                .frame(maxHeight: 220)
+                .frame(maxHeight: 130)
             } else {
                 Text("Zoom into the airport on the map first so its taxiways load.")
                     .font(.footnote).foregroundColor(.secondary)
@@ -128,7 +128,8 @@ struct TaxiRoutePanel: View {
     /// Stands that start with what was typed (all of them when nothing is typed, first twelve).
     private func standSuggestions(_ ground: AirportGround) -> [AirportGround.Stand] {
         let typed = standText.trimmingCharacters(in: .whitespaces).uppercased()
-        return Array(ground.stands.filter { typed.isEmpty || $0.ref.uppercased().hasPrefix(typed) }.prefix(12))
+        guard !typed.isEmpty, app.selectedStand == nil else { return [] } // suggestions only while typing
+        return Array(ground.stands.filter { $0.ref.uppercased().hasPrefix(typed) }.prefix(8))
     }
 
     // MARK: Holding point

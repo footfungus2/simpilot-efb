@@ -55,6 +55,26 @@ New in 0.1.0 and only compiled here (the iOS Release build and test build pass; 
 - [ ] Fuel (Fenix): confirm the sim reports total fuel weight (FUEL TOTAL QUANTITY WEIGHT); the difference to the plan makes sense and each waypoint is noted once.
       If the Fenix reports nothing, the Fuel page says so; tell me and the Fenix's own fuel variables can be used instead.
 
+## Map layers, taxi guidance and ACARS — first device checks
+
+Compiled and unit-tested only (no iPad, no sim, no Hoppie logon yet):
+
+- [ ] Radar: WX panel → Radar shows rain over Europe; the Older / Newer / Now buttons change the picture; tiles are stretched, not missing, closer than zoom 7.
+      If the globe projection draws no raster layer, switch the globe off in Settings → Customization and compare.
+- [ ] TFC (PC): turn it on in the layer box; AI/multiplayer aircraft appear within a few seconds with callsign and level, not including your own aircraft.
+      Turn it off: they disappear and the bridge stops asking (bridge log).
+- [ ] MORA: NAV panel → Grid MORA; red numbers appear from about zoom 4.5 to the airport zoom. Spot-check: Alps about 17x, flat East Anglia about 1x–2x, sea 10.
+- [ ] Airways: with a flight loaded, airway names (UL9, UN859…) run along the route line; SIDs and DCT legs have none.
+- [ ] Taxi guidance: at the airport (zoomed in) pick a stand: green lead-in; pick a hold point: red circle; enter a taxi route and taxi: banner chips go
+      done → current → next as you drive. Check the hold labels (taxiway · RWY pair) make sense at EGSS.
+- [ ] Taxi route line: enter a route at EGSS (e.g. from the stand: the taxiways you were given). The magenta line follows only the junction-to-junction path with
+      arrows in the driving direction, and turns grey behind the aircraft. With names that don't connect, the taxiways light up as before.
+- [ ] Taxi names and curves: holding point names (N1, H3…) show beside the hold bars from about zoom 14.5 (an airport map saved before this refreshes once when opened
+      online). Pick one in "Hold short at": the route line ends exactly on it. Corners at junctions are rounded rather than sharp V's.
+- [ ] Favourites: star a chart, open another airport's chart, open **★ FAVOURITES**: the starred chart switches airport and opens. RECENT lists the last twelve.
+- [ ] ACARS: enter your Hoppie logon code and callsign; "Check messages" works (no error); a METAR request returns text; a PDC request reaches an online ATC.
+      Tell me exactly what real ATC replies look like (CPDLC especially): that part follows other clients' conventions and is unproven.
+
 ## Earlier release candidate — 23 October 2026
 
 Status: release candidate. Local code, automated checks and packaging have been checked; physical-device and
