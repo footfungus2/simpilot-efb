@@ -31,13 +31,13 @@ final class TrafficStore: ObservableObject {
     }
 
     /// "EZY12AB" over its flight level ("FL350" or the altitude in feet below transition); ground traffic is flagged.
-    static func label(_ a: TrafficAircraft) -> String {
+    nonisolated static func label(_ a: TrafficAircraft) -> String {
         let name = a.callsign.isEmpty ? "–" : a.callsign
         if a.onGround { return name }
         return "\(name)\n" + (a.altFt >= 6000 ? String(format: "FL%03.0f", (a.altFt / 100).rounded()) : "\(Int((a.altFt / 100).rounded()) * 100) ft")
     }
 
-    static func geoJSON(_ list: [TrafficAircraft]) -> Data? {
+    nonisolated static func geoJSON(_ list: [TrafficAircraft]) -> Data? {
         guard !list.isEmpty else { return nil }
         let features: [[String: Any]] = list.map { a in
             ["type": "Feature", "geometry": ["type": "Point", "coordinates": [a.lon, a.lat]],
