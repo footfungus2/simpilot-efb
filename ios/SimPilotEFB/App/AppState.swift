@@ -17,6 +17,8 @@ final class AppState: ObservableObject {
     let vatsimAssistant = VatsimAssistant()
     /// Worldwide METAR/TAF/SIGMET data for the map's WX layer.
     let weather = WeatherStore()
+    /// Radar frames for the map's WX layer.
+    let radar = RadarStore()
     private(set) lazy var fenixCommander = FenixCommander(bridge: bridge)
     let chartPack = ChartPack()
     let flightTools = FlightToolsStore()
@@ -50,6 +52,8 @@ final class AppState: ObservableObject {
     /// WX layer: METAR (or, with a time offset, TAF) indicators, and SIGMETs.
     @Published var wxMetars: Bool { didSet { defaults.set(wxMetars, forKey: "wxMetars") } }
     @Published var wxSigmets: Bool { didSet { defaults.set(wxSigmets, forKey: "wxSigmets") } }
+    /// Radar precipitation layer (RainViewer frames).
+    @Published var wxRadar: Bool { didSet { defaults.set(wxRadar, forKey: "wxRadar") } }
     /// Weather time offset from the top bar (+00:00 … +12:00): weather shows the forecast for now + this. Not persisted.
     @Published var wxOffsetHours = 0
     /// Ruler (distance/bearing measuring) mode on the map. Not persisted.
@@ -138,6 +142,7 @@ final class AppState: ObservableObject {
         enrouteHigh = defaults.object(forKey: "enrouteHigh") as? Bool ?? true
         wxMetars = defaults.object(forKey: "wxMetars") as? Bool ?? false
         wxSigmets = defaults.object(forKey: "wxSigmets") as? Bool ?? false
+        wxRadar = defaults.object(forKey: "wxRadar") as? Bool ?? false
         companyTraffic = defaults.object(forKey: "companyTraffic") as? Bool ?? true
         companyCodeOverride = defaults.string(forKey: "companyCode") ?? ""
         if let data = defaults.data(forKey: "ofp"), let saved = try? JSONDecoder().decode(Ofp.self, from: data) {

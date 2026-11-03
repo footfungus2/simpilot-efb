@@ -4,6 +4,7 @@ import SwiftUI
 struct WeatherLayerPanel: View {
     @EnvironmentObject private var app: AppState
     @ObservedObject var store: WeatherStore
+    @ObservedObject var radar: RadarStore
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -17,6 +18,11 @@ struct WeatherLayerPanel: View {
             Toggle(isOn: animated(\.wxSigmets)) {
                 label("SIGMETs", "Thunderstorms, turbulence, icing, volcanic ash and more")
             }
+
+            Toggle(isOn: animated(\.wxRadar)) {
+                label("Radar", "Rain and snow from RainViewer, the last two hours")
+            }
+            if app.wxRadar { radarControls.transition(.opacity) }
 
             statusLine
 
@@ -54,6 +60,43 @@ struct WeatherLayerPanel: View {
             Text(title)
             Text(subtitle).font(.caption).foregroundColor(.secondary)
         }
+    }
+
+    // MARK: Radar
+
+    /// Frame stepping: the radar picture for now, or ten-minute steps back.
+    private var radarControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Button { radar.step(back: true) } label: { Image(systemName: "chevron.left").frame(width: 36, height: 32) }
+                    .disabled(!radar.canStepBack)
+                    .accessibilityLabel("Older radar picture")
+                Text(radarTitle).font(.callout.weight(.semibold)).monospacedDigit().frame(maxWidth: .infinity)
+                Button { radar.step(back: false) } label: { Image(systemName: "chevron.right").frame(width: 36, height: 32) }
+                    .disabled(!radar.canStepForward)
+                    .accessibilityLabel("Newer radar picture")
+                Button("Now") { radar.showLatest() }.font(.callout).disabled(!radar.canStepForward)
+            }
+            if let error = radar.error {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundColor(Theme.warnOrange)
+                    Text(error).font(.caption).fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Button("Retry") { Task { await radar.refresh(force: true) } }.font(.caption.weight(.semibold))
+                }
+            } else if radar.frames.isEmpty {
+                HStack(spacing: 8) { ProgressView(); Text("Loading radar…").font(.caption).foregroundColor(.secondary) }
+            } else {
+                Text("Light rain is grey-green; heavier rain turns blue, yellow and red. Close in the picture is stretched (the free radar ends at zoom 7). Real-world weather: it matches the sim only with live weather.")
+                    .font(.caption).foregroundColor(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var radarTitle: String {
+        guard let frame = radar.frame else { return "–" }
+        let minutes = Int(Date().timeIntervalSince(frame.time) / 60)
+        return "\(WeatherDecoder.time(frame.time)) · \(minutes <= 1 ? "now" : "\(minutes) min ago")"
     }
 
     // MARK: Status

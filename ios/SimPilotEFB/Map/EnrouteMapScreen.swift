@@ -5,7 +5,7 @@ struct EnrouteMapScreen: View {
     @EnvironmentObject private var bridge: BridgeClient
 
     var body: some View {
-        EnrouteMapContent(ownshipStore: bridge.ownship, vatsim: app.vatsim, weather: app.weather)
+        EnrouteMapContent(ownshipStore: bridge.ownship, vatsim: app.vatsim, weather: app.weather, radar: app.radar)
     }
 }
 
@@ -16,6 +16,7 @@ private struct EnrouteMapContent: View {
     @ObservedObject var ownshipStore: OwnshipStore
     @ObservedObject var vatsim: VatsimStore
     @ObservedObject var weather: WeatherStore
+    @ObservedObject var radar: RadarStore
     @State private var recenterToken = 0
     @State private var selectedFl: Int?
 
@@ -37,6 +38,7 @@ private struct EnrouteMapContent: View {
                            wxSigmets: app.wxSigmets,
                            wxIndicatorVersion: weather.indicatorVersion,
                            wxSigmetVersion: weather.sigmetVersion,
+                           radarTemplate: app.wxRadar ? radar.tileTemplate : nil,
                            recenterToken: recenterToken,
                            bridge: bridge,
                            vatsimVisible: vatsim.enabled,
@@ -81,6 +83,14 @@ private struct EnrouteMapContent: View {
                 .onDisappear { weather.mapDisappeared() }
                 .onChange(of: app.wxMetars) { _ in updateWeather() }
                 .onChange(of: app.wxSigmets) { _ in updateWeather() }
+                // New radar frames come every ten minutes: look again every five while the layer is on.
+                .task(id: app.wxRadar) {
+                    guard app.wxRadar else { return }
+                    while !Task.isCancelled {
+                        await radar.refresh()
+                        try? await Task.sleep(nanoseconds: 300_000_000_000)
+                    }
+                }
                 .onChange(of: app.wxOffsetHours) { _ in updateWeather() }
                 .onChange(of: app.ofp?.fetchedAt) { _ in updateWeather() }
 
@@ -121,7 +131,7 @@ private struct EnrouteMapContent: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
             VStack(alignment: .trailing, spacing: 8) {
-                LayerBox(filters: $app.mapFilters, weather: weather, vatsim: vatsim, ownship: ownshipStore.ownship)
+                LayerBox(filters: $app.mapFilters, weather: weather, radar: radar, vatsim: vatsim, ownship: ownshipStore.ownship)
                 FlightLevelSelector(levels: flightLevels, selected: $selectedFl)
                 Spacer()
                 Button {
@@ -187,6 +197,7 @@ struct LayerBox: View {
     @Binding var filters: MapFilters
     /// Observed by the WX popover itself; the WX count comes from the settings.
     let weather: WeatherStore
+    let radar: RadarStore
     @ObservedObject var vatsim: VatsimStore
     let ownship: Ownship?
     @State private var showNav = false
@@ -202,8 +213,8 @@ struct LayerBox: View {
             cell(title: "CMPY", count: app.companyTraffic ? vatsim.companyPilots.count : 0, icon: true) { showCompany = true }
                 .popover(isPresented: $showCompany) { CompanyTrafficPanel(store: vatsim, ownship: ownship).environmentObject(app).themed(theme) }
             divider
-            cell(title: "WX", count: (app.wxMetars ? 1 : 0) + (app.wxSigmets ? 1 : 0), icon: false) { showWx = true }
-                .popover(isPresented: $showWx) { WeatherLayerPanel(store: weather).environmentObject(app).themed(theme) }
+            cell(title: "WX", count: (app.wxMetars ? 1 : 0) + (app.wxSigmets ? 1 : 0) + (app.wxRadar ? 1 : 0), icon: false) { showWx = true }
+                .popover(isPresented: $showWx) { WeatherLayerPanel(store: weather, radar: radar).environmentObject(app).themed(theme) }
             divider
             Button { showVatsim = true } label: {
                 VStack(spacing: 2) {

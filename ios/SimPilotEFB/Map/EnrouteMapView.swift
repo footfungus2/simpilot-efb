@@ -21,6 +21,8 @@ struct EnrouteMapView: UIViewRepresentable {
     /// The store's data versions; a change pushes its new GeoJSON to the map.
     var wxIndicatorVersion = 0
     var wxSigmetVersion = 0
+    /// Radar tile URL template of the frame to show (nil: radar off).
+    var radarTemplate: String? = nil
     /// Bump to re-centre on the ownship (if following) or fit the route.
     var recenterToken: Int
     let bridge: BridgeClient
@@ -109,6 +111,8 @@ struct EnrouteMapView: UIViewRepresentable {
         private var overlayNight: Bool?
         private var shownIndicatorVersion = -1
         private var shownSigmetVersion = -1
+        /// The radar template on the current style (outer nil: not applied yet).
+        private var shownRadar: String??
         /// The highlighted SIGMET on the current style (outer nil: not applied yet).
         private var shownSelectedSigmet: String??
 
@@ -148,6 +152,7 @@ struct EnrouteMapView: UIViewRepresentable {
             WeatherMapLayer.addImages(to: style)
             shownIndicatorVersion = -1
             shownSigmetVersion = -1
+            shownRadar = nil
             shownSelectedSigmet = nil
             updateAMMSource()
             lastVatsimVersion = -1
@@ -541,6 +546,7 @@ struct EnrouteMapView: UIViewRepresentable {
         /// Shows the WX layers per the WX popover and pushes new indicator/SIGMET data from the store.
         /// Never starts or cancels a download: this runs on every SwiftUI update (ownship at 10 Hz).
         private func updateWeather(style: MLNStyle) {
+            updateRadar(style: style)
             for id in WeatherMapLayer.metarLayers { setVisible(style, id, parent.wxMetars) }
             for id in WeatherMapLayer.sigmetLayers { setVisible(style, id, parent.wxSigmets) }
             let wx = parent.weather
@@ -558,6 +564,22 @@ struct EnrouteMapView: UIViewRepresentable {
                 shownSelectedSigmet = wx.selectedSigmet
                 WeatherMapLayer.highlight(sigmet: wx.selectedSigmet, in: style)
             }
+        }
+
+        /// Radar precipitation: one raster layer over the land, under everything else. A new frame replaces the source.
+        private func updateRadar(style: MLNStyle) {
+            let wanted = parent.radarTemplate
+            if let shown = shownRadar, shown == wanted { return }
+            shownRadar = .some(wanted)
+            if let layer = style.layer(withIdentifier: "radar") { style.removeLayer(layer) }
+            if let source = style.source(withIdentifier: "radar") { style.removeSource(source) }
+            guard let wanted else { return }
+            // The free tiles stop at zoom 7; closer in they are stretched.
+            let source = MLNRasterTileSource(identifier: "radar", tileURLTemplates: [wanted], options: [.tileSize: 256, .maximumZoomLevel: 7])
+            style.addSource(source)
+            let layer = MLNRasterStyleLayer(identifier: "radar", source: source)
+            layer.rasterOpacity = NSExpression(forConstantValue: 0.75)
+            if let above = style.layer(withIdentifier: "lakes") { style.insertLayer(layer, above: above) } else { style.addLayer(layer) }
         }
 
         private func setVisible(_ style: MLNStyle, _ id: String, _ visible: Bool) {
