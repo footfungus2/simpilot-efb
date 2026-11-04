@@ -12,6 +12,8 @@ struct MapFilters: Codable, Equatable {
     var navaidFrequencies = false
     /// Grid MORA numbers (approximate, from open terrain data).
     var mora = false
+    /// Altitude under each route waypoint, colour-coded by phase, plus T/C and T/D.
+    var routeAltitudes = true
 
     init() {}
 
@@ -26,6 +28,7 @@ struct MapFilters: Codable, Equatable {
         dme = try c.decodeIfPresent(Bool.self, forKey: .dme) ?? false
         navaidFrequencies = try c.decodeIfPresent(Bool.self, forKey: .navaidFrequencies) ?? false
         mora = try c.decodeIfPresent(Bool.self, forKey: .mora) ?? false
+        routeAltitudes = try c.decodeIfPresent(Bool.self, forKey: .routeAltitudes) ?? true
     }
 
     /// Number of active groups, shown on the NAV button like mPilot's layer counts.

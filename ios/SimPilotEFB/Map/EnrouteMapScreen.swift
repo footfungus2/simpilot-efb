@@ -389,6 +389,7 @@ struct NavFilterPanel: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Navigation").font(.headline)
             Toggle("Route and route waypoints", isOn: $filters.route)
+            Toggle("Waypoint altitudes, T/C, T/D", isOn: $filters.routeAltitudes)
             Toggle("Airports", isOn: $filters.airports)
             Toggle("FIR boundaries", isOn: $filters.firs)
             Toggle("Grid MORA (approximate)", isOn: $filters.mora)

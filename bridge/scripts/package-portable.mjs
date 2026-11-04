@@ -15,6 +15,10 @@ const launcher = path.join(out, 'SimPilot Bridge.cmd');
 const major = Number(process.versions.node.split('.')[0]);
 if (major < 22) throw new Error(`Packaging needs Node 22 or newer (this is ${process.version}).`);
 
+// Release identity for the updater: version from the iOS project, build number from CI (0 for a local build).
+const version = /MARKETING_VERSION:\s*"([\d.]+)"/.exec(fs.readFileSync(path.join(root, '..', 'ios', 'project.yml'), 'utf8'))?.[1];
+if (!version) throw new Error('Could not read MARKETING_VERSION from ios/project.yml');
+
 fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(out, { recursive: true });
 
@@ -30,7 +34,7 @@ const bundled = await build({
   legalComments: 'eof',
   metafile: true,
   logLevel: 'warning',
-  define: { 'process.env.SIMPILOT_PACKAGED': '"1"', 'import.meta.url': '"file:///simpilot-bridge.cjs"' },
+  define: { 'process.env.SIMPILOT_PACKAGED': '"1"', 'process.env.SIMPILOT_VERSION': JSON.stringify(version), 'process.env.SIMPILOT_BUILD': JSON.stringify(process.env.SIMPILOT_BUILD ?? '0'), 'import.meta.url': '"file:///simpilot-bridge.cjs"' },
   external: ['bufferutil', 'utf-8-validate'],
 });
 

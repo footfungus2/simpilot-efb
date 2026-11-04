@@ -96,6 +96,8 @@ jobs:
             sim-package/package-lock.json
       - name: Build SimPilot Bridge portable bundle
         working-directory: bridge
+        env:
+          SIMPILOT_BUILD: ${{ github.run_number }}
         run: |
           npm ci
           npm run package:portable

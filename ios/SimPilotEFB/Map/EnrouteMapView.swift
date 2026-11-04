@@ -402,11 +402,17 @@ struct EnrouteMapView: UIViewRepresentable {
             (style.source(withIdentifier: MapStyle.routeAirwaysSource) as? MLNShapeSource)?.shape = MLNShapeCollectionFeature(shapes: airways)
 
             let points: [MLNPointFeature] = ofp.navlog.enumerated()
-                .filter { $0.element.type != "apt" && $0.element.ident != "TOC" && $0.element.ident != "TOD" }
+                .filter { $0.element.type != "apt" }
                 .map { idx, fix in
                     let f = MLNPointFeature()
                     f.coordinate = fix.coordinate
-                    f.attributes = ["ident": fix.ident, "idx": idx]
+                    // shortcut: FL above 6000 ft is a fixed European transition altitude, not per-airport.
+                    let alt = fix.altFt >= 6000 ? "FL\(Int((fix.altFt / 100).rounded()))" : "\(Int(fix.altFt.rounded())) ft"
+                    let special = fix.ident == "TOC" || fix.ident == "TOD"
+                    let phase = special ? fix.ident : fix.stage.uppercased()   // TOC, TOD, CLB, CRZ, DSC
+                    f.attributes = ["ident": special ? (fix.ident == "TOC" ? "T/C" : "T/D") : fix.ident,
+                                    "label": "\(special ? (fix.ident == "TOC" ? "T/C" : "T/D") : fix.ident)\n\(alt)",
+                                    "phase": phase, "special": special, "idx": idx]
                     return f
                 }
             (style.source(withIdentifier: MapStyle.routePointsSource) as? MLNShapeSource)?.shape = MLNShapeCollectionFeature(shapes: points)

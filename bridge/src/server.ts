@@ -12,6 +12,7 @@ import type { Traffic } from './traffic.js';
 import type { Hub } from './hub.js';
 import { logEntries, logger } from './log.js';
 import { fetchOfp } from './simbrief.js';
+import { checkForUpdate, installUpdate, updatePage } from './update.js';
 import type { ChartIndex } from './types.js';
 import { metars, metarsInBox, parseIds, sigmets, tafs } from './weather.js';
 
@@ -67,6 +68,16 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
     if (!index || (Date.now() - index.fetchedAt > INDEX_MAX_AGE_MS && hub.status().link.connected)) link.requestIndex(icao);
     return index;
   }
+
+  // ---- bridge self-update (this PC only; the page at / has the button) ----
+  router
+    .add('GET', '/', (_req, res) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }).end(updatePage); })
+    .add('GET', '/bridge/update', async (_req, res) => { res.setHeader('cache-control', 'no-store'); sendJson(res, 200, await checkForUpdate()); })
+    .add('POST', '/bridge/update', async (_req, res) => {
+      await installUpdate();
+      sendJson(res, 200, { ok: true });
+      res.on('finish', () => setTimeout(() => process.kill(process.pid, 'SIGTERM'), 300));
+    });
 
   // ---- app ----
   router
@@ -160,10 +171,14 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
     try {
       // Native clients send no Origin; the in-sim Coherent panel uses coui://.
       const origin = req.headers.origin;
-      if (origin && !origin.startsWith('coui://')) throw new HttpError(403, 'unsupported Origin; use the native app or coui:// in-sim panel');
+      const ownPage = /^http:\/\/(localhost|127\.0\.0\.1):\d+$/.test(origin ?? '');   // the update page on this PC
+      if (origin && !origin.startsWith('coui://') && !ownPage) throw new HttpError(403, 'unsupported Origin; use the native app or coui:// in-sim panel');
       const url = new URL(req.url ?? '/', 'http://bridge');
-      if (url.pathname.startsWith('/link/') && !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress ?? '')) {
-        throw new HttpError(403, 'in-sim link must run on the bridge PC');
+      const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress ?? '');
+      if (url.pathname.startsWith('/link/') && !local) throw new HttpError(403, 'in-sim link must run on the bridge PC');
+      // Host check stops DNS-rebinding pages from reaching the installer.
+      if ((url.pathname === '/' || url.pathname.startsWith('/bridge/')) && !(local && /^(localhost|127\.0\.0\.1)(:\d+)?$/.test(req.headers.host ?? ''))) {
+        throw new HttpError(403, 'open this page on the bridge PC at http://localhost:' + config.port);
       }
       if (req.method === 'OPTIONS') {
         res.writeHead(204).end();

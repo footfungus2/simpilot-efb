@@ -30,7 +30,9 @@ enum MapStyle {
     /// Layers behind each NAV filter.
     static func layers(for filters: MapFilters, high: Bool) -> [(String, Bool)] {
         let groups: [([String], Bool)] = [
-            (["route-line", "route-airways", "route-points", "route-labels", "airports", "airport-labels"], filters.route),
+            (["route-line", "route-airways", "route-points", "airports", "airport-labels"], filters.route),
+            (["route-labels"], filters.route && !filters.routeAltitudes),
+            (["route-alt-labels"], filters.route && filters.routeAltitudes),
             (["mora"], filters.mora),
             (["all-airports-major"], filters.airports),
             (["all-airports-minor"], filters.airports && !high),
@@ -331,13 +333,26 @@ enum MapStyle {
                             "text-size": ["interpolate", ["linear"], ["zoom"], 4, 11, 9, 14], "text-keep-upright": true, "text-letter-spacing": 0.05],
                  "paint": ["text-color": "#E8B04A", "text-halo-color": hex(theme.mapLabelHalo), "text-halo-width": 1.5]],
                 ["id": "route-points", "maxzoom": ammZoom + 0.5, "type": "symbol", "source": routePointsSource,
+                 "filter": ["!=", ["get", "special"], true],
                  "layout": ["icon-image": "wpt-triangle", "icon-allow-overlap": true, "icon-size": 1]],
                 ["id": "route-labels", "maxzoom": ammZoom + 0.5, "type": "symbol", "source": routePointsSource,
+                 "filter": ["!=", ["get", "special"], true],
                  "layout": [
                     "text-field": ["get", "ident"], "text-font": ["Noto Sans Bold"], "text-size": 12,
                     "text-anchor": "left", "text-offset": [0.8, 0], "text-optional": true,
                  ],
                  "paint": ["text-color": hex(theme.mapLabel), "text-halo-color": hex(theme.mapLabelHalo), "text-halo-width": 1.6]],
+                // Label = ident + altitude, coloured by phase: climb green, cruise cyan, descent orange; T/C T/D magenta.
+                ["id": "route-alt-labels", "maxzoom": ammZoom + 0.5, "type": "symbol", "source": routePointsSource,
+                 "layout": [
+                    "text-field": ["get", "label"], "text-font": ["Noto Sans Bold"], "text-size": 12,
+                    "text-anchor": "left", "text-offset": [0.8, 0], "text-optional": true,
+                 ],
+                 "paint": ["text-color": ["match", ["get", "phase"],
+                                          "TOC", "#FF4FD8", "TOD", "#FF4FD8",
+                                          "CLB", "#4CD964", "CRZ", "#4FC3F7", "DSC", "#FFA040",
+                                          hex(theme.mapLabel)],
+                           "text-halo-color": hex(theme.mapLabelHalo), "text-halo-width": 1.6]],
                 // The flight's airports always show their indicator.
                 WeatherMapLayer.metarLayer(flight: true, theme: theme),
                 ["id": "airports", "maxzoom": ammZoom + 0.5, "type": "symbol", "source": airportsSource,

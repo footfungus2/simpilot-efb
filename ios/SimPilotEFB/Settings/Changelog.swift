@@ -40,6 +40,12 @@ struct ChangelogEntry: Identifiable {
 
 enum Changelog {
     static let entries: [ChangelogEntry] = [
+        ChangelogEntry(id: "0.1.2", version: "0.1.2", date: "November 2026", summary: "Waypoint altitudes on the route and a self-updating PC bridge.", sections: [
+            .init(kind: .added, items: [
+                "Route waypoints show their planned altitude, colour-coded by phase (climb green, cruise cyan, descent orange), with T/C and T/D markers; switch it off in NAV",
+                "SimPilot Bridge can check for and install updates itself: open http://localhost:8386 on the PC",
+            ]),
+        ]),
         ChangelogEntry(id: "0.1.0", version: "0.1.0", date: "November 2026", summary: "First release.", sections: [
             .init(kind: .added, items: [
                 "Flight screen (checklist icon, bottom bar): departure and arrival briefing with live QNH, wind and VATSIM ATIS, ATC clearance pad with Pencil notes, editable checklists, fuel against the SimBrief plan, logbook, PDF documents and Hoppie ACARS",
