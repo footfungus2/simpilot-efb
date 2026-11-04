@@ -67,13 +67,16 @@ export function updateScript(): string {
     'mkdir "%~3" >nul 2>&1',
     'tar -xf "%~2" -C "%~3" || goto fail',
     'set "SRC=%~3\\SimPilot for PC"',
-    'if not exist "%SRC%\\node.exe" goto fail', 'if not exist "%SRC%\\bridge.cjs" goto fail', 'if not exist "%SRC%\\SimPilot Bridge.cmd" goto fail',
-    // robocopy exit codes below 8 mean success; it retries while the old node.exe is still releasing.
-    'robocopy "%SRC%" "%~1" node.exe bridge.cjs "SimPilot Bridge.cmd" /R:30 /W:1 >nul', 'if errorlevel 8 goto fail',
+    'if not exist "%SRC%\\node.exe" goto fail', 'if not exist "%SRC%\\bridge.cjs" goto fail',
+    // robocopy exit codes below 8 mean success; it retries while the old node.exe / launcher are still closing.
+    'robocopy "%SRC%" "%~1" node.exe bridge.cjs "SimPilot Bridge*" /R:30 /W:1 >nul', 'if errorlevel 8 goto fail',
     'robocopy "%SRC%\\Source and notices" "%~1\\Source and notices" /E /R:3 /W:1 >nul',
-    'start "" "%~1\\SimPilot Bridge.cmd"', 'exit /b 0',
+    // The old zip's plain "SimPilot Bridge.cmd" would sit next to the new .exe under the same name when extensions are hidden.
+    'if exist "%~1\\SimPilot Bridge.exe" del "%~1\\SimPilot Bridge.cmd" >nul 2>&1',
+    'call :launch "%~1"', 'exit /b 0',
     ':fail', 'echo.', 'echo The update did not finish. The old SimPilot Bridge is still in place; try again or download the zip from GitHub.',
-    'start "" "%~1\\SimPilot Bridge.cmd"', 'pause', 'exit /b 1', '',
+    'call :launch "%~1"', 'pause', 'exit /b 1',
+    ':launch', 'if exist "%~1\\SimPilot Bridge.exe" (start "" "%~1\\SimPilot Bridge.exe") else start "" "%~1\\SimPilot Bridge.cmd"', 'exit /b 0', '',
   ].join('\r\n');
 }
 

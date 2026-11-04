@@ -13,10 +13,11 @@ $panel = Join-Path $stage 'Chart panel (optional)'
 
 $runtime = Join-Path $root 'bridge\dist\app\node.exe'
 $bundle = Join-Path $root 'bridge\dist\app\bridge.cjs'
-$launcher = Join-Path $root 'bridge\dist\app\SimPilot Bridge.cmd'
+$launcher = Join-Path $root 'bridge\dist\app\SimPilot Bridge (console).cmd'
+$launcherExe = Join-Path $root 'bridge\dist\app\SimPilot Bridge.exe'
 $sim = Join-Path $root 'sim-package'
 $linkJs = Join-Path $sim 'PackageSources\html_ui\InGamePanels\SimPilotLink\link.js'
-foreach ($file in @($runtime, $bundle, $launcher)) {
+foreach ($file in @($runtime, $bundle, $launcher, $launcherExe)) {
   if (-not (Test-Path -LiteralPath $file)) { throw "Missing $file - run 'npm run package:portable' in bridge first." }
 }
 foreach ($file in @($linkJs, (Join-Path $sim 'PackageSources\panel-assets.json'))) {
@@ -28,7 +29,7 @@ if (-not (Test-Path -LiteralPath $notices)) { throw 'Source and license notices 
 try {
 New-Item -ItemType Directory -Path $panel -Force | Out-Null
 
-foreach ($file in @($runtime, $bundle, $launcher)) { Copy-Item -LiteralPath $file -Destination $stage }
+foreach ($file in @($runtime, $bundle, $launcher, $launcherExe)) { Copy-Item -LiteralPath $file -Destination $stage }
 Copy-Item -LiteralPath $notices -Destination $stage -Recurse
 Copy-Item -LiteralPath (Join-Path $sim 'install.bat') -Destination (Join-Path $panel 'Install SimPilot Link.bat')
 Copy-Item -LiteralPath (Join-Path $sim 'repair.bat') -Destination (Join-Path $panel 'Repair SimPilot Link.bat')
@@ -43,7 +44,11 @@ SimPilot for PC
 
 Open the "SimPilot for PC" folder after choosing Extract All.
 
-1. Double-click "SimPilot Bridge.cmd" (shown as "SimPilot Bridge" if extensions are hidden) and leave its window open while you fly.
+1. Double-click "SimPilot Bridge" (the one with the SimPilot icon) and leave it running while you fly.
+   Its window shows whether the iPad, MSFS and the chart panel are connected. Closing the window
+   keeps it running in the tray (next to the clock); right-click the tray icon to quit.
+   "Check for updates" in the window installs newer versions by itself.
+   (If it won't open, "SimPilot Bridge (console).cmd" runs the same bridge in a plain text window.)
    - If Windows Firewall asks: tick "Private networks" and click "Allow access".
      Windows may call it "Node.js JavaScript Runtime"; that is SimPilot Bridge.
    Keep the iPad and PC on the same local network (Wi-Fi or Ethernet).
@@ -79,7 +84,6 @@ Not connecting?
 - iPad: Settings > Privacy > Local Network > switch SimPilot EFB on.
 - Avoid guest networks. In Settings > Bridge, try the PC's Wi-Fi or Ethernet address shown
   in the bridge window, rather than a VPN or virtual adapter's address.
-- If selecting text pauses the bridge window, press Esc to resume.
 
 More help: https://github.com/footfungus2/simpilot-efb#connect-to-msfs-2024
 '@

@@ -185,7 +185,7 @@ else works without the PC. Put the iPad and sim PC on the **same local network**
 1. On the sim PC, open the **[latest release](https://github.com/footfungus2/simpilot-efb/releases/latest)** and download
    **`SimPilot-for-PC.zip`**.
 2. Right-click the zip, choose **Extract All**, then open the **SimPilot for PC** folder inside.
-3. Double-click **SimPilot Bridge.cmd** (shown as **SimPilot Bridge** if file extensions are hidden) and leave its window open while you fly.
+3. Double-click **SimPilot Bridge** (the one with the SimPilot icon) and leave it running while you fly. Its window shows what is connected; closing it keeps the bridge running in the tray. If it won't open, **SimPilot Bridge (console).cmd** runs the same bridge in a plain text window.
    - If Windows Firewall asks, tick **Private networks** and click **Allow access**. Windows may call this app
      **Node.js JavaScript Runtime**; that is SimPilot Bridge.
 4. On the iPad, tap **OK** when SimPilot EFB asks to find devices on your local network.

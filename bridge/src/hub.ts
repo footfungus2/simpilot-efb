@@ -54,6 +54,9 @@ export class Hub {
     this.messageHandlers = [];
   }
 
+  /** Number of iPads connected to the bridge. */
+  get appCount(): number { return this.clients.size; }
+
   status(): BridgeStatus {
     return {
       sim: { connected: this.simConnected, aircraftTitle: this.aircraftTitle },

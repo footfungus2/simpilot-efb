@@ -76,7 +76,7 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
     .add('POST', '/bridge/update', async (_req, res) => {
       await installUpdate();
       sendJson(res, 200, { ok: true });
-      res.on('finish', () => setTimeout(() => process.kill(process.pid, 'SIGTERM'), 300));
+      res.on('finish', () => setTimeout(() => process.exit(0), 300));
     });
 
   // ---- app ----
@@ -86,7 +86,7 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
       const address = server.address();
       sendJson(res, 200, { ...hub.status(), bridge: {
         name: 'SimPilot Bridge', version: config.bridgeVersion, buildId: config.buildId,
-        linkProtocol: LINK_PROTOCOL, port: address && typeof address !== 'string' ? address.port : config.port,
+        linkProtocol: LINK_PROTOCOL, apps: hub.appCount, port: address && typeof address !== 'string' ? address.port : config.port,
       } });
     })
     .add('GET', '/api/diagnostics', (_req, res) => {

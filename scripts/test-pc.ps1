@@ -25,7 +25,8 @@ try {
   Copy-Item (Join-Path $PSScriptRoot 'package-pc.ps1') (Join-Path $fixture 'scripts\package-pc.ps1')
   Write-Fixture 'bridge\dist\app\node.exe'
   Write-Fixture 'bridge\dist\app\bridge.cjs'
-  Write-Fixture 'bridge\dist\app\SimPilot Bridge.cmd'
+  Write-Fixture 'bridge\dist\app\SimPilot Bridge (console).cmd'
+  Write-Fixture 'bridge\dist\app\SimPilot Bridge.exe'
   Write-Fixture 'bridge\dist\app\Source and notices\Node-LICENSE.txt'
   foreach ($path in $assetPaths) { Write-Fixture ('sim-package/PackageSources/html_ui/' + $path) ('new ' + $path) }
   Write-AssetManifest
@@ -37,10 +38,9 @@ try {
   Assert-Check (Test-Path (Join-Path $output 'keep.txt')) 'Packaging deleted unrelated output files.'
   $expanded = Join-Path $scratch 'expanded'
   Expand-Archive (Join-Path $output 'SimPilot-for-PC.zip') $expanded
-  foreach ($file in 'node.exe', 'bridge.cjs', 'SimPilot Bridge.cmd', 'Read me.txt', 'Source and notices\Node-LICENSE.txt', 'Chart panel (optional)\Install SimPilot Link.bat', 'Chart panel (optional)\Repair SimPilot Link.bat', 'Chart panel (optional)\Diagnose SimPilot Link.bat', 'Chart panel (optional)\PackageSources\panel-assets.json') {
+  foreach ($file in 'node.exe', 'bridge.cjs', 'SimPilot Bridge (console).cmd', 'SimPilot Bridge.exe', 'Read me.txt', 'Source and notices\Node-LICENSE.txt', 'Chart panel (optional)\Install SimPilot Link.bat', 'Chart panel (optional)\Repair SimPilot Link.bat', 'Chart panel (optional)\Diagnose SimPilot Link.bat', 'Chart panel (optional)\PackageSources\panel-assets.json') {
     Assert-Check (Test-Path (Join-Path $expanded ('SimPilot for PC\' + $file))) "Missing packaged file: $file"
   }
-  Assert-Check (-not (Test-Path (Join-Path $expanded 'SimPilot for PC\SimPilot Bridge.exe'))) 'The modified standalone executable is still included.'
   Assert-Check (@(Get-ChildItem $output -Directory -Filter '.stage-*').Count -eq 0) 'Packaging left its temporary stage behind.'
 
   # A tiny SDK stand-in proves failed native commands cannot install a stale package.
