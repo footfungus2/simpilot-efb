@@ -43,13 +43,16 @@ console.log('2/4 Copying the official Node.js runtime');
 fs.copyFileSync(process.execPath, runtime);
 fs.writeFileSync(launcher, '@echo off\r\nsetlocal\r\n"%~dp0node.exe" "%~dp0bridge.cjs"\r\nexit /b %ERRORLEVEL%\r\n');
 
-console.log('3/4 Compiling the launcher window (C# compiler that ships with Windows)');
-const csc = path.join(process.env.WINDIR ?? 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe');
+console.log('3/4 Compiling the launcher window (C# compiler and WPF that ship with Windows)');
+const frameworkDir = path.join(process.env.WINDIR ?? 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319');
+const csc = path.join(frameworkDir, 'csc.exe');
 if (!fs.existsSync(csc)) throw new Error(`Windows' C# compiler is missing at ${csc}`);
 const compiled = spawnSync(csc, [
   '/nologo', '/target:winexe', '/optimize+', '/platform:anycpu', `/out:${launcherExe}`,
   `/win32icon:${path.join(root, 'launcher', 'simpilot.ico')}`,
-  '/r:System.dll', '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll', '/r:System.Web.Extensions.dll',
+  `/resource:${path.join(root, 'launcher', 'logo.png')},logo.png`,
+  '/r:System.dll', '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll', '/r:System.Web.Extensions.dll', '/r:System.Xaml.dll',
+  ...['PresentationFramework', 'PresentationCore', 'WindowsBase'].map((name) => `/r:${path.join(frameworkDir, 'WPF', `${name}.dll`)}`),
   path.join(root, 'launcher', 'SimPilotBridge.cs'),
 ], { encoding: 'utf8' });
 if (compiled.status !== 0) throw new Error(`The launcher didn't compile:\n${compiled.stdout}${compiled.stderr}`);

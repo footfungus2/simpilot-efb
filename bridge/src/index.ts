@@ -68,7 +68,6 @@ function welcome(port: number, version: string, buildId: string, lanAddresses: (
     console.log('  If the app cannot find the PC, type its Wi-Fi or Ethernet address in Settings > Bridge:');
     for (const adapter of adapters) console.log(`    ${adapter.name}: ${adapter.address}`);
   }
-  console.log(`  To check for updates, open http://localhost:${port} in a browser on this PC.`);
   console.log('  MSFS 2024 connects automatically whenever it is running. To stop, close this window.');
   if (process.platform === 'win32') {
     console.log('  Windows may call the bridge "Node.js JavaScript Runtime" in its firewall prompt. Allow Private networks.');

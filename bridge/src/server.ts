@@ -14,7 +14,6 @@ import { logEntries, logger } from './log.js';
 import { fetchOfp } from './simbrief.js';
 import { bridgeInfo, manage } from './manage.js';
 import { checkForUpdate, installUpdate } from './update.js';
-import { appPage } from './ui.js';
 import type { ChartIndex } from './types.js';
 import { metars, metarsInBox, parseIds, sigmets, tafs } from './weather.js';
 
@@ -73,7 +72,7 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
 
   // ---- the bridge window at / (this PC only): status, update, repair ----
   router
-    .add('GET', '/', (_req, res) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }).end(appPage); })
+    .add('GET', '/', (_req, res) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }).end('<!doctype html><meta charset="utf-8"><title>SimPilot Bridge</title><body style="font:16px system-ui;margin:3rem">SimPilot Bridge is running. Use the SimPilot Bridge program on this PC.'); })
     .add('GET', '/bridge/update', async (_req, res) => { res.setHeader('cache-control', 'no-store'); sendJson(res, 200, await checkForUpdate()); })
     .add('GET', '/bridge/info', async (_req, res) => { res.setHeader('cache-control', 'no-store'); sendJson(res, 200, await bridgeInfo()); })
     .add('POST', '/bridge/manage/:action', async (req, res, p) => {

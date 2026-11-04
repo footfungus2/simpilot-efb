@@ -1,21 +1,32 @@
-// SimPilot Bridge.exe: tray icon + the bridge window around node.exe / bridge.cjs.
-// The window itself is the page the bridge serves at http://127.0.0.1:8386/, opened as a chromeless Edge/Chrome app window.
+// SimPilot Bridge.exe: a native WPF window plus a tray icon around node.exe / bridge.cjs.
 // Compiled in CI with the C# 5 compiler that ships with Windows (csc.exe, .NET Framework 4), so keep to C# 5:
-// no string interpolation, no ?. operator, no expression-bodied members.
+// no string interpolation, no ?. operator, no expression-bodied members, no nameof.
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Net;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Web.Script.Serialization;
-using System.Windows.Forms;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+using Drawing = System.Drawing;
+using Forms = System.Windows.Forms;
+using Shapes = System.Windows.Shapes;
 
 static class Program
 {
     public const int Port = 8386;
+    const string ShowEvent = "Local\\SimPilotBridgeShow";
 
     [STAThread]
     static int Main(string[] args)
@@ -26,27 +37,45 @@ static class Program
         {
             if (!created)
             {
-                Window.Open();   // already running: just bring the window back
+                try { EventWaitHandle.OpenExisting(ShowEvent).Set(); } catch (Exception) { }   // already running: show its window
                 return 0;
             }
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
-            TrayApp app = new TrayApp(Array.IndexOf(args, "--minimized") >= 0);
-            app.Begin();
-            Application.Run(app);
+            Application app = new Application();
+            app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            TrayApp tray = new TrayApp(Array.IndexOf(args, "--minimized") >= 0, new EventWaitHandle(false, EventResetMode.AutoReset, ShowEvent));
+            app.Startup += delegate { tray.Begin(); };
+            app.Run();
         }
         return 0;
     }
 
-    // CI runs this after compiling: proves the exe starts and its JSON helper works, without opening anything.
+    // CI runs this after compiling: builds the whole window (not shown) and feeds it sample data, so a broken UI fails the build.
     static int SelfCheck()
     {
-        try
+        int result = 1;
+        Thread t = new Thread(delegate ()
         {
-            object parsed = new JavaScriptSerializer().DeserializeObject("{\"sim\":{\"connected\":true},\"bridge\":{\"apps\":2}}");
-            return Json.Bool(parsed, "sim", "connected") && Json.Int(parsed, "bridge", "apps") == 2 ? 0 : 1;
-        }
-        catch (Exception) { return 1; }
+            try
+            {
+                JavaScriptSerializer js = new JavaScriptSerializer();
+                object status = js.DeserializeObject("{\"sim\":{\"connected\":true,\"aircraftTitle\":\"Fenix A320\"},\"link\":{\"connected\":false},\"bridge\":{\"apps\":2,\"version\":\"0.1.1\",\"port\":8386}}");
+                object info = js.DeserializeObject("{\"hostname\":\"PC\",\"addresses\":[{\"name\":\"Wi-Fi\",\"address\":\"192.168.1.42:8386\"}],\"cache\":{\"airports\":[{\"icao\":\"EGSS\",\"charts\":14,\"bytes\":123456789}],\"bytes\":123456789},\"autostart\":true,\"windows\":true,\"panelFolder\":true}");
+                object log = js.DeserializeObject("{\"entries\":[{\"time\":\"2026-11-04T16:42:01.123Z\",\"level\":\"warn\",\"scope\":\"sim\",\"message\":\"in-sim link lost\"}]}");
+                if (!Json.Bool(status, "sim", "connected") || Json.Int(status, "bridge", "apps") != 2) return;
+                MainWindow w = new MainWindow(null);
+                w.ApplyStatus(status);
+                w.ApplyInfo(info);
+                w.ApplyLog(log);
+                w.ShowPage(3);
+                w.ShowPage(4);
+                result = 0;
+            }
+            catch (Exception ex) { Console.Error.WriteLine(ex.ToString()); }
+        });
+        t.SetApartmentState(ApartmentState.STA);
+        t.Start();
+        t.Join();
+        return result;
     }
 }
 
@@ -64,119 +93,937 @@ static class Json
         return cur;
     }
     public static bool Bool(object root, params string[] path) { object v = Get(root, path); return v is bool && (bool)v; }
-    public static int Int(object root, params string[] path) { object v = Get(root, path); return v is int ? (int)v : 0; }
-}
-
-static class Window
-{
-    static readonly string Url = "http://127.0.0.1:" + Program.Port + "/";
-
-    /// Edge ships with Windows 10/11, so use it (or Chrome) as an app window with no tabs or address bar; any browser otherwise.
-    public static void Open()
+    public static int Int(object root, params string[] path) { return (int)Long(root, path); }
+    public static long Long(object root, params string[] path)
     {
-        string[] roots = { Environment.GetEnvironmentVariable("ProgramFiles(x86)"), Environment.GetEnvironmentVariable("ProgramFiles"), Environment.GetEnvironmentVariable("LocalAppData") };
-        string[] relative = { @"Microsoft\Edge\Application\msedge.exe", @"Google\Chrome\Application\chrome.exe" };
-        string profile = Path.Combine(Environment.GetEnvironmentVariable("LocalAppData") ?? "", @"SimPilot Bridge\window");
-        foreach (string rel in relative)
-            foreach (string root in roots)
-            {
-                if (string.IsNullOrEmpty(root)) continue;
-                string exe = Path.Combine(root, rel);
-                if (!File.Exists(exe)) continue;
-                try
-                {
-                    Process.Start(new ProcessStartInfo(exe, "--app=" + Url + " --window-size=1040,680 --no-first-run --user-data-dir=\"" + profile + "\"") { UseShellExecute = false });
-                    return;
-                }
-                catch (Exception) { }
-            }
-        try { Process.Start(Url); } catch (Exception) { }
+        object v = Get(root, path);
+        return v is IConvertible && !(v is string) && !(v is bool) ? Convert.ToInt64(v, CultureInfo.InvariantCulture) : 0;
+    }
+    public static string Str(object root, params string[] path) { return Get(root, path) as string; }
+    public static IEnumerable List(object root, params string[] path)
+    {
+        IEnumerable list = Get(root, path) as IEnumerable;
+        return list == null || list is string ? new object[0] : list;
     }
 }
 
 static class Net
 {
-    /// Plain GET to the local bridge; throws on any failure.
-    public static string Get(string path, int timeoutMs)
+    /// Plain HTTP to the bridge running in this same program. Throws with the bridge's own error message when it gives one.
+    public static string Call(string method, string path, int timeoutMs)
     {
         HttpWebRequest r = (HttpWebRequest)WebRequest.Create("http://127.0.0.1:" + Program.Port + path);
+        r.Method = method;
         r.Timeout = timeoutMs;
         r.ReadWriteTimeout = timeoutMs;
         r.Proxy = null;
-        using (HttpWebResponse res = (HttpWebResponse)r.GetResponse())
+        if (method == "POST") { r.ContentLength = 0; r.Headers["x-simpilot-ui"] = "1"; }   // the bridge only accepts repairs from this window
+        try
+        {
+            using (HttpWebResponse res = (HttpWebResponse)r.GetResponse()) return Read(res);
+        }
+        catch (WebException ex)
+        {
+            HttpWebResponse res = ex.Response as HttpWebResponse;
+            if (res == null) throw;
+            string message = null;
+            try { message = Json.Str(new JavaScriptSerializer().DeserializeObject(Read(res)), "error"); } catch (Exception) { }
+            throw new Exception(message ?? ("The bridge answered " + (int)res.StatusCode));
+        }
+    }
+
+    static string Read(HttpWebResponse res)
+    {
         using (StreamReader sr = new StreamReader(res.GetResponseStream(), Encoding.UTF8)) return sr.ReadToEnd();
+    }
+
+    public static object Obj(string method, string path, int timeoutMs) { return new JavaScriptSerializer().DeserializeObject(Call(method, path, timeoutMs)); }
+}
+
+// ---- look: the iOS app's night colours ----
+static class Pal
+{
+    public static Color C(string hex) { return (Color)ColorConverter.ConvertFromString(hex); }
+    public static SolidColorBrush B(string hex) { return new SolidColorBrush(C(hex)); }   // new each time: animated brushes can't be shared
+    public const string Frame = "#22252B", Panel = "#2B2E34", Line = "#3A3D44", Hover = "#2E3138", Hover2 = "#363A42";
+    public const string Fg = "#FFFFFF", Fg2 = "#9EA3AB", Fg3 = "#6B7079", Ok = "#2FB24F", Blue = "#3D8BFF", BlueHover = "#5A9DFF", Warn = "#E8913A", Bad = "#FF6B6B";
+    public static readonly FontFamily Sans = new FontFamily("Segoe UI"), Mono = new FontFamily("Consolas");
+
+    public static TextBlock Text(string text, double size, string fg, bool bold)
+    {
+        TextBlock t = new TextBlock { Text = text, FontSize = size, Foreground = B(fg), FontFamily = Sans, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center };
+        if (bold) t.FontWeight = FontWeights.SemiBold;
+        return t;
+    }
+
+    public static Shapes.Path Icon(string data, string stroke)
+    {
+        return new Shapes.Path { Data = Geometry.Parse(data), Stroke = B(stroke), StrokeThickness = 1.5, Width = 16, Height = 16, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, StrokeLineJoin = PenLineJoin.Round };
+    }
+
+    static IEasingFunction Ease() { return new CubicEase { EasingMode = EasingMode.EaseOut }; }
+
+    public static void Fade(UIElement e, double to, int ms)
+    {
+        e.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(to, TimeSpan.FromMilliseconds(ms)) { EasingFunction = Ease() });
+    }
+
+    public static void Tint(SolidColorBrush b, string hex, int ms)
+    {
+        b.BeginAnimation(SolidColorBrush.ColorProperty, new ColorAnimation(C(hex), TimeSpan.FromMilliseconds(ms)));
+    }
+
+    public static void Slide(TranslateTransform t, DependencyProperty p, double from, double to, int ms)
+    {
+        t.BeginAnimation(p, new DoubleAnimation(from, to, TimeSpan.FromMilliseconds(ms)) { EasingFunction = Ease() });
     }
 }
 
-class TrayApp : ApplicationContext
+/// A rounded button that eases between colours on hover and shrinks a little when pressed.
+class Btn : Border
+{
+    public event Action Click;
+    readonly SolidColorBrush fill = Pal.B("#00000000");
+    readonly SolidColorBrush edge = Pal.B(Pal.Line);
+    readonly TextBlock label;
+    readonly string kind;   // ghost | primary | danger | icon | flat
+    readonly string idle, over;
+    readonly ScaleTransform press = new ScaleTransform(1, 1);
+
+    public Btn(string text, string kind)
+    {
+        this.kind = kind;
+        CornerRadius = new CornerRadius(8);
+        BorderThickness = new Thickness(1);
+        Padding = new Thickness(14, 7, 14, 7);
+        Cursor = Cursors.Hand;
+        Background = fill;
+        BorderBrush = edge;
+        RenderTransform = press;
+        RenderTransformOrigin = new Point(0.5, 0.5);
+        string fg = kind == "primary" ? Pal.Fg : kind == "danger" ? Pal.Bad : Pal.Fg2;
+        if (kind == "primary") { idle = Pal.Blue; over = Pal.BlueHover; fill.Color = Pal.C(idle); edge.Color = Pal.C(idle); }
+        else { idle = "#00000000"; over = Pal.Hover2; }
+        label = Pal.Text(text, 13.5, fg, kind == "primary");
+        Child = label;
+        MouseEnter += delegate { if (IsEnabled) { Pal.Tint(fill, over, 140); if (kind != "primary") Pal.Tint(label.Foreground as SolidColorBrush, kind == "danger" ? "#FF8A8A" : Pal.Fg, 140); } };
+        MouseLeave += delegate { Pal.Tint(fill, idle, 180); if (kind != "primary") Pal.Tint(label.Foreground as SolidColorBrush, kind == "danger" ? Pal.Bad : Pal.Fg2, 180); };
+        MouseLeftButtonDown += delegate { if (IsEnabled) Pal.Tint(fill, over, 40); press.ScaleX = press.ScaleY = 0.97; CaptureMouse(); };
+        MouseLeftButtonUp += delegate
+        {
+            bool inside = IsMouseOver;
+            press.ScaleX = press.ScaleY = 1;
+            ReleaseMouseCapture();
+            if (inside && IsEnabled && Click != null) Click();
+        };
+        IsEnabledChanged += delegate { Opacity = IsEnabled ? 1 : 0.5; };
+    }
+
+    public string Text { get { return label.Text; } set { label.Text = value; } }
+    public void SetContent(UIElement e) { Child = e; }
+}
+
+/// Status dot; while connected a soft ring pulses around it.
+class Dot : Grid
+{
+    readonly Shapes.Ellipse core = new Shapes.Ellipse { Width = 8, Height = 8, Fill = Pal.B(Pal.Fg3) };
+    readonly Shapes.Ellipse ring = new Shapes.Ellipse { Width = 8, Height = 8, Fill = Pal.B(Pal.Ok), Opacity = 0, RenderTransformOrigin = new Point(0.5, 0.5) };
+    readonly ScaleTransform scale = new ScaleTransform(1, 1);
+    bool pulsing;
+
+    public Dot()
+    {
+        Width = 18; Height = 18;
+        ring.RenderTransform = scale;
+        Children.Add(ring);
+        Children.Add(core);
+    }
+
+    public void Set(bool ok, bool busy)
+    {
+        Pal.Tint((SolidColorBrush)core.Fill, ok ? Pal.Ok : busy ? Pal.Blue : Pal.Fg3, 300);
+        Pal.Tint((SolidColorBrush)ring.Fill, busy ? Pal.Blue : Pal.Ok, 300);
+        bool want = ok || busy;
+        if (want == pulsing) return;
+        pulsing = want;
+        if (!want)
+        {
+            ring.BeginAnimation(UIElement.OpacityProperty, null); scale.BeginAnimation(ScaleTransform.ScaleXProperty, null); scale.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            ring.Opacity = 0;
+            return;
+        }
+        Duration d = new Duration(TimeSpan.FromMilliseconds(2200));
+        DoubleAnimation grow = new DoubleAnimation(1, 2.4, d) { RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
+        ring.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0.45, 0, d) { RepeatBehavior = RepeatBehavior.Forever });
+    }
+}
+
+class Switch : Border
+{
+    public event Action Changed;
+    readonly SolidColorBrush track = Pal.B(Pal.Line);
+    readonly Shapes.Ellipse thumb = new Shapes.Ellipse { Width = 12, Height = 12, Fill = Pal.B(Pal.Fg2), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
+    readonly TranslateTransform move = new TranslateTransform(3, 0);
+    bool on;
+
+    public Switch()
+    {
+        Width = 32; Height = 18; CornerRadius = new CornerRadius(9); Background = track; Cursor = Cursors.Hand;
+        thumb.RenderTransform = move;
+        Child = thumb;
+        MouseLeftButtonUp += delegate { Set(!on, true); if (Changed != null) Changed(); };
+    }
+
+    public bool On { get { return on; } }
+
+    public void Set(bool value, bool animate)
+    {
+        on = value;
+        int ms = animate ? 180 : 1;
+        Pal.Tint(track, on ? Pal.Blue : Pal.Line, ms);
+        Pal.Tint((SolidColorBrush)thumb.Fill, on ? Pal.Fg : Pal.Fg2, ms);
+        Pal.Slide(move, TranslateTransform.XProperty, move.X, on ? 17 : 3, ms);
+    }
+}
+
+class NavItem : Border
+{
+    public event Action Click;
+    readonly SolidColorBrush fill = Pal.B("#00000000");
+    readonly SolidColorBrush fg = Pal.B(Pal.Fg2);
+    bool selected;
+
+    public NavItem(string text, string iconData)
+    {
+        CornerRadius = new CornerRadius(8); Padding = new Thickness(12, 9, 12, 9); Cursor = Cursors.Hand; Background = fill;
+        Grid g = new Grid();
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(27) });
+        g.ColumnDefinitions.Add(new ColumnDefinition());
+        Shapes.Path icon = new Shapes.Path { Data = Geometry.Parse(iconData), Stroke = fg, StrokeThickness = 1.5, Width = 16, Height = 16, StrokeLineJoin = PenLineJoin.Round, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
+        TextBlock t = new TextBlock { Text = text, FontSize = 14, FontFamily = Pal.Sans, Foreground = fg, VerticalAlignment = VerticalAlignment.Center };
+        Grid.SetColumn(t, 1);
+        g.Children.Add(icon); g.Children.Add(t);
+        Child = g;
+        MouseEnter += delegate { if (!selected) { Pal.Tint(fill, "#1F2227", 120); Pal.Tint(fg, Pal.Fg, 120); } };
+        MouseLeave += delegate { if (!selected) { Pal.Tint(fill, "#00000000", 160); Pal.Tint(fg, Pal.Fg2, 160); } };
+        MouseLeftButtonUp += delegate { if (Click != null) Click(); };
+    }
+
+    public void Select(bool on)
+    {
+        selected = on;
+        Pal.Tint(fill, on ? Pal.Hover : "#00000000", 200);
+        Pal.Tint(fg, on ? Pal.Fg : Pal.Fg2, 200);
+    }
+}
+
+/// Question that slides open on click.
+class Faq : StackPanel
+{
+    readonly Border body;
+    readonly TextBlock sign = Pal.Text("+", 16, Pal.Fg2, false);
+    double full;
+    bool open;
+
+    public Faq(string question, string answer)
+    {
+        Grid head = new Grid { Margin = new Thickness(18, 15, 18, 15), Background = Pal.B("#00000000"), Cursor = Cursors.Hand };
+        head.ColumnDefinitions.Add(new ColumnDefinition());
+        head.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        TextBlock q = Pal.Text(question, 14, Pal.Fg, false);
+        q.FontWeight = FontWeights.Medium;
+        Grid.SetColumn(sign, 1);
+        head.Children.Add(q); head.Children.Add(sign);
+        TextBlock a = Pal.Text(answer, 13.5, Pal.Fg2, false);
+        a.LineHeight = 21;
+        a.Margin = new Thickness(18, 0, 18, 16);
+        a.MaxWidth = 640; a.HorizontalAlignment = HorizontalAlignment.Left;
+        body = new Border { Child = a, Height = 0, ClipToBounds = true };
+        Children.Add(head); Children.Add(body);
+        head.MouseLeftButtonUp += delegate
+        {
+            open = !open;
+            sign.Text = open ? "–" : "+";
+            if (full == 0) { a.Measure(new Size(700, double.PositiveInfinity)); full = a.DesiredSize.Height + 16; }
+            body.BeginAnimation(FrameworkElement.HeightProperty, new DoubleAnimation(open ? full : 0, TimeSpan.FromMilliseconds(220)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+        };
+    }
+}
+
+class MainWindow : Window
+{
+    readonly TrayApp host;
+    readonly Grid pages = new Grid();
+    readonly List<FrameworkElement> pageList = new List<FrameworkElement>();
+    readonly List<NavItem> navItems = new List<NavItem>();
+    readonly Dictionary<string, Btn> actions = new Dictionary<string, Btn>();
+    readonly DispatcherTimer timer = new DispatcherTimer();
+    readonly TextBlock toast = Pal.Text("", 13.5, Pal.Fg2, false);
+
+    TextBlock hostText, topIp, connText, version, newVersion, lede, addr, cacheSize, logText;
+    Dot connDot, dIpad, dSim, dLink;
+    TextBlock tIpad, tSim, tLink;
+    StackPanel airports;
+    ScrollViewer logScroll;
+    Switch autostart;
+    Btn install, restart;
+    Shapes.Path eyeOpen, eyeShut;
+    bool ipHidden, polling, infoLoading, logLoading, updateBusy;
+    int current = -1, misses, tick;
+    string firstAddress = "";
+    string lastLog = "";
+    DispatcherTimer toastTimer = new DispatcherTimer();
+
+    public MainWindow(TrayApp host)
+    {
+        this.host = host;
+        Title = "SimPilot Bridge";
+        Width = 1040; Height = 680;
+        WindowStyle = WindowStyle.None;
+        ResizeMode = ResizeMode.CanMinimize;
+        WindowStartupLocation = WindowStartupLocation.CenterScreen;
+        Background = Pal.B(Pal.Frame);
+        BorderBrush = Pal.B(Pal.Line);
+        BorderThickness = new Thickness(1);
+        UseLayoutRounding = true;
+        TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
+        FontFamily = Pal.Sans;
+        try { Icon = BitmapFrame.Create(LogoStream(), BitmapCreateOptions.None, BitmapCacheOption.OnLoad); } catch (Exception) { }
+
+        Grid root = new Grid();
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(52) });
+        root.RowDefinitions.Add(new RowDefinition());
+        Grid top = TopBar();
+        root.Children.Add(top);
+        Grid body = new Grid { Margin = new Thickness(10, 0, 10, 10) };
+        body.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(220) });
+        body.ColumnDefinitions.Add(new ColumnDefinition());
+        Grid.SetRow(body, 1);
+        root.Children.Add(body);
+        Grid side = Sidebar();
+        body.Children.Add(side);
+        Border panel = new Border { Background = Pal.B(Pal.Panel), BorderBrush = Pal.B(Pal.Line), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Margin = new Thickness(8, 0, 0, 0), ClipToBounds = true };
+        Grid.SetColumn(panel, 1);
+        Grid content = new Grid();
+        content.RowDefinitions.Add(new RowDefinition());
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        content.Children.Add(pages);
+        toast.Margin = new Thickness(30, 0, 30, 14); toast.Opacity = 0;
+        Grid.SetRow(toast, 1);
+        content.Children.Add(toast);
+        panel.Child = content;
+        body.Children.Add(panel);
+        Content = root;
+
+        AddPage(StatusPage()); AddPage(ChartsPage()); AddPage(LogPage()); AddPage(RepairPage()); AddPage(HelpPage());
+        top.MouseLeftButtonDown += delegate { try { DragMove(); } catch (Exception) { } };
+
+        // opening: fade up and settle
+        Opacity = 0;
+        ScaleTransform grow = new ScaleTransform(0.975, 0.975);
+        root.RenderTransform = grow; root.RenderTransformOrigin = new Point(0.5, 0.5);
+        Loaded += delegate
+        {
+            Pal.Fade(this, 1, 260);
+            grow.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(320)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+            grow.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(320)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+        };
+        ShowPage(0);
+
+        toastTimer.Interval = TimeSpan.FromSeconds(5);
+        toastTimer.Tick += delegate { toastTimer.Stop(); Pal.Fade(toast, 0, 300); };
+        timer.Interval = TimeSpan.FromSeconds(2);
+        timer.Tick += delegate { Refresh(); };
+        if (host != null) { timer.Start(); Refresh(); CheckUpdate(); }
+        IsVisibleChanged += delegate { if (IsVisible && host != null) Refresh(); };
+    }
+
+    public static Stream LogoStream() { return Assembly.GetExecutingAssembly().GetManifestResourceStream("logo.png"); }
+
+    static BitmapImage Logo()
+    {
+        BitmapImage img = new BitmapImage();
+        img.BeginInit(); img.StreamSource = LogoStream(); img.CacheOption = BitmapCacheOption.OnLoad; img.EndInit(); img.Freeze();
+        return img;
+    }
+
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        if (host != null) { e.Cancel = true; Hide(); host.WindowHidden(); return; }
+        base.OnClosing(e);
+    }
+
+    // ---- layout ----
+
+    Grid TopBar()
+    {
+        Grid g = new Grid { Background = Pal.B("#00000000") };
+        StackPanel left = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(18, 0, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center };
+        left.Children.Add(new Image { Source = Logo(), Width = 24, Height = 24, Margin = new Thickness(0, 0, 9, 0), IsHitTestVisible = false });
+        TextBlock name = Pal.Text("SimPilot Bridge", 14, Pal.Fg, true); name.IsHitTestVisible = false;
+        left.Children.Add(name);
+        Border pill = new Border { BorderBrush = Pal.B(Pal.Line), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 5, 12, 5), Margin = new Thickness(16, 0, 0, 0), IsHitTestVisible = false };
+        StackPanel pp = new StackPanel { Orientation = Orientation.Horizontal };
+        hostText = Pal.Text("", 13.5, Pal.Fg, false); hostText.FontWeight = FontWeights.Medium;
+        topIp = Pal.Text("", 12.5, Pal.Fg2, false); topIp.Margin = new Thickness(8, 0, 0, 0);
+        pp.Children.Add(hostText); pp.Children.Add(topIp);
+        pill.Child = pp;
+        left.Children.Add(pill);
+        g.Children.Add(left);
+
+        StackPanel right = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        connDot = new Dot { VerticalAlignment = VerticalAlignment.Center };
+        connText = Pal.Text("Starting", 13, Pal.Fg2, false); connText.Margin = new Thickness(6, 0, 18, 0);
+        right.Children.Add(connDot); right.Children.Add(connText);
+        right.Children.Add(CaptionButton("–", false)); right.Children.Add(CaptionButton("✕", true));
+        g.Children.Add(right);
+        return g;
+    }
+
+    Border CaptionButton(string glyph, bool close)
+    {
+        SolidColorBrush fill = Pal.B("#00000000");
+        TextBlock t = Pal.Text(glyph, 12, Pal.Fg2, false); t.HorizontalAlignment = HorizontalAlignment.Center;
+        Border b = new Border { Width = 46, Height = 52, Background = fill, Child = t, Cursor = Cursors.Hand };
+        b.MouseEnter += delegate { Pal.Tint(fill, close ? "#C42B1C" : Pal.Hover2, 120); ((SolidColorBrush)t.Foreground).Color = Pal.C(Pal.Fg); };
+        b.MouseLeave += delegate { Pal.Tint(fill, "#00000000", 160); ((SolidColorBrush)t.Foreground).Color = Pal.C(Pal.Fg2); };
+        b.MouseLeftButtonDown += delegate (object s, MouseButtonEventArgs e) { e.Handled = true; };
+        b.MouseLeftButtonUp += delegate { if (close) Close(); else WindowState = WindowState.Minimized; };
+        return b;
+    }
+
+    Grid Sidebar()
+    {
+        Grid shell = new Grid { Margin = new Thickness(0, 4, 0, 0) };
+        shell.RowDefinitions.Add(new RowDefinition());
+        shell.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        StackPanel nav = new StackPanel();
+        string[] names = { "Status", "Charts", "Log", "Repair", "Help" };
+        string[] icons = {
+            "M2,2H7V7H2Z M9,2H14V7H9Z M2,9H7V14H2Z M9,9H14V14H9Z",
+            "M3,2H13V14H3Z M6,6H10 M6,9H10",
+            "M3,4H13 M3,8H13 M3,12H9",
+            "M10.5,2.5 A3,3 0 0 0 6.8,6.4 L2.5,10.7 L5.3,13.5 L9.6,9.2 A3,3 0 0 0 13.5,5.5 L11.7,7.3 L9.7,6.8 L9.2,4.8 Z",
+            "M2,8 A6,6 0 1 0 14,8 A6,6 0 1 0 2,8 Z M6.3,6.3 A1.8,1.8 0 1 1 8.7,8 C8.2,8.2 8,8.6 8,9.1 M8,11.2 L8,11.3" };
+        for (int i = 0; i < names.Length; i++)
+        {
+            int index = i;
+            NavItem n = new NavItem(names[i], icons[i]) { Margin = new Thickness(0, 0, 0, 2) };
+            n.Click += delegate { ShowPage(index); };
+            navItems.Add(n); nav.Children.Add(n);
+        }
+        shell.Children.Add(nav);
+        Grid me = new Grid { Margin = new Thickness(12, 0, 0, 12) };
+        me.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        me.ColumnDefinitions.Add(new ColumnDefinition());
+        Image logo = new Image { Source = Logo(), Width = 30, Height = 30, Margin = new Thickness(0, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
+        StackPanel tx = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        version = Pal.Text("Version", 13.5, Pal.Fg, false);
+        newVersion = Pal.Text("", 12, Pal.Fg2, false);
+        tx.Children.Add(version); tx.Children.Add(newVersion);
+        Grid.SetColumn(tx, 1);
+        me.Children.Add(logo); me.Children.Add(tx);
+        Grid.SetRow(me, 1);
+        shell.Children.Add(me);
+        return shell;
+    }
+
+    static StackPanel Page()
+    {
+        return new StackPanel { Margin = new Thickness(30, 26, 30, 20) };
+    }
+
+    static Grid Header(string title, params UIElement[] buttons)
+    {
+        Grid g = new Grid();
+        g.ColumnDefinitions.Add(new ColumnDefinition());
+        TextBlock t = Pal.Text(title, 21, Pal.Fg, true);
+        g.Children.Add(t);
+        StackPanel row = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        foreach (UIElement b in buttons) { ((FrameworkElement)b).Margin = new Thickness(10, 0, 0, 0); row.Children.Add(b); }
+        g.Children.Add(row);
+        return g;
+    }
+
+    static TextBlock Lede(string text) { TextBlock t = Pal.Text(text, 14, Pal.Fg2, false); t.Margin = new Thickness(0, 16, 0, 24); return t; }
+
+    static Border Box(UIElement child)
+    {
+        return new Border { BorderBrush = Pal.B(Pal.Line), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Child = child, ClipToBounds = true };
+    }
+
+    static Border Divider() { return new Border { Height = 1, Background = Pal.B(Pal.Line) }; }
+
+    static TextBlock Heading(string text) { TextBlock t = Pal.Text(text, 13, Pal.Fg2, false); t.FontWeight = FontWeights.Medium; t.Margin = new Thickness(0, 26, 0, 10); return t; }
+
+    Grid StatusRow(out Dot dot, out TextBlock sub, string title)
+    {
+        Grid g = new Grid { Margin = new Thickness(18, 15, 18, 15) };
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        g.ColumnDefinitions.Add(new ColumnDefinition());
+        dot = new Dot { Margin = new Thickness(-5, 0, 9, 0), VerticalAlignment = VerticalAlignment.Center };
+        StackPanel s = new StackPanel();
+        TextBlock t = Pal.Text(title, 14, Pal.Fg, false); t.FontWeight = FontWeights.Medium;
+        sub = Pal.Text("", 13, Pal.Fg2, false);
+        s.Children.Add(t); s.Children.Add(sub);
+        Grid.SetColumn(s, 1);
+        g.Children.Add(dot); g.Children.Add(s);
+        return g;
+    }
+
+    FrameworkElement StatusPage()
+    {
+        StackPanel p = Page();
+        Btn log = new Btn("Open log", "ghost"); log.Click += delegate { ShowPage(2); };
+        install = new Btn("Install update", "primary"); install.Visibility = Visibility.Collapsed; install.Click += InstallUpdate;
+        restart = new Btn("Restart bridge", "ghost"); restart.Visibility = Visibility.Collapsed; restart.Click += delegate { if (host != null) host.RestartBridge(); };
+        p.Children.Add(Header("Status", restart, log, install));
+        lede = Lede("Starting the bridge..."); p.Children.Add(lede);
+        StackPanel rows = new StackPanel();
+        rows.Children.Add(StatusRow(out dIpad, out tIpad, "iPad")); rows.Children.Add(Divider());
+        rows.Children.Add(StatusRow(out dSim, out tSim, "MSFS 2024")); rows.Children.Add(Divider());
+        rows.Children.Add(StatusRow(out dLink, out tLink, "Chart panel"));
+        p.Children.Add(Box(rows));
+
+        StackPanel line = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 22, 0, 0) };
+        line.Children.Add(Pal.Text("If the iPad doesn't find this PC, enter", 13.5, Pal.Fg2, false));
+        Border code = new Border { Background = Pal.B(Pal.Hover), BorderBrush = Pal.B(Pal.Line), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(7), Padding = new Thickness(10, 5, 10, 5), Margin = new Thickness(12, 0, 8, 0) };
+        addr = Pal.Text("", 13.5, Pal.Fg, false); addr.FontFamily = Pal.Mono; addr.TextWrapping = TextWrapping.NoWrap;
+        code.Child = addr; line.Children.Add(code);
+        eyeOpen = Pal.Icon("M1.5,8 C1.5,8 4,3.5 8,3.5 C12,3.5 14.5,8 14.5,8 C14.5,8 12,12.5 8,12.5 C4,12.5 1.5,8 1.5,8 Z M10,8 A2,2 0 1 0 6,8 A2,2 0 1 0 10,8 Z", Pal.Fg2);
+        eyeShut = Pal.Icon("M1.5,8 C1.5,8 4,3.5 8,3.5 C12,3.5 14.5,8 14.5,8 C14.5,8 12,12.5 8,12.5 C4,12.5 1.5,8 1.5,8 Z M10,8 A2,2 0 1 0 6,8 A2,2 0 1 0 10,8 Z M2,2 L14,14", Pal.Fg2);
+        eyeShut.Opacity = 0;
+        Grid eyeIcon = new Grid { Width = 16, Height = 16 }; eyeIcon.Children.Add(eyeOpen); eyeIcon.Children.Add(eyeShut);
+        Btn eye = new Btn("", "icon"); eye.Padding = new Thickness(7); eye.SetContent(eyeIcon); eye.ToolTip = "Hide or show the address";
+        eye.Click += delegate
+        {
+            ipHidden = !ipHidden;
+            Pal.Fade(eyeOpen, ipHidden ? 0 : 1, 160); Pal.Fade(eyeShut, ipHidden ? 1 : 0, 160);
+            RenderAddress();
+        };
+        line.Children.Add(eye);
+        p.Children.Add(line);
+
+        p.Children.Add(new Border { Height = 1, Background = Pal.B(Pal.Line), Margin = new Thickness(0, 28, 0, 18) });
+        StackPanel auto = new StackPanel { Orientation = Orientation.Horizontal };
+        autostart = new Switch(); autostart.Changed += delegate { Act(autostart.On ? "autostart-on" : "autostart-off", null, false, delegate (bool ok) { if (!ok) autostart.Set(!autostart.On, true); }); };
+        TextBlock lbl = Pal.Text("Start with Windows, hidden in the tray", 13.5, Pal.Fg2, false); lbl.Margin = new Thickness(10, 0, 0, 0);
+        auto.Children.Add(autostart); auto.Children.Add(lbl);
+        p.Children.Add(auto);
+        return Scroll(p);
+    }
+
+    FrameworkElement ChartsPage()
+    {
+        StackPanel p = Page();
+        p.Children.Add(Header("Charts", ActionButton("open-cache", "Open cache folder", "ghost", false), ActionButton("panel-install", "Install chart panel", "primary", false)));
+        p.Children.Add(Lede("Charts exported from the sim's Lido charts. The iPad asks for them when you open an airport."));
+        airports = new StackPanel();
+        p.Children.Add(Box(airports));
+        cacheSize = Pal.Text("", 13.5, Pal.Fg2, false); cacheSize.Margin = new Thickness(0, 22, 0, 0);
+        p.Children.Add(cacheSize);
+        return Scroll(p);
+    }
+
+    FrameworkElement LogPage()
+    {
+        StackPanel p = Page();
+        Btn copy = new Btn("Copy", "ghost");
+        copy.Click += delegate
+        {
+            try { Clipboard.SetText(logText.Text.Length == 0 ? " " : logText.Text); Toast("Log copied."); } catch (Exception) { Toast("Couldn't reach the clipboard."); }
+        };
+        p.Children.Add(Header("Log", copy));
+        p.Children.Add(Lede("What the bridge has been doing. Attach this when reporting a problem."));
+        logText = new TextBlock { FontFamily = Pal.Mono, FontSize = 12.5, Foreground = Pal.B(Pal.Fg2), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(16, 12, 16, 12), LineHeight = 22 };
+        logScroll = new ScrollViewer { Content = logText, Height = 400, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Background = Pal.B(Pal.Frame) };
+        p.Children.Add(Box(logScroll));
+        return Scroll(p);
+    }
+
+    Grid ActionRow(string id, string title, string text, string button, bool danger)
+    {
+        Grid g = new Grid { Margin = new Thickness(18, 15, 18, 15) };
+        g.ColumnDefinitions.Add(new ColumnDefinition());
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        StackPanel s = new StackPanel { Margin = new Thickness(0, 0, 20, 0) };
+        TextBlock t = Pal.Text(title, 14, Pal.Fg, false); t.FontWeight = FontWeights.Medium;
+        s.Children.Add(t); s.Children.Add(Pal.Text(text, 13, Pal.Fg2, false));
+        Btn b = ActionButton(id, button, danger ? "danger" : "ghost", danger);
+        b.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(b, 1);
+        g.Children.Add(s); g.Children.Add(b);
+        return g;
+    }
+
+    FrameworkElement RepairPage()
+    {
+        StackPanel p = Page();
+        p.Children.Add(Header("Repair"));
+        p.Children.Add(Lede("Fix common problems. None of these touch your flights or the iPad app."));
+        p.Children.Add(Heading("Repair"));
+        StackPanel fix = new StackPanel();
+        fix.Children.Add(ActionRow("firewall", "Allow through Windows Firewall", "Adds the rule for private networks if the iPad can't connect. Windows asks for admin approval.", "Fix firewall", false)); fix.Children.Add(Divider());
+        fix.Children.Add(ActionRow("panel-repair", "Repair chart panel", "Copies SimPilot Link into MSFS 2024 again. Close the sim first.", "Repair", false)); fix.Children.Add(Divider());
+        fix.Children.Add(ActionRow("clear-cache", "Clear chart cache", "Deletes exported charts. They export again when needed.", "Clear cache", false));
+        p.Children.Add(Box(fix));
+        p.Children.Add(Heading("Uninstall"));
+        p.Children.Add(Box(ActionRow("uninstall", "Uninstall SimPilot Bridge", "Removes autostart, the firewall rule and cached charts, then closes. Delete the SimPilot for PC folder to finish. Remove the chart panel by deleting simpilot-link from the sim's Community folder.", "Uninstall", true)));
+        return Scroll(p);
+    }
+
+    FrameworkElement HelpPage()
+    {
+        StackPanel p = Page();
+        p.Children.Add(Header("Help"));
+        p.Children.Add(Lede("Answers to the questions people ask most."));
+        string[][] faq = {
+            new[] { "The iPad doesn't find the PC", "Check both are on the same Wi-Fi, not a guest network. On the iPad: Settings > Privacy > Local Network > SimPilot EFB on. Otherwise type the address from the Status page into the app under Settings > Bridge." },
+            new[] { "Windows Firewall asked something", "Tick \"Private networks\" and click Allow. Windows may call it \"Node.js JavaScript Runtime\"; that is SimPilot Bridge. Missed it? Use Repair > Fix firewall." },
+            new[] { "MSFS says waiting", "Start MSFS 2024 and load into a flight. The bridge connects by itself; no setting is needed." },
+            new[] { "Do I need the chart panel?", "No. Weather, SimBrief and VATSIM work without it. The panel only sends the sim's own charts to the iPad." },
+            new[] { "Charts stay on exporting", "Keep the SimPilot Link panel open in the sim's toolbar and the sim window visible. Exports retry up to three times." },
+            new[] { "Does it slow down the sim?", "Barely. It reads position 10 times a second over SimConnect and does nothing else unless the iPad asks." },
+            new[] { "How do I update?", "Click Install update when it appears. The bridge downloads the new version and restarts by itself." } };
+        StackPanel list = new StackPanel();
+        for (int i = 0; i < faq.Length; i++)
+        {
+            if (i > 0) list.Children.Add(Divider());
+            list.Children.Add(new Faq(faq[i][0], faq[i][1]));
+        }
+        p.Children.Add(Box(list));
+        return Scroll(p);
+    }
+
+    static ScrollViewer Scroll(UIElement e) { return new ScrollViewer { Content = e, VerticalScrollBarVisibility = ScrollBarVisibility.Auto }; }
+
+    void AddPage(FrameworkElement page)
+    {
+        page.Visibility = Visibility.Collapsed;
+        page.RenderTransform = new TranslateTransform(0, 0);
+        pageList.Add(page);
+        pages.Children.Add(page);
+    }
+
+    public void ShowPage(int index)
+    {
+        if (index == current) return;
+        for (int i = 0; i < pageList.Count; i++)
+        {
+            navItems[i].Select(i == index);
+            if (i != index) { pageList[i].Visibility = Visibility.Collapsed; continue; }
+            pageList[i].Visibility = Visibility.Visible;
+            pageList[i].Opacity = 0;
+            Pal.Fade(pageList[i], 1, 240);
+            Pal.Slide((TranslateTransform)pageList[i].RenderTransform, TranslateTransform.YProperty, 14, 0, 280);
+        }
+        current = index;
+        toast.Opacity = 0;
+        if (host != null) Refresh();
+    }
+
+    // ---- actions ----
+
+    Btn ActionButton(string id, string label, string kind, bool confirm)
+    {
+        Btn b = new Btn(label, kind);
+        DispatcherTimer disarm = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+        bool armed = false;
+        disarm.Tick += delegate { disarm.Stop(); armed = false; b.Text = label; };
+        b.Click += delegate
+        {
+            if (confirm && !armed) { armed = true; b.Text = "Click again to confirm"; disarm.Start(); return; }
+            disarm.Stop(); armed = false; b.Text = label;
+            Act(id, b, id == "uninstall", null);
+        };
+        actions[id] = b;
+        return b;
+    }
+
+    void Act(string id, Btn button, bool quitsAfter, Action<bool> done)
+    {
+        if (button != null) button.IsEnabled = false;
+        if (quitsAfter && host != null) host.DeferQuit = true;
+        Toast("Working...");
+        ThreadPool.QueueUserWorkItem(delegate
+        {
+            string message; bool ok = true;
+            try { message = Json.Str(Net.Obj("POST", "/bridge/manage/" + id, 180000), "message") ?? "Done."; }
+            catch (Exception ex) { message = ex.Message; ok = false; }
+            Dispatcher.BeginInvoke(new Action(delegate
+            {
+                if (button != null) button.IsEnabled = true;
+                Toast(message);
+                if (done != null) done(ok);
+                if (quitsAfter && host != null)
+                {
+                    if (ok) { MessageBox.Show(this, message, "SimPilot Bridge", MessageBoxButton.OK, MessageBoxImage.Information); host.Quit(); }
+                    else host.DeferQuit = false;
+                }
+                Refresh();
+            }));
+        });
+    }
+
+    public void Toast(string text)
+    {
+        toast.Text = text;
+        Pal.Fade(toast, 1, 160);
+        toastTimer.Stop(); toastTimer.Start();
+    }
+
+    void InstallUpdate()
+    {
+        if (updateBusy) return;
+        updateBusy = true; install.IsEnabled = false;
+        Toast("Downloading the update...");
+        ThreadPool.QueueUserWorkItem(delegate
+        {
+            string error = null;
+            try { Net.Call("POST", "/bridge/update", 330000); } catch (Exception ex) { error = ex.Message; }
+            Dispatcher.BeginInvoke(new Action(delegate
+            {
+                updateBusy = false; install.IsEnabled = true;
+                if (error == null) Toast("Installing. SimPilot Bridge closes and opens again by itself in a few seconds.");
+                else Toast("Update failed: " + error);
+            }));
+        });
+    }
+
+    void CheckUpdate()
+    {
+        ThreadPool.QueueUserWorkItem(delegate
+        {
+            object u = null;
+            try { u = Net.Obj("GET", "/bridge/update", 25000); } catch (Exception) { }
+            if (u == null) return;
+            Dispatcher.BeginInvoke(new Action(delegate
+            {
+                bool available = Json.Bool(u, "available"), can = Json.Bool(u, "canInstall");
+                newVersion.Text = available ? Json.Str(u, "latest") + " available" : "Up to date";
+                ((SolidColorBrush)newVersion.Foreground).Color = Pal.C(available ? Pal.Warn : Pal.Fg2);
+                bool show = available && can;
+                if (show && install.Visibility != Visibility.Visible) { install.Visibility = Visibility.Visible; install.Opacity = 0; Pal.Fade(install, 1, 300); }
+                if (!show) install.Visibility = Visibility.Collapsed;
+            }));
+        });
+    }
+
+    // ---- live data ----
+
+    void Refresh()
+    {
+        if (host == null || polling) return;
+        polling = true;
+        tick++;
+        bool wantInfo = (current == 0 || current == 1) && !infoLoading && (current == 1 || tick % 3 == 1);
+        bool wantLog = current == 2 && !logLoading;
+        if (wantInfo) infoLoading = true;
+        if (wantLog) logLoading = true;
+        ThreadPool.QueueUserWorkItem(delegate
+        {
+            object status = null, info = null, log = null;
+            try { status = Net.Obj("GET", "/api/status", 1500); } catch (Exception) { }
+            if (status != null && wantInfo) { try { info = Net.Obj("GET", "/bridge/info", 4000); } catch (Exception) { } }
+            if (status != null && wantLog) { try { log = Net.Obj("GET", "/api/diagnostics", 3000); } catch (Exception) { } }
+            Dispatcher.BeginInvoke(new Action(delegate
+            {
+                polling = false; infoLoading = false; logLoading = false;
+                if (status == null) { misses++; if (misses >= 3) ShowStopped(); return; }
+                misses = 0;
+                ApplyStatus(status);
+                if (info != null) ApplyInfo(info);
+                if (log != null) ApplyLog(log);
+            }));
+        });
+    }
+
+    void ShowStopped()
+    {
+        connDot.Set(false, false); connText.Text = "Stopped";
+        lede.Text = "The bridge is not running. Use Restart bridge, or open SimPilot Bridge again.";
+        if (restart.Visibility != Visibility.Visible) { restart.Visibility = Visibility.Visible; restart.Opacity = 0; Pal.Fade(restart, 1, 300); }
+    }
+
+    public void ApplyStatus(object s)
+    {
+        bool sim = Json.Bool(s, "sim", "connected"), link = Json.Bool(s, "link", "connected");
+        int apps = Json.Int(s, "bridge", "apps");
+        string title = Json.Str(s, "sim", "aircraftTitle");
+        restart.Visibility = Visibility.Collapsed;
+        connDot.Set(true, false); connText.Text = "Running";
+        version.Text = "Version " + (Json.Str(s, "bridge", "version") ?? "");
+        Row(dIpad, tIpad, apps > 0, apps > 0 ? "Connected" + (apps > 1 ? " (" + apps + " devices)" : "") : "Waiting for the app");
+        Row(dSim, tSim, sim, sim ? (string.IsNullOrEmpty(title) ? "Connected" : title) : "Waiting. Start the sim.");
+        Row(dLink, tLink, link, link ? "Connected" : "Not connected (optional)");
+        string text = apps > 0 && sim ? "Everything is connected. Leave this running while you fly." : "The bridge is running. Open SimPilot on your iPad and start MSFS 2024.";
+        if (lede.Text != text) lede.Text = text;
+    }
+
+    static void Row(Dot d, TextBlock t, bool ok, string text) { d.Set(ok, false); if (t.Text != text) t.Text = text; }
+
+    static string Bytes(long bytes)
+    {
+        return bytes < 1048576 ? Math.Max(1, bytes / 1024) + " KB" : (bytes / 1048576) + " MB";
+    }
+
+    public void ApplyInfo(object info)
+    {
+        hostText.Text = Json.Str(info, "hostname") ?? "";
+        autostart.Set(Json.Bool(info, "autostart"), false);
+        firstAddress = "";
+        foreach (object a in Json.List(info, "addresses")) { firstAddress = Json.Str(a, "address") ?? ""; break; }
+        RenderAddress();
+        airports.Children.Clear();
+        int count = 0;
+        foreach (object a in Json.List(info, "cache", "airports"))
+        {
+            if (count++ > 0) airports.Children.Add(Divider());
+            Grid g = new Grid { Margin = new Thickness(18, 15, 18, 15) };
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            g.ColumnDefinitions.Add(new ColumnDefinition());
+            g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Dot dot = new Dot { Margin = new Thickness(-5, 0, 9, 0) }; dot.Set(true, false);
+            StackPanel s = new StackPanel();
+            TextBlock t = Pal.Text(Json.Str(a, "icao") ?? "", 14, Pal.Fg, false); t.FontWeight = FontWeights.Medium;
+            s.Children.Add(t); s.Children.Add(Pal.Text(Bytes(Json.Long(a, "bytes")) + " on disk", 13, Pal.Fg2, false));
+            Grid.SetColumn(s, 1);
+            TextBlock n = Pal.Text(Json.Int(a, "charts") + " charts", 12.5, Pal.Fg2, false); n.FontFamily = Pal.Mono;
+            Grid.SetColumn(n, 2);
+            g.Children.Add(dot); g.Children.Add(s); g.Children.Add(n);
+            airports.Children.Add(g);
+        }
+        if (count == 0) airports.Children.Add(new TextBlock { Text = "No charts yet. Open an airport in the iPad app with the chart panel running.", Foreground = Pal.B(Pal.Fg2), FontSize = 13.5, Margin = new Thickness(18), TextWrapping = TextWrapping.Wrap });
+        cacheSize.Text = count + (count == 1 ? " airport, " : " airports, ") + Bytes(Json.Long(info, "cache", "bytes")) + " on disk";
+    }
+
+    void RenderAddress()
+    {
+        string a = firstAddress.Length == 0 ? "no network found" : firstAddress;
+        string shown = ipHidden ? MaskDigits(a) : a;
+        addr.Text = shown;
+        topIp.Text = firstAddress.Length == 0 ? "" : (ipHidden ? MaskDigits(firstAddress) : firstAddress).Split(':')[0];
+    }
+
+    static string MaskDigits(string s)
+    {
+        StringBuilder b = new StringBuilder();
+        foreach (char c in s) b.Append(char.IsDigit(c) ? '•' : c);
+        return b.ToString();
+    }
+
+    public void ApplyLog(object log)
+    {
+        StringBuilder sb = new StringBuilder();
+        foreach (object e in Json.List(log, "entries"))
+        {
+            DateTime when;
+            string time = Json.Str(e, "time") ?? "";
+            string shown = DateTime.TryParse(time, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out when) ? when.ToLocalTime().ToString("HH:mm:ss") : time;
+            string level = Json.Str(e, "level");
+            sb.Append(shown).Append("  ").Append(level == "warn" ? "! " : level == "error" ? "!! " : "").Append('[').Append(Json.Str(e, "scope")).Append("] ").Append(Json.Str(e, "message")).Append('\n');
+        }
+        string text = sb.ToString().TrimEnd('\n');
+        if (text == lastLog) return;
+        lastLog = text;
+        bool stick = logScroll.VerticalOffset >= logScroll.ScrollableHeight - 8;
+        logText.Text = text;
+        if (stick) logScroll.ScrollToEnd();
+    }
+}
+
+class TrayApp
 {
     readonly string dir = AppDomain.CurrentDomain.BaseDirectory;
     readonly bool startHidden;
-    readonly Control ui = new Control();
-    readonly NotifyIcon tray;
-    readonly ToolStripMenuItem restart;
-    readonly System.Windows.Forms.Timer timer;
-    bool quitting;
-    bool polling;
+    readonly EventWaitHandle showEvent;
+    readonly Forms.NotifyIcon tray;
+    readonly Forms.ToolStripMenuItem restartItem;
+    MainWindow window;
     Process node;
+    bool quitting, balloonShown;
+    public bool DeferQuit;
 
-    public TrayApp(bool minimized)
+    public TrayApp(bool minimized, EventWaitHandle showEvent)
     {
         startHidden = minimized;
-        Icon icon = null;
-        try { icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch (Exception) { }
-        ContextMenuStrip menu = new ContextMenuStrip();
-        menu.Items.Add("Open SimPilot Bridge", null, delegate { Window.Open(); });
-        restart = new ToolStripMenuItem("Restart bridge", null, delegate { StartBridge(); }) { Visible = false };
-        menu.Items.Add(restart);
+        this.showEvent = showEvent;
+        Drawing.Icon icon = null;
+        try { icon = Drawing.Icon.ExtractAssociatedIcon(System.Windows.Forms.Application.ExecutablePath); } catch (Exception) { }
+        Forms.ContextMenuStrip menu = new Forms.ContextMenuStrip();
+        menu.Items.Add("Open SimPilot Bridge", null, delegate { ShowWindow(); });
+        restartItem = new Forms.ToolStripMenuItem("Restart bridge", null, delegate { RestartBridge(); });
+        restartItem.Visible = false;
+        menu.Items.Add(restartItem);
         menu.Items.Add("Quit", null, delegate { Quit(); });
-        tray = new NotifyIcon { Text = "SimPilot Bridge", Icon = icon ?? SystemIcons.Application, ContextMenuStrip = menu, Visible = true };
-        tray.DoubleClick += delegate { Window.Open(); };
-        timer = new System.Windows.Forms.Timer { Interval = 3000 };
-        timer.Tick += delegate { Poll(); };
+        tray = new Forms.NotifyIcon();
+        tray.Text = "SimPilot Bridge";
+        tray.Icon = icon ?? Drawing.SystemIcons.Application;
+        tray.ContextMenuStrip = menu;
+        tray.Visible = true;
+        tray.DoubleClick += delegate { ShowWindow(); };
     }
 
     public void Begin()
     {
-        IntPtr handle = ui.Handle;   // create it now so background threads can BeginInvoke
         StartBridge();
-        timer.Start();
-        if (!startHidden) OpenWhenReady();
+        Thread listener = new Thread(delegate ()
+        {
+            while (!quitting)
+            {
+                showEvent.WaitOne();
+                if (quitting) break;
+                Application.Current.Dispatcher.BeginInvoke(new Action(ShowWindow));
+            }
+        });
+        listener.IsBackground = true;
+        listener.Start();
+        if (!startHidden) ShowWindow();
     }
 
-    void OpenWhenReady()
+    void ShowWindow()
     {
-        ThreadPool.QueueUserWorkItem(delegate
-        {
-            for (int i = 0; i < 40 && !quitting; i++)
-            {
-                try { Net.Get("/api/status", 1000); break; } catch (Exception) { Thread.Sleep(500); }
-            }
-            if (!quitting) Window.Open();
-        });
+        if (quitting) return;
+        if (window == null) window = new MainWindow(this);
+        window.Show();
+        if (window.WindowState == WindowState.Minimized) window.WindowState = WindowState.Normal;
+        window.Activate();
+    }
+
+    public void WindowHidden()
+    {
+        if (balloonShown) return;
+        balloonShown = true;
+        tray.ShowBalloonTip(4000, "SimPilot Bridge is still running", "Right-click the tray icon to quit it.", Forms.ToolTipIcon.Info);
     }
 
     // ---- bridge process ----
 
+    public void RestartBridge() { StartBridge(); }
+
     void StartBridge()
     {
-        string exe = Path.Combine(dir, "node.exe");
-        string script = Path.Combine(dir, "bridge.cjs");
+        string exe = System.IO.Path.Combine(dir, "node.exe");
+        string script = System.IO.Path.Combine(dir, "bridge.cjs");
         if (!File.Exists(exe) || !File.Exists(script))
         {
-            MessageBox.Show("node.exe or bridge.cjs is missing next to this program. Extract the whole SimPilot for PC folder and run it from there.", "SimPilot Bridge", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            MessageBox.Show("node.exe or bridge.cjs is missing next to this program. Extract the whole SimPilot for PC folder and run it from there.", "SimPilot Bridge", MessageBoxButton.OK, MessageBoxImage.Warning);
             Quit();
             return;
         }
         KillStrays(exe);
-        restart.Visible = false;
+        restartItem.Visible = false;
         ProcessStartInfo psi = new ProcessStartInfo(exe, "\"" + script + "\"");
         psi.WorkingDirectory = dir;
         psi.UseShellExecute = false;
         psi.CreateNoWindow = true;
         try
         {
-            node = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            node = new Process();
+            node.StartInfo = psi;
+            node.EnableRaisingEvents = true;
             node.Exited += OnNodeExited;
             node.Start();
         }
@@ -201,51 +1048,30 @@ class TrayApp : ApplicationContext
     {
         int code = 1;
         try { code = node.ExitCode; } catch (Exception) { }
-        ui.BeginInvoke(new MethodInvoker(delegate
+        Application.Current.Dispatcher.BeginInvoke(new Action(delegate
         {
             // Exit code 0 is the bridge shutting itself down for an update or an uninstall.
-            if (quitting || code == 0) { Quit(); return; }
+            if (quitting || DeferQuit) return;
+            if (code == 0) { Quit(); return; }
             Stopped("SimPilot Bridge stopped (exit code " + code + "). Use Restart bridge in the tray menu.");
         }));
     }
 
     void Stopped(string message)
     {
-        restart.Visible = true;
+        restartItem.Visible = true;
         tray.Text = "SimPilot Bridge - stopped";
-        tray.ShowBalloonTip(6000, "SimPilot Bridge", message, ToolTipIcon.Warning);
+        tray.ShowBalloonTip(6000, "SimPilot Bridge", message, Forms.ToolTipIcon.Warning);
     }
 
-    void Quit()
+    public void Quit()
     {
         if (quitting) return;
         quitting = true;
-        timer.Stop();
+        try { showEvent.Set(); } catch (Exception) { }
         try { if (node != null && !node.HasExited) node.Kill(); } catch (Exception) { }
         tray.Visible = false;
         tray.Dispose();
-        ExitThread();
-    }
-
-    // ---- tray tooltip ----
-
-    void Poll()
-    {
-        if (polling || quitting || restart.Visible) return;
-        polling = true;
-        ThreadPool.QueueUserWorkItem(delegate
-        {
-            object status = null;
-            try { status = new JavaScriptSerializer().DeserializeObject(Net.Get("/api/status", 1500)); } catch (Exception) { }
-            try { ui.BeginInvoke(new MethodInvoker(delegate { polling = false; ShowStatus(status); })); } catch (Exception) { polling = false; }
-        });
-    }
-
-    void ShowStatus(object s)
-    {
-        if (s == null || quitting) return;
-        bool ipad = Json.Int(s, "bridge", "apps") > 0;
-        bool sim = Json.Bool(s, "sim", "connected");
-        tray.Text = "SimPilot Bridge - iPad " + (ipad ? "connected" : "waiting") + ", MSFS " + (sim ? "connected" : "waiting");
+        Application.Current.Shutdown();
     }
 }

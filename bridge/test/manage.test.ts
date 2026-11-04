@@ -3,13 +3,11 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import vm from 'node:vm';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ChartStore } from '../src/charts/store.js';
 import { Hub } from '../src/hub.js';
 import { cacheSummary, manage } from '../src/manage.js';
 import { createServer } from '../src/server.js';
-import { appPage } from '../src/ui.js';
 
 const hubs: Hub[] = [];
 afterEach(() => { hubs.forEach((hub) => hub.close()); hubs.length = 0; });
@@ -25,15 +23,7 @@ function call(method: string, url: string, headers: Record<string, string> = {},
   });
 }
 
-describe('bridge window', () => {
-  it('serves a page whose script parses', async () => {
-    const page = await call('GET', '/');
-    expect(page.status).toBe(200);
-    const script = /<script>([\s\S]*)<\/script>/.exec(appPage)![1]!;
-    expect(() => new vm.Script(script)).not.toThrow();
-    expect(appPage).toContain('Install update');
-  });
-
+describe('bridge window endpoints', () => {
   it('only lets the window on this PC run repairs', async () => {
     const post = (headers: Record<string, string>, remote?: string) => call('POST', '/bridge/manage/uninstall-nothing', headers, remote);
     expect((await post({})).status).toBe(403); // no header: a web page could send this
