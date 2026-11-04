@@ -38,7 +38,7 @@ export const config = {
   ownshipHz: envInt('SIMPILOT_OWNSHIP_HZ', 10, 60),
   /** The link panel counts as disconnected after this long without a poll. */
   linkTimeoutMs: 6000,
-  bridgeVersion: '0.1.2',
+  bridgeVersion: '0.1.1',
   /** Release this bridge was packaged from (CI defines both at bundle time); build 0 = not from a release. */
   release: { version: process.env.SIMPILOT_VERSION ?? '0.0.0', build: Number(process.env.SIMPILOT_BUILD ?? 0) },
   buildId: bridgeBuildId(),
