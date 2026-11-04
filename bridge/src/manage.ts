@@ -8,8 +8,6 @@ import { HttpError } from './http.js';
 const win = process.platform === 'win32';
 const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 const RULE = 'SimPilot Bridge';
-/** Folder holding the launcher, node.exe and bridge.cjs (the unzipped "SimPilot for PC"). */
-const appDir = () => path.dirname(process.execPath);
 
 const run = (file: string, args: string[]) => new Promise<{ ok: boolean; out: string }>((resolve) =>
   execFile(file, args, { windowsHide: true, timeout: 120_000 }, (err, stdout) => resolve({ ok: !err, out: String(stdout) })));
@@ -42,13 +40,9 @@ export async function cacheSummary(root: string) {
   return { airports, bytes: airports.reduce((sum, a) => sum + a.bytes, 0) };
 }
 
+/** Chart cache for the Charts page (the window reads the PC's addresses and autostart from Windows itself). */
 export async function bridgeInfo() {
-  const exists = (p: string) => fs.access(p).then(() => true, () => false);
-  const autostart = win ? (await run('reg', ['query', RUN_KEY, '/v', RULE])).ok : false;
-  return {
-    hostname: os.hostname(), addresses: lanAddresses(config.port), cache: await cacheSummary(config.cacheDir),
-    autostart, windows: win, panelFolder: packaged && await exists(path.join(appDir(), 'Chart panel (optional)')),
-  };
+  return { addresses: lanAddresses(config.port), cache: await cacheSummary(config.cacheDir) };
 }
 
 /** Elevated netsh through PowerShell: Windows shows its own admin prompt. */
@@ -57,15 +51,9 @@ const netsh = (...args: string[]) =>
 const ruleArgs = ['advfirewall', 'firewall'];
 const openFile = (target: string) => spawn('cmd.exe', ['/c', `start "" "${target}"`], { windowsVerbatimArguments: true, detached: true, stdio: 'ignore' }).unref();
 
-async function panelScript(name: string): Promise<string> {
-  const file = path.join(appDir(), 'Chart panel (optional)', name);
-  if (!(await fs.access(file).then(() => true, () => false))) throw new HttpError(404, 'The chart panel folder is missing. Use the full SimPilot-for-PC.zip.');
-  return file;
-}
+const ACTIONS = ['clear-cache', 'open-cache', 'firewall', 'uninstall'] as const;
 
-const ACTIONS = ['clear-cache', 'open-cache', 'autostart-on', 'autostart-off', 'firewall', 'panel-install', 'panel-repair', 'uninstall'] as const;
-
-/** Runs one Repair/Settings action from the bridge window. Returns the message to show. */
+/** Runs one Repair action from the bridge window. Returns the message to show. */
 export async function manage(action: string): Promise<string> {
   if (!(ACTIONS as readonly string[]).includes(action)) throw new HttpError(404, 'unknown action');
   if (action === 'clear-cache') {
@@ -75,16 +63,10 @@ export async function manage(action: string): Promise<string> {
   if (!win) throw new HttpError(501, 'This only works in SimPilot Bridge on Windows.');
   switch (action) {
     case 'open-cache': await fs.mkdir(config.cacheDir, { recursive: true }); openFile(config.cacheDir); return 'Opened the cache folder.';
-    case 'autostart-on':
-      if (!(await run('reg', ['add', RUN_KEY, '/v', RULE, '/d', `"${path.join(appDir(), 'SimPilot Bridge.exe')}" --minimized`, '/f'])).ok) throw new HttpError(500, "Couldn't change Start with Windows.");
-      return 'SimPilot Bridge will start with Windows.';
-    case 'autostart-off': await run('reg', ['delete', RUN_KEY, '/v', RULE, '/f']); return 'Start with Windows is off.';
     case 'firewall':
       await netsh(...ruleArgs, 'delete', 'rule', `name="${RULE}"`);
       await netsh(...ruleArgs, 'add', 'rule', `name="${RULE}"`, 'dir=in', 'action=allow', 'protocol=TCP', `localport=${config.port}`, 'profile=private');
       return (await run('netsh', [...ruleArgs, 'show', 'rule', `name=${RULE}`])).ok ? 'Firewall rule added for private networks.' : 'The firewall rule was not added. Allow the Windows admin prompt and try again.';
-    case 'panel-install': openFile(await panelScript('Install SimPilot Link.bat')); return 'Close MSFS 2024, then follow the window that opened.';
-    case 'panel-repair': openFile(await panelScript('Repair SimPilot Link.bat')); return 'Follow the window that opened.';
     default: { // uninstall
       await run('reg', ['delete', RUN_KEY, '/v', RULE, '/f']);
       if ((await run('netsh', [...ruleArgs, 'show', 'rule', `name=${RULE}`])).ok) await netsh(...ruleArgs, 'delete', 'rule', `name="${RULE}"`);

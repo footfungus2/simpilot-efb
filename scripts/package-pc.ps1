@@ -59,8 +59,8 @@ Open the "SimPilot for PC" folder after choosing Extract All.
 2. Optional - the sim's charts on the iPad (one-time setup):
    a. In MSFS 2024 open Settings > Advanced Options and switch Developer Mode on.
       In the menu bar that appears at the top, choose Help > SDK Installer and install the SDK.
-   b. Close MSFS 2024. Open "Chart panel (optional)" and double-click "Install SimPilot Link".
-      It may be shown as "Install SimPilot Link.bat". Choose the Packages folder if asked.
+   b. In SimPilot Bridge open Charts and click "Install chart panel". It checks each step and installs it.
+      (Without the window: close MSFS 2024, open "Chart panel (optional)" and double-click "Install SimPilot Link".)
    c. Start MSFS 2024 again: new panels load only when the sim starts.
       In a flight, click the gear icon in the toolbar, switch "SimPilot Link" on and open it.
       Open the panel once per flight.

@@ -8,8 +8,11 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows;
@@ -19,6 +22,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Microsoft.Win32;
 using Drawing = System.Drawing;
 using Forms = System.Windows.Forms;
 using Shapes = System.Windows.Shapes;
@@ -59,7 +63,7 @@ static class Program
             {
                 JavaScriptSerializer js = new JavaScriptSerializer();
                 object status = js.DeserializeObject("{\"sim\":{\"connected\":true,\"aircraftTitle\":\"Fenix A320\"},\"link\":{\"connected\":false},\"bridge\":{\"apps\":2,\"version\":\"0.1.1\",\"port\":8386}}");
-                object info = js.DeserializeObject("{\"hostname\":\"PC\",\"addresses\":[{\"name\":\"Wi-Fi\",\"address\":\"192.168.1.42:8386\"}],\"cache\":{\"airports\":[{\"icao\":\"EGSS\",\"charts\":14,\"bytes\":123456789}],\"bytes\":123456789},\"autostart\":true,\"windows\":true,\"panelFolder\":true}");
+                object info = js.DeserializeObject("{\"cache\":{\"airports\":[{\"icao\":\"EGSS\",\"charts\":14,\"bytes\":123456789}],\"bytes\":123456789}}");
                 object log = js.DeserializeObject("{\"entries\":[{\"time\":\"2026-11-04T16:42:01.123Z\",\"level\":\"warn\",\"scope\":\"sim\",\"message\":\"in-sim link lost\"}]}");
                 if (!Json.Bool(status, "sim", "connected") || Json.Int(status, "bridge", "apps") != 2) return;
                 MainWindow w = new MainWindow(null);
@@ -68,6 +72,7 @@ static class Program
                 w.ApplyLog(log);
                 w.ShowPage(3);
                 w.ShowPage(4);
+                w.OpenWizard();
                 result = 0;
             }
             catch (Exception ex) { Console.Error.WriteLine(ex.ToString()); }
@@ -352,9 +357,405 @@ class Faq : StackPanel
     }
 }
 
+/// Things the window reads straight from Windows, so they show even when the bridge isn't answering.
+static class Local
+{
+    const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    const string RunName = "SimPilot Bridge";
+
+    /// The PC's LAN addresses as "ip:port", Wi-Fi/Ethernet first and VPN/virtual adapters last.
+    public static List<string> Addresses()
+    {
+        List<KeyValuePair<int, string>> found = new List<KeyValuePair<int, string>>();
+        try
+        {
+            foreach (NetworkInterface nic in NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (nic.OperationalStatus != OperationalStatus.Up || nic.NetworkInterfaceType == NetworkInterfaceType.Loopback) continue;
+                int rank = Regex.IsMatch(nic.Name + " " + nic.Description, "vpn|virtual|vethernet|vmware|wsl|tun|docker|hyper-v|tap|bluetooth", RegexOptions.IgnoreCase) ? 1 : 0;
+                foreach (UnicastIPAddressInformation ip in nic.GetIPProperties().UnicastAddresses)
+                    if (ip.Address.AddressFamily == AddressFamily.InterNetwork && !ip.Address.ToString().StartsWith("169.254."))
+                        found.Add(new KeyValuePair<int, string>(rank, ip.Address + ":" + Program.Port));
+            }
+        }
+        catch (Exception) { }
+        List<string> result = new List<string>();
+        foreach (KeyValuePair<int, string> f in found) if (f.Key == 0) result.Add(f.Value);
+        foreach (KeyValuePair<int, string> f in found) if (f.Key != 0) result.Add(f.Value);
+        return result;
+    }
+
+    public static bool AutostartOn()
+    {
+        try { using (RegistryKey k = Registry.CurrentUser.OpenSubKey(RunKey)) return k != null && k.GetValue(RunName) != null; }
+        catch (Exception) { return false; }
+    }
+
+    public static bool SetAutostart(bool on)
+    {
+        try
+        {
+            using (RegistryKey k = Registry.CurrentUser.CreateSubKey(RunKey))
+            {
+                if (on) k.SetValue(RunName, "\"" + System.Windows.Forms.Application.ExecutablePath + "\" --minimized");
+                else k.DeleteValue(RunName, false);
+            }
+            return true;
+        }
+        catch (Exception) { return false; }
+    }
+
+    /// MSFS 2024's Community2024 folder from UserCfg.opt (Microsoft Store and Steam keep it in different places).
+    public static string FindCommunity(out bool installed)
+    {
+        installed = false;
+        List<string> configs = new List<string>();
+        string local = Environment.GetEnvironmentVariable("LOCALAPPDATA"), roaming = Environment.GetEnvironmentVariable("APPDATA");
+        try
+        {
+            string packages = Path.Combine(local ?? "", "Packages");
+            if (local != null && Directory.Exists(packages))
+                foreach (string d in Directory.GetDirectories(packages, "Microsoft.Limitless_*"))
+                {
+                    configs.Add(Path.Combine(d, @"LocalCache\UserCfg.opt"));
+                    configs.Add(Path.Combine(d, @"LocalState\UserCfg.opt"));
+                }
+        }
+        catch (Exception) { }
+        if (roaming != null) configs.Add(Path.Combine(roaming, @"Microsoft Flight Simulator 2024\UserCfg.opt"));
+        string fallback = null;
+        foreach (string cfg in configs)
+        {
+            string packagesPath = null;
+            try
+            {
+                if (!File.Exists(cfg)) continue;
+                foreach (string line in File.ReadAllLines(cfg))
+                {
+                    Match m = Regex.Match(line, "^\\s*InstalledPackagesPath\\s+\"([^\"]+)\"");
+                    if (m.Success) { packagesPath = m.Groups[1].Value.Trim(); break; }
+                }
+            }
+            catch (Exception) { }
+            if (packagesPath == null || !Directory.Exists(packagesPath)) continue;
+            foreach (string name in new[] { "Community2024", "Community" })
+            {
+                string c = Path.Combine(packagesPath, name);
+                if (Directory.Exists(Path.Combine(c, "simpilot-link"))) { installed = true; return c; }
+            }
+            if (fallback == null) fallback = Path.Combine(packagesPath, "Community2024");
+        }
+        return fallback;
+    }
+
+    /// Same rules as build.ps1 for a folder the user picked: Packages, Community2024 or simpilot-link itself.
+    public static string CommunityFromChoice(string selected, out bool installed)
+    {
+        selected = selected.TrimEnd('\\', '/');
+        string leaf = Path.GetFileName(selected);
+        string community = leaf.Equals("Community2024", StringComparison.OrdinalIgnoreCase) || leaf.Equals("Community", StringComparison.OrdinalIgnoreCase) ? selected
+            : leaf.Equals("simpilot-link", StringComparison.OrdinalIgnoreCase) ? Path.GetDirectoryName(selected) : Path.Combine(selected, "Community2024");
+        installed = Directory.Exists(Path.Combine(community, "simpilot-link"));
+        return community;
+    }
+
+    public static string SdkPath()
+    {
+        string[] candidates = {
+            Environment.GetEnvironmentVariable("MSFS2024_SDK"),
+            Environment.GetEnvironmentVariable("MSFS2024_SDK", EnvironmentVariableTarget.User),
+            Environment.GetEnvironmentVariable("MSFS2024_SDK", EnvironmentVariableTarget.Machine),
+            @"C:\MSFS 2024 SDK",
+            Path.Combine(Environment.GetEnvironmentVariable("SystemDrive") ?? "C:", "MSFS 2024 SDK") };
+        foreach (string c in candidates)
+        {
+            try { if (!string.IsNullOrEmpty(c) && File.Exists(Path.Combine(c, @"Tools\bin\fspackagetool.exe"))) return c; } catch (Exception) { }
+        }
+        return null;
+    }
+
+    public static bool SimRunning()
+    {
+        try { return Process.GetProcessesByName("FlightSimulator2024").Length > 0; } catch (Exception) { return false; }
+    }
+}
+
+/// One line of the install checklist: a numbered badge that turns into a tick, a title, a detail line and an optional button.
+class StepRow : Grid
+{
+    readonly SolidColorBrush badgeFill = Pal.B(Pal.Hover2);
+    readonly TextBlock number;
+    readonly Shapes.Path tick = new Shapes.Path { Data = Geometry.Parse("M4,9 L7.5,12.5 L14,5.5"), Stroke = Pal.B(Pal.Fg), StrokeThickness = 2, Width = 18, Height = 18, Opacity = 0, StrokeLineJoin = PenLineJoin.Round, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round, RenderTransformOrigin = new Point(0.5, 0.5) };
+    readonly ScaleTransform pop = new ScaleTransform(0.4, 0.4);
+    readonly TextBlock detail;
+    readonly ContentControl slot = new ContentControl { VerticalAlignment = VerticalAlignment.Center };
+    string state = "todo";
+
+    public StepRow(int n, string title)
+    {
+        Margin = new Thickness(0, 0, 0, 18);
+        ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        ColumnDefinitions.Add(new ColumnDefinition());
+        ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Border badge = new Border { Width = 28, Height = 28, CornerRadius = new CornerRadius(14), Background = badgeFill, Margin = new Thickness(0, 0, 14, 0), VerticalAlignment = VerticalAlignment.Top };
+        Grid inner = new Grid();
+        number = Pal.Text(n.ToString(), 13, Pal.Fg2, true); number.HorizontalAlignment = HorizontalAlignment.Center;
+        tick.RenderTransform = pop;
+        inner.Children.Add(number); inner.Children.Add(tick);
+        badge.Child = inner;
+        StackPanel text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        TextBlock t = Pal.Text(title, 14.5, Pal.Fg, false); t.FontWeight = FontWeights.Medium;
+        detail = Pal.Text("", 13, Pal.Fg2, false); detail.Margin = new Thickness(0, 3, 0, 0); detail.LineHeight = 19;
+        text.Children.Add(t); text.Children.Add(detail);
+        Grid.SetColumn(text, 1); Grid.SetColumn(slot, 2);
+        slot.Margin = new Thickness(16, 0, 0, 0);
+        Children.Add(badge); Children.Add(text); Children.Add(slot);
+    }
+
+    public void Set(string newState, string text, UIElement action)
+    {
+        detail.Text = text;
+        slot.Content = action;
+        if (newState == state) return;
+        state = newState;
+        Pal.Tint(badgeFill, newState == "done" ? Pal.Ok : newState == "fail" ? "#8A3A3F" : newState == "active" ? Pal.Blue : Pal.Hover2, 260);
+        ((SolidColorBrush)number.Foreground).Color = Pal.C(newState == "todo" ? Pal.Fg2 : Pal.Fg);
+        bool done = newState == "done";
+        Pal.Fade(number, done ? 0 : 1, 160);
+        Pal.Fade(tick, done ? 1 : 0, 200);
+        if (done)
+        {
+            DoubleAnimation grow = new DoubleAnimation(0.4, 1, TimeSpan.FromMilliseconds(380)) { EasingFunction = new BackEase { EasingMode = EasingMode.EaseOut, Amplitude = 0.6 } };
+            pop.BeginAnimation(ScaleTransform.ScaleXProperty, grow);
+            pop.BeginAnimation(ScaleTransform.ScaleYProperty, grow);
+        }
+    }
+}
+
+/// Guided chart panel install: finds MSFS 2024, checks the SDK and that the sim is closed, then runs build.ps1 with live progress.
+class PanelWizard : Grid
+{
+    readonly MainWindow owner;
+    readonly string panelDir;
+    readonly Border card;
+    readonly TranslateTransform cardMove = new TranslateTransform(0, 24);
+    readonly TextBlock title, subtitle, next;
+    readonly StepRow sFind, sSdk, sSim, sInstall;
+    readonly Border barTrack, barFill, shimmer;
+    readonly TranslateTransform shimmerMove = new TranslateTransform(-120, 0);
+    readonly TextBlock barText;
+    readonly TextBlock logText;
+    readonly ScrollViewer logScroll;
+    readonly Btn details, cancel, go;
+    readonly DispatcherTimer simTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+    readonly StringBuilder log = new StringBuilder();
+    string community;
+    bool installed, sdkOk, simClosed, running, finished, logOpen;
+    double progress;
+
+    public PanelWizard(MainWindow owner, string appDir)
+    {
+        this.owner = owner;
+        panelDir = Path.Combine(appDir, "Chart panel (optional)");
+        Visibility = Visibility.Collapsed;
+        Background = new SolidColorBrush(Color.FromArgb(0xB0, 0x10, 0x12, 0x15));
+        card = new Border { Width = 600, Background = Pal.B(Pal.Panel), BorderBrush = Pal.B(Pal.Line), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(14), Padding = new Thickness(32, 28, 32, 24), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, RenderTransform = cardMove };
+        StackPanel s = new StackPanel();
+        title = Pal.Text("Install the chart panel", 22, Pal.Fg, true);
+        subtitle = Pal.Text("SimPilot Link sends the sim's own charts to your iPad. Setting it up takes about two minutes.", 14, Pal.Fg2, false);
+        subtitle.Margin = new Thickness(0, 6, 0, 26);
+        s.Children.Add(title); s.Children.Add(subtitle);
+        sFind = new StepRow(1, "Find MSFS 2024"); sSdk = new StepRow(2, "MSFS 2024 SDK"); sSim = new StepRow(3, "Close MSFS 2024"); sInstall = new StepRow(4, "Install SimPilot Link");
+        s.Children.Add(sFind); s.Children.Add(sSdk); s.Children.Add(sSim); s.Children.Add(sInstall);
+
+        barTrack = new Border { Height = 6, CornerRadius = new CornerRadius(3), Background = Pal.B(Pal.Hover2), Margin = new Thickness(42, -6, 0, 0), ClipToBounds = true, Opacity = 0 };
+        Grid barInner = new Grid();
+        barFill = new Border { CornerRadius = new CornerRadius(3), Background = Pal.B(Pal.Blue), HorizontalAlignment = HorizontalAlignment.Left, Width = 0 };
+        shimmer = new Border { Width = 120, HorizontalAlignment = HorizontalAlignment.Left, RenderTransform = shimmerMove,
+            Background = new LinearGradientBrush(new GradientStopCollection { new GradientStop(Color.FromArgb(0, 255, 255, 255), 0), new GradientStop(Color.FromArgb(70, 255, 255, 255), 0.5), new GradientStop(Color.FromArgb(0, 255, 255, 255), 1) }, 0) };
+        barInner.Children.Add(barFill); barInner.Children.Add(shimmer);
+        barTrack.Child = barInner;
+        barText = Pal.Text("", 12.5, Pal.Fg2, false); barText.Margin = new Thickness(42, 8, 0, 0);
+        s.Children.Add(barTrack); s.Children.Add(barText);
+
+        next = Pal.Text("", 14, Pal.Fg, false); next.LineHeight = 22; next.Margin = new Thickness(0, 4, 0, 0); next.Visibility = Visibility.Collapsed;
+        s.Children.Add(next);
+
+        logText = new TextBlock { FontFamily = Pal.Mono, FontSize = 11.5, Foreground = Pal.B(Pal.Fg2), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(12, 10, 12, 10) };
+        logScroll = new ScrollViewer { Content = logText, Height = 0, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Background = Pal.B(Pal.Frame), Margin = new Thickness(0, 14, 0, 0) };
+        s.Children.Add(logScroll);
+
+        Grid foot = new Grid { Margin = new Thickness(0, 22, 0, 0) };
+        details = new Btn("Show details", "ghost") { HorizontalAlignment = HorizontalAlignment.Left };
+        details.Click += ToggleDetails;
+        StackPanel right = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+        cancel = new Btn("Cancel", "ghost") { Margin = new Thickness(0, 0, 10, 0) };
+        cancel.Click += delegate { Close(); };
+        go = new Btn("Install", "primary");
+        go.Click += Go;
+        right.Children.Add(cancel); right.Children.Add(go);
+        foot.Children.Add(details); foot.Children.Add(right);
+        s.Children.Add(foot);
+        card.Child = s;
+        Children.Add(card);
+        simTimer.Tick += delegate { CheckSim(); };
+    }
+
+    public void Open()
+    {
+        if (running) { Show(); return; }
+        finished = false; progress = 0; log.Length = 0; logText.Text = "";
+        title.Text = "Install the chart panel";
+        subtitle.Text = "SimPilot Link sends the sim's own charts to your iPad. Setting it up takes about two minutes.";
+        next.Visibility = Visibility.Collapsed;
+        barTrack.Opacity = 0; barText.Text = ""; barFill.Width = 0;
+        cancel.Visibility = Visibility.Visible;
+        sInstall.Set("todo", "Copies the panel into the sim's Community folder.", null);
+        community = Local.FindCommunity(out installed);
+        Evaluate();
+        Show();
+    }
+
+    void Show()
+    {
+        Visibility = Visibility.Visible;
+        Opacity = 0;
+        Pal.Fade(this, 1, 200);
+        Pal.Slide(cardMove, TranslateTransform.YProperty, 24, 0, 320);
+        simTimer.Start();
+    }
+
+    void Close()
+    {
+        if (running) return;
+        simTimer.Stop();
+        DoubleAnimation fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(180));
+        fade.Completed += delegate { Visibility = Visibility.Collapsed; };
+        BeginAnimation(OpacityProperty, fade);
+        Pal.Slide(cardMove, TranslateTransform.YProperty, 0, 16, 180);
+    }
+
+    Btn Small(string text, Action click) { Btn b = new Btn(text, "ghost"); b.Padding = new Thickness(12, 5, 12, 5); b.Click += click; return b; }
+
+    void Evaluate()
+    {
+        if (community == null)
+            sFind.Set("fail", "Couldn't find where MSFS 2024 keeps its add-ons. Choose the Packages folder (the one with Community2024 in it).", Small("Choose folder", Choose));
+        else
+            sFind.Set("done", (installed ? "SimPilot Link is already installed in " : "Will install into ") + community, Small("Change", Choose));
+
+        string sdk = Local.SdkPath();
+        sdkOk = sdk != null;
+        if (installed) sSdk.Set("done", "Not needed: the panel is already installed, so it is updated in place.", null);
+        else if (sdkOk) sSdk.Set("done", "Found in " + sdk + ". It is only needed this once.", null);
+        else sSdk.Set("fail", "Needed once to add the panel. In MSFS 2024 open Settings > Advanced Options > Developer Mode and switch it on, then choose Help > SDK Installer in the menu bar at the top and install it.", Small("Check again", delegate { Evaluate(); }));
+        go.Text = installed ? "Update panel" : "Install";
+        CheckSim();
+    }
+
+    void CheckSim()
+    {
+        if (running || finished) return;
+        simClosed = !Local.SimRunning();
+        sSim.Set(simClosed ? "done" : "active", simClosed ? "MSFS 2024 is closed." : "MSFS 2024 is open. Close it to continue; this updates by itself.", null);
+        go.IsEnabled = community != null && (installed || sdkOk) && simClosed && File.Exists(Path.Combine(panelDir, "build.ps1"));
+        if (!File.Exists(Path.Combine(panelDir, "build.ps1"))) sInstall.Set("fail", "The \"Chart panel (optional)\" folder is missing next to SimPilot Bridge.exe. Extract the whole SimPilot-for-PC.zip and run it from there.", null);
+    }
+
+    void Choose()
+    {
+        Forms.FolderBrowserDialog dialog = new Forms.FolderBrowserDialog { Description = "Select the MSFS 2024 Packages folder, or Community2024 if it already exists.", ShowNewFolderButton = false };
+        if (dialog.ShowDialog() != Forms.DialogResult.OK || string.IsNullOrEmpty(dialog.SelectedPath)) return;
+        community = Local.CommunityFromChoice(dialog.SelectedPath, out installed);
+        Evaluate();
+    }
+
+    void ToggleDetails()
+    {
+        logOpen = !logOpen;
+        details.Text = logOpen ? "Hide details" : "Show details";
+        logScroll.BeginAnimation(FrameworkElement.HeightProperty, new DoubleAnimation(logOpen ? 180 : 0, TimeSpan.FromMilliseconds(240)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+    }
+
+    void SetProgress(double value, string text)
+    {
+        progress = Math.Max(progress, value);
+        barText.Text = text;
+        double width = Math.Max(0, barTrack.ActualWidth > 0 ? barTrack.ActualWidth : 516) * progress;
+        barFill.BeginAnimation(FrameworkElement.WidthProperty, new DoubleAnimation(width, TimeSpan.FromMilliseconds(500)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+    }
+
+    void Go()
+    {
+        if (finished) { Close(); return; }
+        if (running || !go.IsEnabled) return;
+        running = true; progress = 0; log.Length = 0; logText.Text = "";
+        go.IsEnabled = false; cancel.Visibility = Visibility.Collapsed;
+        ((SolidColorBrush)barFill.Background).Color = Pal.C(Pal.Blue);
+        sInstall.Set("active", installed ? "Updating the panel files..." : "Building and installing. The SDK may take a minute.", null);
+        barTrack.Opacity = 0; Pal.Fade(barTrack, 1, 200);
+        shimmerMove.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(-120, 600, TimeSpan.FromMilliseconds(1300)) { RepeatBehavior = RepeatBehavior.Forever });
+        SetProgress(0.05, "Starting...");
+        string args = "-NoProfile -ExecutionPolicy Bypass -File \"" + Path.Combine(panelDir, "build.ps1") + "\" -Community \"" + community.TrimEnd('\\') + "\"" + (installed ? " -UpdateScript" : "");
+        ProcessStartInfo psi = new ProcessStartInfo("powershell.exe", args) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true, WorkingDirectory = panelDir };
+        try
+        {
+            Process ps = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            ps.OutputDataReceived += delegate (object o, DataReceivedEventArgs e) { if (e.Data != null) Dispatcher.BeginInvoke(new Action(delegate { Line(e.Data); })); };
+            ps.ErrorDataReceived += delegate (object o, DataReceivedEventArgs e) { if (e.Data != null) Dispatcher.BeginInvoke(new Action(delegate { Line(e.Data); })); };
+            ps.Exited += delegate { int code = 1; try { code = ps.ExitCode; } catch (Exception) { } Dispatcher.BeginInvoke(new Action(delegate { Done(code); })); };
+            ps.Start();
+            ps.StandardInput.Close();   // nothing may wait for typed input
+            ps.BeginOutputReadLine();
+            ps.BeginErrorReadLine();
+        }
+        catch (Exception ex) { Line("Couldn't start PowerShell: " + ex.Message); Done(1); }
+    }
+
+    void Line(string text)
+    {
+        log.AppendLine(text);
+        logText.Text = log.ToString();
+        logScroll.ScrollToEnd();
+        Match m = Regex.Match(text, "^== (\\d)/4 (.+)$");
+        if (m.Success) SetProgress(int.Parse(m.Groups[1].Value) / 4.0 - 0.1, m.Groups[2].Value);
+    }
+
+    void Done(int code)
+    {
+        if (!running) return;
+        running = false;
+        shimmerMove.BeginAnimation(TranslateTransform.XProperty, null);
+        shimmerMove.X = -120;
+        if (code == 0)
+        {
+            finished = true;
+            SetProgress(1, "Finished");
+            sInstall.Set("done", "Installed in " + community + ".", null);
+            title.Text = installed ? "Chart panel updated" : "Chart panel installed";
+            subtitle.Text = "One last thing in the sim:";
+            next.Text = "1.  Start MSFS 2024 (new panels load only when the sim starts) and load into a flight.\n2.  Click the gear icon in the toolbar, switch SimPilot Link on and open it.\n3.  Leave the panel open while you fly. The Status page then shows the chart panel as connected.";
+            next.Visibility = Visibility.Visible; next.Opacity = 0; Pal.Fade(next, 1, 300);
+            go.Text = "Done"; go.IsEnabled = true;
+            owner.Toast(installed ? "Chart panel updated." : "Chart panel installed.");
+            installed = true;
+            return;
+        }
+        string last = "";
+        foreach (string l in log.ToString().Split('\n')) { string t = l.Trim(); if (t.Length > 0 && !t.StartsWith("==") && !t.StartsWith("At ") && !t.StartsWith("+ ")) last = t; }
+        sInstall.Set("fail", last.Length > 0 ? last : "The installer stopped (exit code " + code + ").", null);
+        ((SolidColorBrush)barFill.Background).Color = Pal.C(Pal.Bad);
+        barText.Text = "Didn't finish";
+        if (!logOpen) ToggleDetails();
+        go.Text = "Try again"; cancel.Visibility = Visibility.Visible;
+        Evaluate();
+    }
+}
+
 class MainWindow : Window
 {
     readonly TrayApp host;
+    PanelWizard wizard;
     readonly Grid pages = new Grid();
     readonly List<FrameworkElement> pageList = new List<FrameworkElement>();
     readonly List<NavItem> navItems = new List<NavItem>();
@@ -418,6 +819,12 @@ class MainWindow : Window
         Content = root;
 
         AddPage(StatusPage()); AddPage(ChartsPage()); AddPage(LogPage()); AddPage(RepairPage()); AddPage(HelpPage());
+        wizard = new PanelWizard(this, AppDomain.CurrentDomain.BaseDirectory);
+        Grid.SetRowSpan(wizard, 2);
+        root.Children.Add(wizard);
+        hostText.Text = Environment.MachineName;
+        UpdateAddresses();
+        autostart.Set(Local.AutostartOn(), false);
         top.MouseLeftButtonDown += delegate { try { DragMove(); } catch (Exception) { } };
 
         // opening: fade up and settle
@@ -608,7 +1015,12 @@ class MainWindow : Window
 
         p.Children.Add(new Border { Height = 1, Background = Pal.B(Pal.Line), Margin = new Thickness(0, 28, 0, 18) });
         StackPanel auto = new StackPanel { Orientation = Orientation.Horizontal };
-        autostart = new Switch(); autostart.Changed += delegate { Act(autostart.On ? "autostart-on" : "autostart-off", null, false, delegate (bool ok) { if (!ok) autostart.Set(!autostart.On, true); }); };
+        autostart = new Switch();
+        autostart.Changed += delegate
+        {
+            if (Local.SetAutostart(autostart.On)) Toast(autostart.On ? "SimPilot Bridge will start with Windows, hidden in the tray." : "Start with Windows is off.");
+            else { autostart.Set(!autostart.On, true); Toast("Couldn't change Start with Windows."); }
+        };
         TextBlock lbl = Pal.Text("Start with Windows, hidden in the tray", 13.5, Pal.Fg2, false); lbl.Margin = new Thickness(10, 0, 0, 0);
         auto.Children.Add(autostart); auto.Children.Add(lbl);
         p.Children.Add(auto);
@@ -618,7 +1030,7 @@ class MainWindow : Window
     FrameworkElement ChartsPage()
     {
         StackPanel p = Page();
-        p.Children.Add(Header("Charts", ActionButton("open-cache", "Open cache folder", "ghost", false), ActionButton("panel-install", "Install chart panel", "primary", false)));
+        p.Children.Add(Header("Charts", ActionButton("open-cache", "Open cache folder", "ghost", false), WizardButton("Install chart panel", "primary")));
         p.Children.Add(Lede("Charts exported from the sim's Lido charts. The iPad asks for them when you open an airport."));
         airports = new StackPanel();
         p.Children.Add(Box(airports));
@@ -666,7 +1078,7 @@ class MainWindow : Window
         p.Children.Add(Heading("Repair"));
         StackPanel fix = new StackPanel();
         fix.Children.Add(ActionRow("firewall", "Allow through Windows Firewall", "Adds the rule for private networks if the iPad can't connect. Windows asks for admin approval.", "Fix firewall", false)); fix.Children.Add(Divider());
-        fix.Children.Add(ActionRow("panel-repair", "Repair chart panel", "Copies SimPilot Link into MSFS 2024 again. Close the sim first.", "Repair", false)); fix.Children.Add(Divider());
+        fix.Children.Add(WizardRow("Install or repair chart panel", "Guides you through installing SimPilot Link in MSFS 2024, or puts its files back if it stopped working.")); fix.Children.Add(Divider());
         fix.Children.Add(ActionRow("clear-cache", "Clear chart cache", "Deletes exported charts. They export again when needed.", "Clear cache", false));
         p.Children.Add(Box(fix));
         p.Children.Add(Heading("Uninstall"));
@@ -725,6 +1137,39 @@ class MainWindow : Window
     }
 
     // ---- actions ----
+
+    Btn WizardButton(string label, string kind)
+    {
+        Btn b = new Btn(label, kind);
+        b.Click += delegate { OpenWizard(); };
+        return b;
+    }
+
+    public void OpenWizard() { wizard.Open(); }
+
+    Grid WizardRow(string title, string text)
+    {
+        Grid g = new Grid { Margin = new Thickness(18, 15, 18, 15) };
+        g.ColumnDefinitions.Add(new ColumnDefinition());
+        g.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        StackPanel s = new StackPanel { Margin = new Thickness(0, 0, 20, 0) };
+        TextBlock t = Pal.Text(title, 14, Pal.Fg, false); t.FontWeight = FontWeights.Medium;
+        s.Children.Add(t); s.Children.Add(Pal.Text(text, 13, Pal.Fg2, false));
+        Btn b = WizardButton("Open", "ghost");
+        b.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(b, 1);
+        g.Children.Add(s); g.Children.Add(b);
+        return g;
+    }
+
+    void UpdateAddresses()
+    {
+        List<string> list = Local.Addresses();
+        string first = list.Count > 0 ? list[0] : "";
+        if (first == firstAddress) return;
+        firstAddress = first;
+        RenderAddress();
+    }
 
     Btn ActionButton(string id, string label, string kind, bool confirm)
     {
@@ -831,8 +1276,23 @@ class MainWindow : Window
             Dispatcher.BeginInvoke(new Action(delegate
             {
                 polling = false; infoLoading = false; logLoading = false;
-                if (status == null) { misses++; if (misses >= 3) ShowStopped(); return; }
+                if (tick % 3 == 1) UpdateAddresses();
+                bool ours = host.BridgeRunning;
+                if (status == null)
+                {
+                    misses++;
+                    if (!ours || misses >= 10) ShowStopped(host.LastError);
+                    if (current == 2) ApplyOutput();
+                    return;
+                }
                 misses = 0;
+                if (!ours)
+                {
+                    // Something answers on the port, but not the bridge this program started.
+                    ShowStopped("Another SimPilot Bridge is already running on this PC, probably an older copy in a different folder. Close it (look for its window or tray icon), then press Restart bridge.");
+                    if (current == 2) ApplyOutput();
+                    return;
+                }
                 ApplyStatus(status);
                 if (info != null) ApplyInfo(info);
                 if (log != null) ApplyLog(log);
@@ -840,10 +1300,13 @@ class MainWindow : Window
         });
     }
 
-    void ShowStopped()
+    void ShowStopped(string why)
     {
         connDot.Set(false, false); connText.Text = "Stopped";
-        lede.Text = "The bridge is not running. Use Restart bridge, or open SimPilot Bridge again.";
+        Row(dIpad, tIpad, false, "Not available while the bridge is stopped");
+        Row(dSim, tSim, false, "Not available while the bridge is stopped");
+        Row(dLink, tLink, false, "Not available while the bridge is stopped");
+        lede.Text = string.IsNullOrEmpty(why) ? "The bridge is not running. Press Restart bridge. The Log page shows what it printed." : why;
         if (restart.Visibility != Visibility.Visible) { restart.Visibility = Visibility.Visible; restart.Opacity = 0; Pal.Fade(restart, 1, 300); }
     }
 
@@ -871,11 +1334,6 @@ class MainWindow : Window
 
     public void ApplyInfo(object info)
     {
-        hostText.Text = Json.Str(info, "hostname") ?? "";
-        autostart.Set(Json.Bool(info, "autostart"), false);
-        firstAddress = "";
-        foreach (object a in Json.List(info, "addresses")) { firstAddress = Json.Str(a, "address") ?? ""; break; }
-        RenderAddress();
         airports.Children.Clear();
         int count = 0;
         foreach (object a in Json.List(info, "cache", "airports"))
@@ -914,6 +1372,15 @@ class MainWindow : Window
         return b.ToString();
     }
 
+    void ApplyOutput()
+    {
+        string text = "The bridge isn't answering. This is what it printed:\n\n" + host.Output();
+        if (text == lastLog) return;
+        lastLog = text;
+        logText.Text = text;
+        logScroll.ScrollToEnd();
+    }
+
     public void ApplyLog(object log)
     {
         StringBuilder sb = new StringBuilder();
@@ -945,6 +1412,29 @@ class TrayApp
     Process node;
     bool quitting, balloonShown;
     public bool DeferQuit;
+    public string LastError;
+    readonly List<string> output = new List<string>();
+
+    /// True while the node.exe this program started is alive.
+    public bool BridgeRunning { get { try { return node != null && !node.HasExited; } catch (Exception) { return false; } } }
+
+    public string Output() { lock (output) return output.Count == 0 ? "(nothing yet)" : string.Join("\n", output.ToArray()); }
+
+    void Capture(string line, bool error)
+    {
+        if (line == null) return;
+        lock (output)
+        {
+            output.Add(line);
+            if (output.Count > 300) output.RemoveAt(0);
+        }
+        string t = line.Trim();
+        // Bridge log lines look like "12:00:01.234 ERROR [http] message"; warnings and stack frames are not the reason it stopped.
+        bool logLine = Regex.IsMatch(t, "^\\d\\d:\\d\\d:\\d\\d");
+        if (!error || t.Length == 0 || t.StartsWith("at ") || (logLine && !t.Contains(" ERROR "))) return;
+        int cut = t.IndexOf("] ");
+        LastError = logLine && cut > 0 ? t.Substring(cut + 2) : t;
+    }
 
     public TrayApp(bool minimized, EventWaitHandle showEvent)
     {
@@ -1015,19 +1505,32 @@ class TrayApp
         }
         KillStrays(exe);
         restartItem.Visible = false;
+        LastError = null;
+        lock (output) output.Clear();
         ProcessStartInfo psi = new ProcessStartInfo(exe, "\"" + script + "\"");
         psi.WorkingDirectory = dir;
         psi.UseShellExecute = false;
         psi.CreateNoWindow = true;
+        // Redirect all three: with a hidden console as stdin, the bridge would wait forever for Enter after an error.
+        psi.RedirectStandardInput = true;
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        psi.StandardOutputEncoding = Encoding.UTF8;
+        psi.StandardErrorEncoding = Encoding.UTF8;
         try
         {
             node = new Process();
             node.StartInfo = psi;
             node.EnableRaisingEvents = true;
             node.Exited += OnNodeExited;
+            node.OutputDataReceived += delegate (object o, DataReceivedEventArgs a) { Capture(a.Data, false); };
+            node.ErrorDataReceived += delegate (object o, DataReceivedEventArgs a) { Capture(a.Data, true); };
             node.Start();
+            node.StandardInput.Close();
+            node.BeginOutputReadLine();
+            node.BeginErrorReadLine();
         }
-        catch (Exception ex) { Stopped("Couldn't start the bridge: " + ex.Message); }
+        catch (Exception ex) { LastError = "Couldn't start the bridge: " + ex.Message; Stopped(LastError); }
     }
 
     // A previous launcher that crashed can leave its bridge running and holding the port.
@@ -1053,7 +1556,8 @@ class TrayApp
             // Exit code 0 is the bridge shutting itself down for an update or an uninstall.
             if (quitting || DeferQuit) return;
             if (code == 0) { Quit(); return; }
-            Stopped("SimPilot Bridge stopped (exit code " + code + "). Use Restart bridge in the tray menu.");
+            if (string.IsNullOrEmpty(LastError)) LastError = "SimPilot Bridge stopped (exit code " + code + "). Press Restart bridge.";
+            Stopped(LastError);
         }));
     }
 
@@ -1061,7 +1565,7 @@ class TrayApp
     {
         restartItem.Visible = true;
         tray.Text = "SimPilot Bridge - stopped";
-        tray.ShowBalloonTip(6000, "SimPilot Bridge", message, Forms.ToolTipIcon.Warning);
+        tray.ShowBalloonTip(6000, "SimPilot Bridge", message.Length > 250 ? message.Substring(0, 250) : message, Forms.ToolTipIcon.Warning);
     }
 
     public void Quit()
