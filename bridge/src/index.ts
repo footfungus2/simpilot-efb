@@ -15,9 +15,9 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal
 void start().catch((err: Error) => finish(1, `SimPilot Bridge couldn't start: ${err.message}`));
 
 async function start(): Promise<void> {
-  const [{ config }, { Bonjour }, { ChartStore }, { Hub }, { FenixProcedures }, { LVars }, { createServer }, { startSim }, { Traffic }] = await Promise.all([
+  const [{ config }, { Bonjour }, { ChartStore }, { Hub }, { FenixProcedures }, { LVars }, { createServer }, { startSim }, { Traffic }, { lanAddresses }] = await Promise.all([
     import('./config.js'), import('bonjour-service'), import('./charts/store.js'), import('./hub.js'),
-    import('./fenix.js'), import('./lvars.js'), import('./server.js'), import('./sim.js'), import('./traffic.js'),
+    import('./fenix.js'), import('./lvars.js'), import('./server.js'), import('./sim.js'), import('./traffic.js'), import('./manage.js'),
   ]);
   if (stopping) return;
   const hub = new Hub();
@@ -51,7 +51,7 @@ async function start(): Promise<void> {
       process.exit(0);
     }
     stopSim = startSim(hub, lvars, traffic);
-    welcome(config.port, config.bridgeVersion, config.buildId);
+    welcome(config.port, config.bridgeVersion, config.buildId, lanAddresses);
     // Discovery failures should not take down the working manual-address connection.
     discovery = new Bonjour(undefined, (err: Error) => log.warn('Local discovery unavailable; use the PC address in Settings > Bridge', err));
     discovery.publish({ name: `SimPilot Bridge (${os.hostname()})`, type: 'simpilot', port: config.port, txt: { v: '1' } });
@@ -59,16 +59,14 @@ async function start(): Promise<void> {
   });
 }
 
-function welcome(port: number, version: string, buildId: string): void {
+function welcome(port: number, version: string, buildId: string, lanAddresses: (port: number) => { name: string; address: string }[]): void {
   console.log(`\n  SimPilot Bridge ${version} is running. Leave this window open while you fly.`);
   console.log(`  Build: ${buildId}`);
   console.log('  Keep the iPad and PC on the same local network (Wi-Fi or Ethernet).');
-  const adapters = Object.entries(os.networkInterfaces()).flatMap(([name, entries]) =>
-    (entries ?? []).filter((i) => i.family === 'IPv4' && !i.internal).map((i) => ({ name, address: i.address })));
-  adapters.sort((a, b) => Number(/vpn|virtual|vethernet|vmware|wsl|tun|docker/i.test(a.name)) - Number(/vpn|virtual|vethernet|vmware|wsl|tun|docker/i.test(b.name)));
+  const adapters = lanAddresses(port);
   if (adapters.length) {
     console.log('  If the app cannot find the PC, type its Wi-Fi or Ethernet address in Settings > Bridge:');
-    for (const adapter of adapters) console.log(`    ${adapter.name}: ${adapter.address}:${port}`);
+    for (const adapter of adapters) console.log(`    ${adapter.name}: ${adapter.address}`);
   }
   console.log(`  To check for updates, open http://localhost:${port} in a browser on this PC.`);
   console.log('  MSFS 2024 connects automatically whenever it is running. To stop, close this window.');

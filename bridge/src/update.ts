@@ -79,29 +79,3 @@ export function updateScript(): string {
     ':launch', 'if exist "%~1\\SimPilot Bridge.exe" (start "" "%~1\\SimPilot Bridge.exe") else start "" "%~1\\SimPilot Bridge.cmd"', 'exit /b 0', '',
   ].join('\r\n');
 }
-
-export const updatePage = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SimPilot Bridge</title>
-<body style="font:16px system-ui;max-width:32rem;margin:3rem auto;padding:0 1rem">
-<h1>SimPilot Bridge</h1><p id="v">Version ${config.release.version} (build ${config.release.build})</p>
-<button id="check">Check for updates</button> <button id="install" hidden>Install update and restart</button>
-<p id="msg"></p>
-<script>
-const $ = (id) => document.getElementById(id), msg = (t) => { $('msg').textContent = t; };
-async function call(method) {
-  const r = await fetch('/bridge/update', { method });
-  const j = await r.json();
-  if (!r.ok) throw new Error(j.error || 'failed');
-  return j;
-}
-$('check').onclick = async () => {
-  msg('Checking...'); $('install').hidden = true;
-  try { const u = await call('GET'); msg(u.notes + (u.available ? ' Latest: ' + u.latest + '.' : '')); $('install').hidden = !u.canInstall; }
-  catch (e) { msg("Couldn't check: " + e.message); }
-};
-$('install').onclick = async () => {
-  msg('Downloading the update...'); $('install').disabled = $('check').disabled = true;
-  try { await call('POST'); msg('Installing. SimPilot Bridge restarts in a few seconds; this page can be closed.'); }
-  catch (e) { msg('Update failed: ' + e.message); $('install').disabled = $('check').disabled = false; }
-};
-</script>`;

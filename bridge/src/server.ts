@@ -12,7 +12,9 @@ import type { Traffic } from './traffic.js';
 import type { Hub } from './hub.js';
 import { logEntries, logger } from './log.js';
 import { fetchOfp } from './simbrief.js';
-import { checkForUpdate, installUpdate, updatePage } from './update.js';
+import { bridgeInfo, manage } from './manage.js';
+import { checkForUpdate, installUpdate } from './update.js';
+import { appPage } from './ui.js';
 import type { ChartIndex } from './types.js';
 import { metars, metarsInBox, parseIds, sigmets, tafs } from './weather.js';
 
@@ -69,10 +71,16 @@ export function createServer(hub: Hub, store: ChartStore, lvars?: LVars, fenix?:
     return index;
   }
 
-  // ---- bridge self-update (this PC only; the page at / has the button) ----
+  // ---- the bridge window at / (this PC only): status, update, repair ----
   router
-    .add('GET', '/', (_req, res) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }).end(updatePage); })
+    .add('GET', '/', (_req, res) => { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }).end(appPage); })
     .add('GET', '/bridge/update', async (_req, res) => { res.setHeader('cache-control', 'no-store'); sendJson(res, 200, await checkForUpdate()); })
+    .add('GET', '/bridge/info', async (_req, res) => { res.setHeader('cache-control', 'no-store'); sendJson(res, 200, await bridgeInfo()); })
+    .add('POST', '/bridge/manage/:action', async (req, res, p) => {
+      // A custom header can't be sent cross-site without a CORS preflight, which this server never answers.
+      if (req.headers['x-simpilot-ui'] !== '1') throw new HttpError(403, 'use the SimPilot Bridge window');
+      sendJson(res, 200, { ok: true, message: await manage(p.action!) });
+    })
     .add('POST', '/bridge/update', async (_req, res) => {
       await installUpdate();
       sendJson(res, 200, { ok: true });

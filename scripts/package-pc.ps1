@@ -47,7 +47,7 @@ Open the "SimPilot for PC" folder after choosing Extract All.
 1. Double-click "SimPilot Bridge" (the one with the SimPilot icon) and leave it running while you fly.
    Its window shows whether the iPad, MSFS and the chart panel are connected. Closing the window
    keeps it running in the tray (next to the clock); right-click the tray icon to quit.
-   "Check for updates" in the window installs newer versions by itself.
+   When a newer version exists, an "Install update" button appears in the window and updates by itself.
    (If it won't open, "SimPilot Bridge (console).cmd" runs the same bridge in a plain text window.)
    - If Windows Firewall asks: tick "Private networks" and click "Allow access".
      Windows may call it "Node.js JavaScript Runtime"; that is SimPilot Bridge.
