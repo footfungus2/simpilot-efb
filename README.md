@@ -133,7 +133,7 @@ A **Flight** screen (the checklist icon in the bottom bar) with everything you w
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/enroute-map.jpg" alt="Enroute map with the SimBrief route"><br><b>Enroute map</b><br>SimBrief route, FIRs, airports and the flight folder</td>
+    <td width="50%"><img src="docs/images/enroute-map.jpg" alt="Enroute map with the SimBrief route and altitude labels"><br><b>Enroute map</b><br>SimBrief route with the planned altitude at every fix, coloured by climb, cruise and descent</td>
     <td width="50%"><img src="docs/images/airport-map.jpg" alt="Airport moving map at London Stansted"><br><b>Airport moving map</b><br>Stands, holding points, taxiway names and runway badges</td>
   </tr>
   <tr>
@@ -141,8 +141,11 @@ A **Flight** screen (the checklist icon in the bottom bar) with everything you w
     <td><img src="docs/images/waypoint-details.jpg" alt="Waypoint details card"><br><b>Tap for details</b><br>Planned level, leg and distance for any fix on the route</td>
   </tr>
   <tr>
-    <td><img src="docs/images/charts.jpg" alt="Chart viewer"><br><b>Charts</b><br>Airport, approach and departure charts by category</td>
-    <td><img src="docs/images/split-view.jpg" alt="Split view of chart and map"><br><b>Split view</b><br>Chart and live map side by side</td>
+    <td><img src="docs/images/charts.jpg" alt="SID chart with your aircraft on it"><br><b>Charts</b><br>The sim's own charts by category, with your aircraft drawn on the chart</td>
+    <td><img src="docs/images/chart-on-map.jpg" alt="A SID chart laid over the enroute map"><br><b>Chart on the map</b><br>Lay a georeferenced chart over the map with an opacity slider; split view puts chart and map side by side</td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/images/flight-briefing.jpg" alt="Flight screen briefing for EGSS to LIRA" width="50%"><br><b>Flight screen</b><br>Departure and arrival briefing with live METAR and QNH, plus clearances, checklists, fuel, logbook, documents and ACARS</td>
   </tr>
 </table>
 
