@@ -9,7 +9,7 @@ import { logger } from '../log.js';
 import type { ChartIndex } from '../types.js';
 import { type Capturer, ScreenCapture } from './capture.js';
 import { type FlightWant, pickFlightCharts } from './prefetch.js';
-import { icaoIdent, normalizeIndex, normalizePages } from './normalize.js';
+import { icaoIdent, normalizeIndex, normalizePages, type StoredPage } from './normalize.js';
 import { type ChartStore, isPng, safeIcao } from './store.js';
 
 const log = logger('link');
@@ -36,6 +36,9 @@ export interface Job {
   /** Chart jobs: page count once the panel has sent the pages, and the pages that are on disk. */
   total: number;
   saved: Set<number>;
+  /** Present when captures must stay separate from the chart currently on disk. */
+  replacement?: { revision: string; pages: StoredPage[] };
+  finishing?: boolean;
 }
 
 const chartGuids = (index: ChartIndex) => index.categories.flatMap((c) => c.charts.map((chart) => chart.guid)).sort().join('|');
@@ -52,7 +55,7 @@ export class ChartLink {
     private readonly capturer: Capturer = new ScreenCapture(),
   ) {}
 
-  private queue(type: Job['type'], icaoRaw: string, provider: string, guid?: string, prefetch = false): Job {
+  private queue(type: Job['type'], icaoRaw: string, provider: string, guid?: string, prefetch = false, refresh = false): Job {
     const icao = safeIcao(icaoRaw);
     const existing = [...this.jobs.values()].find((j) => j.type === type && j.icao === icao && j.provider === provider && j.guid === guid);
     if (existing) {
@@ -64,6 +67,7 @@ export class ChartLink {
     }
     if (this.jobs.size >= MAX_JOBS) throw new HttpError(429, 'too many pending chart requests');
     const job: Job = { id: randomUUID(), type, icao, provider, guid, queuedAt: Date.now(), attempts: 0, indexSaved: false, prefetch, total: 0, saved: new Set() };
+    if (refresh) job.replacement = { revision: job.id, pages: [] };
     this.jobs.set(job.id, job);
     log.info(`queued ${provider} ${type === 'index' ? 'chart list' : 'chart'} for ${icao}`);
     return job;
@@ -75,10 +79,10 @@ export class ChartLink {
   }
 
   /** Queues the export of one chart (all its pages) unless that's already pending. */
-  async requestChart(icao: string, guid: string, provider = 'LIDO'): Promise<Job> {
+  async requestChart(icao: string, guid: string, provider = 'LIDO', refresh = false): Promise<Job> {
     const index = await this.store.getIndex(icao);
     if (!index?.categories.some((c) => c.charts.some((chart) => chart.guid === guid))) throw new HttpError(404, 'chart is not in the airport list');
-    return this.queue('chart', icao, provider, guid);
+    return this.queue('chart', icao, provider, guid, false, refresh);
   }
 
   /** Remembers what a loaded flight needs at an airport and queues it as soon as the airport's chart list is cached. */
@@ -113,6 +117,7 @@ export class ChartLink {
     if (protocol !== LINK_PROTOCOL) {
       // A panel from another version would run the wrong kind of job; say so instead of handing it work.
       for (const job of [...this.jobs.values()]) {
+        if (job.finishing) continue;
         this.jobs.delete(job.id);
         this.fail(job, 'SimPilot Link in the sim is out of date. Close MSFS, run Install SimPilot Link again and start MSFS.');
       }
@@ -125,13 +130,13 @@ export class ChartLink {
     }
     if (busy) return { jobs: [] };
     for (const job of [...this.jobs.values()]) {
-      if (job.attempts < MAX_ATTEMPTS) continue;
+      if (job.finishing || job.attempts < MAX_ATTEMPTS) continue;
       this.jobs.delete(job.id);
       this.fail(job, 'The sim stopped answering while exporting; try again');
     }
     // Chart lists are quick, so they go first; of the charts only one: the newest request from the iPad (the one being
     // waited for), and only when there is none the oldest ahead-of-time chart (a flight's SID before its STAR).
-    const jobs = [...this.jobs.values()];
+    const jobs = [...this.jobs.values()].filter((job) => !job.finishing);
     const chart = jobs.filter((j) => j.type === 'chart').sort((a, b) => Number(a.prefetch) - Number(b.prefetch) || (a.prefetch ? a.queuedAt - b.queuedAt : b.queuedAt - a.queuedAt))[0];
     const out = [...jobs.filter((j) => j.type === 'index'), ...(chart ? [chart] : [])];
     for (const j of out) j.attempts++;
@@ -161,9 +166,15 @@ export class ChartLink {
     if (!pages.length || pages.some((p) => !Number.isFinite(p.width) || !Number.isFinite(p.height) || p.width <= 0 || p.height <= 0)) {
       throw new HttpError(400, 'chart pages require positive image dimensions');
     }
-    await this.store.savePages(job.icao, job.guid!, pages);
     const have: number[] = [];
-    for (const p of pages) if (await this.store.hasImage(job.icao, job.guid!, p.index)) have.push(p.index);
+    const previous = job.replacement;
+    if (previous || await this.store.currentRevision(job.icao, job.guid!)) {
+      job.replacement = { revision: randomUUID(), pages };
+      if (previous?.pages.length) this.discardReplacement(job, previous.revision);
+    } else {
+      await this.store.savePages(job.icao, job.guid!, pages);
+      for (const p of pages) if (await this.store.hasImage(job.icao, job.guid!, p.index)) have.push(p.index);
+    }
     job.total = pages.length;
     job.saved = new Set(have);
     this.progress(job);
@@ -173,6 +184,7 @@ export class ChartLink {
   /** One screen-captured tile of a page the panel is showing; the page is saved after its last tile. */
   async onCapture(body: any): Promise<boolean> {
     const job = this.job(body.jobId, 'chart');
+    const replacement = job.replacement;
     const page = Number(body.page);
     if (String(body.guid) !== job.guid || !Number.isInteger(page) || page < 0 || page >= job.total) throw new HttpError(400, 'capture page does not match chart metadata');
     const int = (v: unknown, max: number) => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= max;
@@ -186,7 +198,14 @@ export class ChartLink {
     if (i !== cols - 1 || j !== rows - 1) return false;
     const png = await this.capturer.finish();
     if (!isPng(png)) throw new HttpError(500, 'chart capture produced no image');
-    await this.store.saveImage(job.icao, job.guid!, page, png);
+    this.job(job.id, 'chart'); // the panel may have abandoned this job while the capture was running
+    if (job.replacement !== replacement) throw new HttpError(409, 'chart export restarted');
+    await this.store.saveImage(job.icao, job.guid!, page, png, replacement?.revision);
+    if (replacement && job.replacement !== replacement) {
+      this.discardReplacement(job, replacement.revision);
+      throw new HttpError(409, 'chart export restarted');
+    }
+    if (!this.jobs.has(job.id)) return false;
     job.saved.add(page);
     this.progress(job);
     return true;
@@ -194,20 +213,37 @@ export class ChartLink {
 
   async onDone(body: any): Promise<void> {
     const job = this.jobs.get(String(body.jobId));
-    if (!job) return;
-    this.jobs.delete(job.id);
-    const error = body.error ? String(body.error) : this.incomplete(job);
-    if (error) this.fail(job, error);
-    else if (job.type === 'chart') {
+    if (!job || job.finishing) return;
+    job.finishing = true;
+    try {
+      const error = body.error ? String(body.error) : this.incomplete(job);
+      if (error) return this.fail(job, error);
+      if (job.type !== 'chart') return;
+      if (job.replacement) {
+        try {
+          await this.store.publishRevision(job.icao, job.guid!, job.replacement.pages, job.replacement.revision);
+        } catch (err) {
+          log.error(`${job.icao}: failed to save the replacement chart`, err);
+          return this.fail(job, 'Could not save the replacement chart. Try again.');
+        }
+      }
       log.info(`${job.icao}: chart exported (${job.saved.size}/${job.total} pages)`);
       this.hub.broadcast({ t: 'chartReady', icao: job.icao, guid: job.guid! });
+    } finally {
+      this.jobs.delete(job.id);
     }
   }
 
   private fail(job: Job, message: string): void {
+    if (job.replacement) this.discardReplacement(job, job.replacement.revision);
     log.warn(`${job.icao}: ${message}`);
     if (job.prefetch) return; // nobody is waiting for it; it is tried again when the chart is opened
     this.hub.broadcast(job.type === 'index' ? { t: 'chartsError', icao: job.icao, message } : { t: 'chartError', icao: job.icao, guid: job.guid!, message });
+  }
+
+  private discardReplacement(job: Job, revision: string): void {
+    void this.store.discardRevision(job.icao, job.guid!, revision)
+      .catch((err) => log.warn('Could not remove an unfinished chart export', err));
   }
 
   private incomplete(job: Job): string | undefined {
@@ -221,7 +257,7 @@ export class ChartLink {
 
   private job(id: unknown, type: Job['type']): Job {
     const job = this.jobs.get(String(id));
-    if (!job) throw new HttpError(404, `unknown job ${String(id)}`);
+    if (!job || job.finishing) throw new HttpError(404, `unknown job ${String(id)}`);
     if (job.type !== type) throw new HttpError(400, `job ${String(id)} is not a ${type} job`);
     return job;
   }

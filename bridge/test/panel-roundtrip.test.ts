@@ -16,6 +16,7 @@ import { createServer } from '../src/server.js';
 // chart calls and the screen capture faked, so the two halves of the protocol are checked against each other.
 
 const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(16)]);
+const pairingKey = 'test-pairing-key';
 const panelSource = path.resolve(import.meta.dirname, '../../sim-package/src/link.ts');
 
 const simCharts = {
@@ -54,7 +55,7 @@ describe('SimPilot Link panel and bridge together', () => {
     hub = new Hub();
     vi.spyOn(hub, 'broadcast');
     const capturer: Capturer = { tile: async () => void tiles++, finish: async () => png };
-    server = createServer(hub, new ChartStore(dir), undefined, undefined, capturer);
+    server = createServer(hub, new ChartStore(dir), pairingKey, undefined, undefined, capturer);
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -112,7 +113,7 @@ describe('SimPilot Link panel and bridge together', () => {
   });
 
   it('lists an airport, exports a chart when it is opened and exports it again on request', async () => {
-    const get = (p: string) => fetch(`${base}${p}`);
+    const get = (p: string) => fetch(`${base}${p}`, { headers: { 'x-simpilot-token': pairingKey } });
     expect((await get('/api/charts/EGSS')).status).toBe(202);
     await until(() => sent('chartsReady').length === 1);
     const index = await (await get('/api/charts/EGSS')).json() as { categories: { charts: { guid: string; procedures: string[] }[] }[] };
@@ -131,7 +132,9 @@ describe('SimPilot Link panel and bridge together', () => {
     expect((await get('/api/charts/EGSS/%7Bsid-1%7D?refresh=1')).status).toBe(202);
     await until(() => sent('chartReady').length === 2);
     expect(tiles).toBeGreaterThan(before);
-    expect((await get('/api/charts/EGSS/%7Bsid-1%7D')).status).toBe(200);
+    const refreshed = await (await get('/api/charts/EGSS/%7Bsid-1%7D')).json() as { pages: { image: string }[] };
+    expect(refreshed.pages.map((page) => page.image)).not.toEqual(chart.pages.map((page) => page.image));
+    for (const page of refreshed.pages) expect(Buffer.from(await (await get(page.image)).arrayBuffer()).subarray(1, 4).toString()).toBe('PNG');
     expect(sent('chartError')).toEqual([]);
     expect((await get('/api/status').then((r) => r.json())) as { link: { connected: boolean } }).toMatchObject({ link: { connected: true } });
   }, 20_000);

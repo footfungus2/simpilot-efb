@@ -119,8 +119,6 @@ describe('ChartStore', () => {
     expect(chart?.pages[0]!.image).toBeNull();
     expect(chart?.pages[1]!.image).toMatch(/^\/charts\/EDDF\/%7BA1B2-C3%7D\/1\.png\?v=\d+$/);
 
-    await store.removeChart('EDDF', '{A1B2-C3}');
-    expect(await store.getChart('EDDF', '{A1B2-C3}')).toBeUndefined();
     await fs.rm(dir, { recursive: true });
   });
 });

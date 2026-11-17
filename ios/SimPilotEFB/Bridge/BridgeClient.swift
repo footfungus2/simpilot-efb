@@ -1,5 +1,7 @@
 import Combine
+import CryptoKit
 import Foundation
+import Security
 
 /// Live ownship position, kept separate so 10 Hz updates only redraw views that show the aircraft.
 @MainActor
@@ -9,6 +11,134 @@ final class OwnshipStore: ObservableObject {
     func update(_ o: Ownship?) {
         ownship = o
     }
+}
+
+enum BridgeResponseLimit {
+    static let json = 16 * 1024 * 1024
+    static let image = 32 * 1024 * 1024
+    static let webSocket = 4 * 1024 * 1024
+}
+
+enum BridgeImageLimit {
+    static func supportsDimensions(width: Int, height: Int) -> Bool {
+        width > 0 && height > 0 && width <= 12_000 && height <= 12_000 && width <= 40_000_000 / height
+    }
+}
+
+final class BridgeSessionDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private typealias ResponseStream = AsyncThrowingStream<(Data, URLResponse), Error>
+    private struct PendingResponse {
+        let maximumBytes: Int
+        let result: ResponseStream.Continuation
+        var data = Data()
+    }
+
+    private let lock = NSLock()
+    private var expectedHost: String?
+    private var fingerprint: String?
+    private var responses: [Int: PendingResponse] = [:]
+
+    func load(_ request: URLRequest, session: URLSession, maximumBytes: Int) async throws -> (Data, URLResponse) {
+        try Task.checkCancellation()
+        let (replies, result) = ResponseStream.makeStream()
+        let task = session.dataTask(with: request)
+        lock.withLock {
+            responses[task.taskIdentifier] = PendingResponse(maximumBytes: maximumBytes, result: result)
+        }
+        defer { task.cancel() }
+        task.resume()
+        var iterator = replies.makeAsyncIterator()
+        guard let reply = try await iterator.next() else { throw CancellationError() }
+        return reply
+    }
+
+    func pin(host: String?, fingerprint: String?) {
+        lock.lock()
+        expectedHost = host?.lowercased()
+        self.fingerprint = fingerprint
+        lock.unlock()
+    }
+
+    private func credential(for challenge: URLAuthenticationChallenge) -> URLCredential? {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = challenge.protectionSpace.serverTrust,
+              let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate], let leaf = chain.first else { return nil }
+        lock.lock()
+        let hostMatches = expectedHost == challenge.protectionSpace.host.lowercased()
+        let expectedFingerprint = fingerprint
+        lock.unlock()
+        guard hostMatches, let expectedFingerprint else { return nil }
+        let actual = SHA256.hash(data: SecCertificateCopyData(leaf) as Data).map { String(format: "%02x", $0) }.joined()
+        return actual == expectedFingerprint ? URLCredential(trust: trust) : nil
+    }
+
+    private func answer(_ challenge: URLAuthenticationChallenge, _ completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        if let credential = credential(for: challenge) { completionHandler(.useCredential, credential) }
+        else { completionHandler(.cancelAuthenticationChallenge, nil) }
+    }
+
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        answer(challenge, completionHandler)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        answer(challenge, completionHandler)
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        guard task is URLSessionDataTask, let from = task.originalRequest?.url,
+              let to = request.url, BridgeAddress.sameOrigin(to, as: from) else {
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        let id = dataTask.taskIdentifier
+        guard let maximum = lock.withLock({ responses[id]?.maximumBytes }) else {
+            completionHandler(.cancel)
+            return
+        }
+        if response.expectedContentLength > Int64(maximum) {
+            let result = lock.withLock { responses.removeValue(forKey: id)?.result }
+            result?.finish(throwing: Self.responseTooLarge)
+            completionHandler(.cancel)
+        } else {
+            completionHandler(.allow)
+        }
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        let result = lock.withLock { () -> ResponseStream.Continuation? in
+            let id = dataTask.taskIdentifier
+            guard let maximum = responses[id]?.maximumBytes, let buffered = responses[id]?.data.count else { return nil }
+            if data.count > maximum - buffered { return responses.removeValue(forKey: id)?.result }
+            responses[id]?.data.append(data)
+            return nil
+        }
+        if let result {
+            result.finish(throwing: Self.responseTooLarge)
+            dataTask.cancel()
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        guard let pending = lock.withLock({ responses.removeValue(forKey: task.taskIdentifier) }) else { return }
+        if let error { pending.result.finish(throwing: error) }
+        else if let response = task.response {
+            pending.result.yield((pending.data, response))
+            pending.result.finish()
+        } else {
+            pending.result.finish(throwing: URLError(.badServerResponse))
+        }
+    }
+
+    private static let responseTooLarge = BridgeClient.HTTPError(status: 413, message: "Bridge response exceeded the size limit")
 }
 
 /// AI and multiplayer aircraft around the user (the map's TFC layer), as GeoJSON for the map.
@@ -100,13 +230,16 @@ final class BridgeClient: ObservableObject {
     private var reconnectTask: Task<Void, Never>?
     private var handshakeTask: Task<Void, Never>?
     private var reportedInvalidMessage = false
-    private let discovery = BridgeDiscovery()
-    private let session: URLSession = {
+    private var pairingCode: String? = SecretStore.read("bridgePairingKey")
+    private var pairing: BridgePairingCode? { BridgePairingCode.parse(pairingCode) }
+    private var pairingKey: String? { pairing?.key }
+    private let sessionDelegate = BridgeSessionDelegate()
+    private lazy var session: URLSession = {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 20
         cfg.waitsForConnectivity = false
         cfg.urlCache = URLCache(memoryCapacity: 64 << 20, diskCapacity: 512 << 20) // chart PNGs
-        return URLSession(configuration: cfg)
+        return URLSession(configuration: cfg, delegate: sessionDelegate, delegateQueue: nil)
     }()
 
     var isConnected: Bool {
@@ -114,29 +247,33 @@ final class BridgeClient: ObservableObject {
         return false
     }
 
-    var baseURL: URL? { host.flatMap { URL(string: "http://\($0)") } }
+    var baseURL: URL? { host.flatMap { URL(string: "https://\($0)") } }
 
-    /// Connects to `manualHost` ("192.168.1.20:8386"), or discovers the bridge if it's empty.
+    /// Connects to the paired bridge at `manualHost` ("192.168.1.20:8387").
     func start(manualHost: String?) {
         let trimmed = manualHost?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         disconnect()
         lastError = nil
+        guard pairing != nil else {
+            lastError = "Pair this iPad with the key and certificate fingerprint shown in SimPilot Bridge."
+            return
+        }
         self.manualHost = trimmed.isEmpty ? nil : BridgeAddress.normalize(trimmed)
         if !trimmed.isEmpty, self.manualHost == nil {
-            lastError = "Enter the PC's hostname or address, optionally followed by its port (for example 192.168.1.20:8386)."
+            lastError = "Enter the PC's hostname or address, optionally followed by its port (for example 192.168.1.20:8387)."
             DiagnosticLog.record(.warning, "Bridge", "Invalid bridge address; connection not started")
             return
         }
         if let h = self.manualHost {
             connect(to: h)
         } else {
-            state = .searching
-            DiagnosticLog.record(.info, "Bridge", "Searching for the PC bridge on the local network")
-            discovery.start { [weak self] found in
-                self?.discovery.stop()
-                self?.connect(to: found)
-            }
+            lastError = "Enter the PC address shown in SimPilot Bridge before pairing."
         }
+    }
+
+    func setPairingKey(_ code: String?) {
+        pairingCode = code
+        sessionDelegate.pin(host: nil, fingerprint: pairing?.fingerprint)
     }
 
     /// With a role (origin / destination / alternate) the bridge also exports the flight's own charts ahead of time.
@@ -203,10 +340,12 @@ final class BridgeClient: ObservableObject {
 
     /// GET a JSON resource. Returns nil for 202/204 (accepted / no content).
     func get<T: Decodable>(_ path: String, as: T.Type = T.self) async throws -> T? {
-        guard let base = baseURL, let url = URL(string: path, relativeTo: base) else {
+        guard let url = bridgeURL(path), let pairingKey else {
             throw HTTPError(status: 0, message: "Not connected to the bridge")
         }
-        let (data, response) = try await session.data(from: url)
+        var request = URLRequest(url: url)
+        request.setValue(pairingKey, forHTTPHeaderField: "x-simpilot-token")
+        let (data, response) = try await sessionDelegate.load(request, session: session, maximumBytes: BridgeResponseLimit.json)
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         if code == 202 || code == 204 { return nil }
         guard (200..<300).contains(code) else {
@@ -217,13 +356,21 @@ final class BridgeClient: ObservableObject {
     }
 
     func data(_ path: String) async throws -> Data {
-        guard let base = baseURL, let url = URL(string: path, relativeTo: base) else {
+        guard let url = bridgeURL(path), let pairingKey else {
             throw HTTPError(status: 0, message: "Not connected to the bridge")
         }
-        let (data, response) = try await session.data(from: url)
+        var request = URLRequest(url: url)
+        request.setValue(pairingKey, forHTTPHeaderField: "x-simpilot-token")
+        let (data, response) = try await sessionDelegate.load(request, session: session, maximumBytes: BridgeResponseLimit.image)
         let code = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(code) else { throw HTTPError(status: code, message: "HTTP \(code)") }
         return data
+    }
+
+    private func bridgeURL(_ path: String) -> URL? {
+        guard let base = baseURL, let url = URL(string: path, relativeTo: base)?.absoluteURL,
+              BridgeAddress.sameOrigin(url, as: base) else { return nil }
+        return url
     }
 
     // MARK: WebSocket
@@ -232,8 +379,12 @@ final class BridgeClient: ObservableObject {
         self.host = host
         state = .connecting(host)
         DiagnosticLog.record(.info, "Bridge", "Connecting to the PC bridge")
-        guard let url = URL(string: "ws://\(host)/ws") else { return }
-        let task = session.webSocketTask(with: url)
+        guard let url = URL(string: "wss://\(host)/ws"), let pairingKey, let fingerprint = pairing?.fingerprint,
+              let serverHost = url.host else { return }
+        sessionDelegate.pin(host: serverHost, fingerprint: fingerprint)
+        var request = URLRequest(url: url)
+        request.setValue(pairingKey, forHTTPHeaderField: "x-simpilot-token")
+        let task = session.webSocketTask(with: request)
         socket = task
         task.resume()
         receive(on: task)
@@ -253,8 +404,22 @@ final class BridgeClient: ObservableObject {
                 switch result {
                 case let .success(message):
                     switch message {
-                    case let .string(text): self.handle(Data(text.utf8))
-                    case let .data(data): self.handle(data)
+                    case let .string(text):
+                        guard text.utf8.count <= BridgeResponseLimit.webSocket else {
+                            self.lastError = "The PC bridge sent an oversized message."
+                            DiagnosticLog.record(.warning, "Bridge", "Disconnected from the PC bridge after an oversized message")
+                            self.scheduleReconnect()
+                            return
+                        }
+                        self.handle(Data(text.utf8))
+                    case let .data(data):
+                        guard data.count <= BridgeResponseLimit.webSocket else {
+                            self.lastError = "The PC bridge sent an oversized message."
+                            DiagnosticLog.record(.warning, "Bridge", "Disconnected from the PC bridge after an oversized message")
+                            self.scheduleReconnect()
+                            return
+                        }
+                        self.handle(data)
                     @unknown default: break
                     }
                     self.receive(on: task)
@@ -352,6 +517,7 @@ final class BridgeClient: ObservableObject {
         status = nil
         ownship.update(nil)
         aircraft.reset()
+        traffic.clear()
         for (_, c) in results { c.resume(throwing: CommandFailure(message: "Lost the connection to the PC bridge")) }
         results = [:]
         reconnectTask?.cancel()
@@ -369,12 +535,12 @@ final class BridgeClient: ObservableObject {
         handshakeTask = nil
         reconnectTask?.cancel()
         reconnectTask = nil
-        discovery.stop()
         socket?.cancel(with: .goingAway, reason: nil)
         socket = nil
         host = nil
         status = nil
         ownship.update(nil)
+        traffic.clear()
         reportedInvalidMessage = false
         state = .idle
         aircraft.reset()

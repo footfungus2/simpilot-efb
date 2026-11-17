@@ -8,6 +8,11 @@ import { fileURLToPath } from 'node:url';
 export const packaged = process.env.SIMPILOT_PACKAGED === '1';
 
 const here = packaged ? '' : path.dirname(fileURLToPath(import.meta.url));
+const configDir = process.platform === 'win32'
+  ? process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local')
+  : process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+const port = envInt('SIMPILOT_PORT', 8386, 65535);
+if (port === 8387) throw new Error('SIMPILOT_PORT must differ from the secure bridge port 8387');
 
 function envInt(name: string, fallback: number, max: number): number {
   const raw = process.env[name];
@@ -18,17 +23,18 @@ function envInt(name: string, fallback: number, max: number): number {
 }
 
 export const config = {
-  /**
-   * HTTP + WebSocket port shared by the iPad app and the in-sim link panel (which always uses 8386). Not 8380: that is
-   * FlyByWire SimBridge's port.
-   */
-  port: envInt('SIMPILOT_PORT', 8386, 65535),
+  /** Loopback HTTP port used by the in-sim panel and PC launcher. */
+  port,
+  /** TLS port used by the iPad over the local network. */
+  securePort: 8387,
   /**
    * Where chart images, indexes and OFPs are cached on disk. The packaged app keeps them in the user's local app
    * data, so it works from any folder (Downloads, Desktop, Program Files).
    */
-  cacheDir: process.env.SIMPILOT_CACHE_DIR ??
-    (packaged ? path.join(process.env.LOCALAPPDATA ?? os.homedir(), 'SimPilot Bridge', 'cache') : path.resolve(here, '..', 'cache')),
+  cacheDir: process.env.SIMPILOT_CACHE_DIR ||
+    (packaged ? path.join(process.env.LOCALAPPDATA || os.homedir(), 'SimPilot Bridge', 'cache') : path.resolve(here, '..', 'cache')),
+  pairingFile: path.join(configDir, 'SimPilot Bridge', 'pairing.key'),
+  tlsDir: path.join(configDir, 'SimPilot Bridge', 'tls'),
   /**
    * Remote SimConnect endpoint. Leave unset on the sim PC (auto-detected from the registry).
    * Set to e.g. `192.168.1.20:5111` to run the bridge on another machine during development.
@@ -38,11 +44,12 @@ export const config = {
   ownshipHz: envInt('SIMPILOT_OWNSHIP_HZ', 10, 60),
   /** The link panel counts as disconnected after this long without a poll. */
   linkTimeoutMs: 6000,
-  bridgeVersion: '0.1.1',
+  bridgeVersion: process.env.SIMPILOT_VERSION ?? '0.1.2',
   /** Release this bridge was packaged from (CI defines both at bundle time); build 0 = not from a release. */
   release: { version: process.env.SIMPILOT_VERSION ?? '0.0.0', build: Number(process.env.SIMPILOT_BUILD ?? 0) },
   buildId: bridgeBuildId(),
 };
+
 
 function bridgeBuildId(): string {
   const hash = createHash('sha256');

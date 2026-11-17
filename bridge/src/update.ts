@@ -56,26 +56,38 @@ export async function installUpdate(): Promise<void> {
   const appDir = path.dirname(process.execPath);
   const script = path.join(work, 'update.cmd');
   fs.writeFileSync(script, updateScript(), 'utf8');
-  // Paths go in as arguments, never into the script text, so odd folder names (apostrophes, &) stay harmless.
-  spawn('cmd.exe', ['/c', script, appDir, zip, path.join(work, 'x')], { detached: true, stdio: 'ignore', windowsHide: false }).unref();
+  // Keep filesystem paths out of cmd.exe's command text; the batch file reads them from its environment.
+  spawn('cmd.exe', ['/d', '/c', 'update.cmd'], {
+    cwd: work,
+    env: {
+      ...process.env,
+      SIMPILOT_UPDATE_APP_DIR: appDir,
+      SIMPILOT_UPDATE_ZIP: zip,
+      SIMPILOT_UPDATE_EXTRACTED: path.join(work, 'x'),
+    },
+    detached: true, stdio: 'ignore', windowsHide: false,
+  }).unref();
 }
 
 export function updateScript(): string {
   return [
     '@echo off', 'title Updating SimPilot Bridge',
     'echo Updating SimPilot Bridge...', 'ping -n 4 127.0.0.1 >nul',
-    'mkdir "%~3" >nul 2>&1',
-    'tar -xf "%~2" -C "%~3" || goto fail',
-    'set "SRC=%~3\\SimPilot for PC"',
+    'mkdir "%SIMPILOT_UPDATE_EXTRACTED%" >nul 2>&1',
+    'tar -xf "%SIMPILOT_UPDATE_ZIP%" -C "%SIMPILOT_UPDATE_EXTRACTED%" || goto fail',
+    'set "SRC=%SIMPILOT_UPDATE_EXTRACTED%\\SimPilot for PC"',
     'if not exist "%SRC%\\node.exe" goto fail', 'if not exist "%SRC%\\bridge.cjs" goto fail',
+    'if not exist "%SRC%\\Read me.txt" goto fail',
+    'if not exist "%SRC%\\Chart panel (optional)\\PackageSources\\panel-assets.json" goto fail',
+    'robocopy "%SRC%\\Chart panel (optional)" "%SIMPILOT_UPDATE_APP_DIR%\\Chart panel (optional)" /E /R:3 /W:1 >nul', 'if errorlevel 8 goto fail',
+    'robocopy "%SRC%\\Source and notices" "%SIMPILOT_UPDATE_APP_DIR%\\Source and notices" /E /R:3 /W:1 >nul', 'if errorlevel 8 goto fail',
     // robocopy exit codes below 8 mean success; it retries while the old node.exe / launcher are still closing.
-    'robocopy "%SRC%" "%~1" node.exe bridge.cjs "SimPilot Bridge*" /R:30 /W:1 >nul', 'if errorlevel 8 goto fail',
-    'robocopy "%SRC%\\Source and notices" "%~1\\Source and notices" /E /R:3 /W:1 >nul',
+    'robocopy "%SRC%" "%SIMPILOT_UPDATE_APP_DIR%" node.exe bridge.cjs "SimPilot Bridge*" "Read me.txt" /R:30 /W:1 >nul', 'if errorlevel 8 goto fail',
     // The old zip's plain "SimPilot Bridge.cmd" would sit next to the new .exe under the same name when extensions are hidden.
-    'if exist "%~1\\SimPilot Bridge.exe" del "%~1\\SimPilot Bridge.cmd" >nul 2>&1',
-    'call :launch "%~1"', 'exit /b 0',
-    ':fail', 'echo.', 'echo The update did not finish. The old SimPilot Bridge is still in place; try again or download the zip from GitHub.',
-    'call :launch "%~1"', 'pause', 'exit /b 1',
-    ':launch', 'if exist "%~1\\SimPilot Bridge.exe" (start "" "%~1\\SimPilot Bridge.exe") else start "" "%~1\\SimPilot Bridge.cmd"', 'exit /b 0', '',
+    'if exist "%SIMPILOT_UPDATE_APP_DIR%\\SimPilot Bridge.exe" del "%SIMPILOT_UPDATE_APP_DIR%\\SimPilot Bridge.cmd" >nul 2>&1',
+    'call :launch', 'exit /b 0',
+    ':fail', 'echo.', 'echo The update did not finish. Try again or extract the complete SimPilot-for-PC.zip from GitHub.',
+    'call :launch', 'pause', 'exit /b 1',
+    ':launch', 'if exist "%SIMPILOT_UPDATE_APP_DIR%\\SimPilot Bridge.exe" (start "" "%SIMPILOT_UPDATE_APP_DIR%\\SimPilot Bridge.exe") else start "" "%SIMPILOT_UPDATE_APP_DIR%\\SimPilot Bridge.cmd"', 'exit /b 0', '',
   ].join('\r\n');
 }

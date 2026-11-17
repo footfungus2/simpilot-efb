@@ -219,9 +219,13 @@ final class AppState: ObservableObject {
         // Re-publish bridge changes so views observing AppState see connection updates.
         bridge.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &cancellables)
         // Takeoffs and landings go into the logbook by themselves.
-        bridge.ownship.$ownship.compactMap { $0 }
-            .sink { [weak self] o in
+        bridge.ownship.$ownship
+            .sink { [weak self] ownship in
                 guard let self else { return }
+                guard let o = ownship else {
+                    self.flightTools.resetTelemetry()
+                    return
+                }
                 self.updateTaxiProgress(o)
                 self.flightTools.observe(o, ofp: self.ofp, aircraftTitle: self.bridge.status?.sim.aircraftTitle, flight: self.flightKey)
             }.store(in: &cancellables)

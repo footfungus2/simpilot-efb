@@ -3,7 +3,8 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
-import type { WebSocket } from 'ws';
+import WebSocket from 'ws';
+import type { WebSocket as WebSocketType } from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChartStore } from '../src/charts/store.js';
 import { Hub } from '../src/hub.js';
@@ -18,6 +19,8 @@ class Socket extends EventEmitter {
   send(raw: string) { this.sent.push(JSON.parse(raw)); }
   terminate() { this.readyState = 3; this.emit('close'); }
 }
+
+const PAIRING_KEY = 'test-pairing-key';
 
 beforeEach(() => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -61,7 +64,7 @@ describe('app message boundary', () => {
     const socket = new Socket();
     const handle = vi.fn();
     hub.onMessage(handle);
-    hub.addClient(socket as unknown as WebSocket, 'test');
+    hub.addClient(socket as unknown as WebSocketType, 'test');
     for (const raw of ['no JSON', 'null', '[]', '{}', '{"t":"lvarWatch","names":[{}]}', '{"t":"requestCharts","icao":"../../etc"}']) {
       expect(() => socket.emit('message', raw)).not.toThrow();
     }
@@ -74,7 +77,7 @@ describe('app message boundary', () => {
     const hub = new Hub();
     const socket = new Socket();
     hub.onMessage(() => { throw new Error('failure'); });
-    hub.addClient(socket as unknown as WebSocket, 'test');
+    hub.addClient(socket as unknown as WebSocketType, 'test');
     expect(() => socket.emit('message', '{"t":"lvarRun","code":"1 (>L:TEST)","id":"one"}')).not.toThrow();
     expect(socket.sent.at(-1)).toMatchObject({ t: 'commandResult', id: 'one', ok: false });
     socket.bufferedAmount = 2 * 1024 * 1024;
@@ -87,7 +90,7 @@ describe('app message boundary', () => {
     hub.ownship({ lat: 51, lon: 0, altFt: 0, gsKt: 0, trkDeg: 0, hdgDeg: 0, vsFpm: 0, onGround: true, magVarDeg: 0, ts: 1 });
     hub.setSim(false);
     const socket = new Socket();
-    hub.addClient(socket as unknown as WebSocket, 'test');
+    hub.addClient(socket as unknown as WebSocketType, 'test');
     expect(socket.sent.map((m) => m.t)).toEqual(['hello']);
     socket.emit('close');
   });
@@ -100,7 +103,7 @@ describe('HTTP boundary', () => {
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'simpilot-http-'));
     // A fake capturer keeps the real Windows screen-capture helper from being started by chart polling.
-    server = createServer(new Hub(), new ChartStore(dir), undefined, undefined, { tile: async () => {}, finish: async () => Buffer.alloc(0) });
+    server = createServer(new Hub(), new ChartStore(dir), PAIRING_KEY, undefined, undefined, { tile: async () => {}, finish: async () => Buffer.alloc(0) });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -113,7 +116,7 @@ describe('HTTP boundary', () => {
 
   it('returns redacted diagnostics on explicit request without caching them', async () => {
     logger('test').warn('username=private');
-    const res = await fetch(`${base}/api/diagnostics`);
+    const res = await fetch(`${base}/api/diagnostics`, { headers: { 'x-simpilot-token': PAIRING_KEY } });
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('no-store');
     const body = await res.json() as { entries: { message: string }[] };
@@ -122,7 +125,8 @@ describe('HTTP boundary', () => {
   });
 
   it('returns client errors for malformed URLs and JSON objects rather than rejecting the request handler', async () => {
-    expect((await fetch(`${base}/api/charts/%ZZ`)).status).toBe(400);
+    expect((await fetch(`${base}/api/ownship`)).status).toBe(401);
+    expect((await fetch(`${base}/api/charts/%ZZ`, { headers: { 'x-simpilot-token': PAIRING_KEY } })).status).toBe(400);
     for (const body of ['null', '[]', '12', '{bad']) {
       const res = await fetch(`${base}/link/log`, { method: 'POST', body });
       expect(res.status).toBe(400);
@@ -133,27 +137,48 @@ describe('HTTP boundary', () => {
 
   it('blocks browser websites while retaining native and Coherent panel access', async () => {
     expect((await fetch(`${base}/api/status`, { headers: { origin: 'https://untrusted.example' } })).status).toBe(403);
+    expect((await fetch(`${base}/api/status`, { headers: { origin: `http://localhost:${(new URL(base)).port}` } })).status).toBe(403);
     expect((await fetch(`${base}/link/poll?proto=3`, { headers: { origin: 'coui://html_ui' } })).status).toBe(200);
     expect((await fetch(`${base}/link/poll`, { headers: { origin: 'null' } })).status).toBe(403);
-    expect((await fetch(`${base}/api/diagnostics`, { headers: { origin: 'null' } })).status).toBe(403);
+    expect((await fetch(`${base}/api/diagnostics`, { headers: { origin: 'null', 'x-simpilot-token': PAIRING_KEY } })).status).toBe(403);
+  });
+
+  it('requires the pairing key for WebSocket data and commands', async () => {
+    const url = base.replace('http:', 'ws:') + '/ws';
+    const rejected = new WebSocket(url);
+    const status = await new Promise<number>((resolve) => {
+      rejected.once('unexpected-response', (_request, response) => resolve(response.statusCode ?? 0));
+      rejected.once('error', () => {});
+    });
+    rejected.terminate();
+    expect(status).toBe(401);
+
+    const accepted = new WebSocket(url, { headers: { 'x-simpilot-token': PAIRING_KEY } });
+    await once(accepted, 'open');
+    const hello = await new Promise<unknown>((resolve) => accepted.once('message', (message) => resolve(JSON.parse(String(message)))));
+    expect(hello).toMatchObject({ t: 'hello', v: 1 });
+    const closed = once(accepted, 'close');
+    accepted.close();
+    await closed;
   });
 
   it('lists an airport first and exports a chart only when it is asked for', async () => {
     const post = (path: string, body: unknown) => fetch(`${base}${path}`, { method: 'POST', body: JSON.stringify(body) });
+    const api = (path: string) => fetch(`${base}${path}`, { headers: { 'x-simpilot-token': PAIRING_KEY } });
     const poll = async () => ((await (await fetch(`${base}/link/poll?proto=3`)).json()) as { jobs: { id: string; type: string; guid?: string }[] }).jobs;
     const store = new ChartStore(dir);
     const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(16)]);
 
-    expect((await fetch(`${base}/api/charts/EDDF`)).status).toBe(202);
+    expect((await api('/api/charts/EDDF')).status).toBe(202);
     const [list] = await poll();
     expect(list).toMatchObject({ type: 'index' });
     await post('/link/index', { jobId: list!.id, index: { airportIcao: { ident: 'EDDF' }, charts: [{ name: 'SID', charts: [{ guid: '{chart-1}', name: 'OBOKA 2G' }] }] } });
     await post('/link/done', { jobId: list!.id });
-    const index = await (await fetch(`${base}/api/charts/EDDF`)).json() as { categories: { charts: { guid: string }[] }[] };
+    const index = await (await api('/api/charts/EDDF')).json() as { categories: { charts: { guid: string }[] }[] };
     expect(index.categories[0]!.charts[0]!.guid).toBe('{chart-1}');
 
-    expect((await fetch(`${base}/api/charts/EDDF/%7Bnope%7D`)).status).toBe(404);
-    const waiting = await fetch(`${base}/api/charts/EDDF/%7Bchart-1%7D`);
+    expect((await api('/api/charts/EDDF/%7Bnope%7D')).status).toBe(404);
+    const waiting = await api('/api/charts/EDDF/%7Bchart-1%7D');
     expect(waiting.status).toBe(202);
     const [chartJob] = await poll();
     expect(chartJob).toMatchObject({ type: 'chart', guid: '{chart-1}' });
@@ -161,25 +186,25 @@ describe('HTTP boundary', () => {
     await store.saveImage('EDDF', '{chart-1}', 0, png);
     await post('/link/done', { jobId: chartJob!.id });
 
-    const ready = await fetch(`${base}/api/charts/EDDF/%7Bchart-1%7D`);
+    const ready = await api('/api/charts/EDDF/%7Bchart-1%7D');
     expect(ready.status).toBe(200);
     const detail = await ready.json() as { pages: { image: string }[] };
     expect(detail.pages[0]!.image).toMatch(/\.png\?v=\d+$/);
-    const image = await fetch(`${base}${detail.pages[0]!.image}`);
+    const image = await api(detail.pages[0]!.image!);
     expect(image.headers.get('content-type')).toBe('image/png');
 
     // "Reload from the sim" forgets the pages and asks the panel again.
-    expect((await fetch(`${base}/api/charts/EDDF/%7Bchart-1%7D?refresh=1`)).status).toBe(202);
-    expect((await fetch(`${base}${detail.pages[0]!.image}`)).status).toBe(404);
+    expect((await api('/api/charts/EDDF/%7Bchart-1%7D?refresh=1')).status).toBe(202);
+    expect((await api(detail.pages[0]!.image!)).status).toBe(404);
   });
 
   it('validates the complete weather box and hides internal cache errors', async () => {
     for (const bbox of ['1,2,3,4,5', '91,2,92,4', '1,,3,4', '3,2,1,4']) {
-      expect((await fetch(`${base}/api/wx/metar?bbox=${bbox}`)).status).toBe(400);
+      expect((await fetch(`${base}/api/wx/metar?bbox=${bbox}`, { headers: { 'x-simpilot-token': PAIRING_KEY } })).status).toBe(400);
     }
     await fs.mkdir(path.join(dir, 'charts', 'EDDF'), { recursive: true });
     await fs.writeFile(path.join(dir, 'charts', 'EDDF', 'index.json'), '{bad');
-    const res = await fetch(`${base}/api/charts/EDDF`);
+    const res = await fetch(`${base}/api/charts/EDDF`, { headers: { 'x-simpilot-token': PAIRING_KEY } });
     expect(res.status).toBe(500);
     expect(await res.text()).not.toContain(dir);
   });

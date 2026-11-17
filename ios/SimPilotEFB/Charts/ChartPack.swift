@@ -43,6 +43,11 @@ final class ChartPack: ObservableObject {
     func add(icao: String, detail: ChartDetail, images: [Int: UIImage]) {
         guard !contains(detail.chart.guid) else { return }
         var pages = detail.pages
+        var written: [URL] = []
+        var saved = false
+        defer {
+            if !saved { written.forEach { try? FileManager.default.removeItem(at: $0) } }
+        }
         do {
             guard !pages.isEmpty else { throw CocoaError(.fileWriteUnknown) }
             for (i, page) in pages.enumerated() {
@@ -50,10 +55,12 @@ final class ChartPack: ObservableObject {
                     throw CocoaError(.fileWriteUnknown)
                 }
                 let name = Self.fileName(guid: detail.chart.guid, page: page.index)
-                try png.write(to: directory.appendingPathComponent(name), options: .atomic)
+                let file = directory.appendingPathComponent(name)
+                written.append(file)
+                try png.write(to: file, options: .atomic)
                 pages[i].image = "pack:" + name
             }
-            save(items + [Item(icao: icao, detail: ChartDetail(chart: detail.chart, pages: pages))])
+            saved = save(items + [Item(icao: icao, detail: ChartDetail(chart: detail.chart, pages: pages))])
         } catch {
             reportSaveError(error)
         }

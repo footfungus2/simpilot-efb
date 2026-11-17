@@ -25,12 +25,29 @@ final class DiagnosticsTests: XCTestCase {
     }
 
     func testBridgeAddresses() {
-        XCTAssertEqual(BridgeAddress.normalize(" 192.168.1.2 "), "192.168.1.2:8386")
-        XCTAssertEqual(BridgeAddress.normalize("192.168.1.2:8380"), "192.168.1.2:8386")
+        XCTAssertEqual(BridgeAddress.normalize(" 192.168.1.2 "), "192.168.1.2:8387")
+        XCTAssertEqual(BridgeAddress.normalize("192.168.1.2:8380"), "192.168.1.2:8387")
+        XCTAssertEqual(BridgeAddress.normalize("192.168.1.2:8386"), "192.168.1.2:8387")
         XCTAssertEqual(BridgeAddress.normalize("http://flight-pc.local:8381/"), "flight-pc.local:8381")
-        for input in ["", "bad host", "http://user:secret@pc", "https://pc", "pc/path", "pc?token=1", "pc:0", "pc:99999"] {
+        XCTAssertEqual(BridgeAddress.normalize("https://flight-pc.local"), "flight-pc.local:8387")
+        for input in ["", "bad host", "http://user:secret@pc", "ftp://pc", "pc/path", "pc?token=1", "pc:0", "pc:99999"] {
             XCTAssertNil(BridgeAddress.normalize(input), input)
         }
+    }
+
+    func testBridgeResourcesStayOnThePairedOrigin() {
+        let base = URL(string: "https://192.168.1.20:8387")!
+        XCTAssertTrue(BridgeAddress.sameOrigin(URL(string: "/charts/EGSS/chart/0.png", relativeTo: base)!.absoluteURL, as: base))
+        XCTAssertFalse(BridgeAddress.sameOrigin(URL(string: "http://192.168.1.21/private")!, as: base))
+        XCTAssertFalse(BridgeAddress.sameOrigin(URL(string: "https://user@192.168.1.20:8387/private")!, as: base))
+    }
+
+    func testPairingCodeRequiresBothTheKeyAndCertificateFingerprint() {
+        let key = String(repeating: "a", count: 64)
+        let fingerprint = String(repeating: "b", count: 64)
+        XCTAssertEqual(BridgePairingCode.parse(" \(key):\(fingerprint) "), BridgePairingCode(key: key, fingerprint: fingerprint))
+        XCTAssertNil(BridgePairingCode.parse(key))
+        XCTAssertNil(BridgePairingCode.parse("\(key):\(String(repeating: "z", count: 64))"))
     }
 
     func testRepeatedPCSnapshotDoesNotEvictAppLogs() {

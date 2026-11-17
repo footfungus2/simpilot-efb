@@ -38,6 +38,15 @@ describe('runtime configuration', () => {
     expect(config.cacheDir).toBe(path.resolve(__dirname, '..', 'cache'));
   });
 
+  it('uses the packaged cache default when the override is empty', async () => {
+    vi.stubEnv('SIMPILOT_PACKAGED', '1');
+    vi.stubEnv('LOCALAPPDATA', '/tmp/LocalAppData');
+    vi.stubEnv('SIMPILOT_CACHE_DIR', '');
+    vi.resetModules();
+    const { config } = await import('../src/config.js');
+    expect(config.cacheDir).toBe(path.join('/tmp/LocalAppData', 'SimPilot Bridge', 'cache'));
+  });
+
   it('identifies the packaged code by its actual content rather than its version number', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'simpilot-build-'));
     const artifact = path.join(dir, 'bridge.cjs');
@@ -62,6 +71,7 @@ describe('runtime configuration', () => {
 
   it.each([
     ['SIMPILOT_PORT', '0'],
+    ['SIMPILOT_PORT', '8387'],
     ['SIMPILOT_PORT', '70000'],
     ['SIMPILOT_PORT', '8380garbage'],
     ['SIMPILOT_OWNSHIP_HZ', '-10'],

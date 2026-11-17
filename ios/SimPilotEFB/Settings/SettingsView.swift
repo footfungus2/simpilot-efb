@@ -8,6 +8,9 @@ struct SettingsView: View {
     @Environment(\.presentationMode) private var presentationMode
     @Environment(\.theme) private var theme
     @State private var hostDraft = ""
+    @State private var pairingCodeDraft = ""
+    @State private var storedPairingCode = ""
+    @State private var pairingError: String?
     @State private var showChangelog = false
     @State private var simbriefDraft = ""
 
@@ -35,13 +38,18 @@ struct SettingsView: View {
                     }
                 }
 
-                Section(header: Text("Bridge"), footer: Text("Leave empty to find the bridge automatically. Otherwise enter the PC's address shown in the bridge window, e.g. 192.168.1.20:8386.")) {
-                    TextField("Auto-discover", text: $hostDraft)
+                Section(header: Text("Bridge"), footer: Text("Enter the PC address and pairing code shown in SimPilot Bridge. The code includes its certificate fingerprint and is stored in this iPad's Keychain.")) {
+                    TextField("PC address, e.g. 192.168.1.20:8387", text: $hostDraft)
                         .keyboardType(.numbersAndPunctuation)
                         .disableAutocorrection(true)
                         .textInputAutocapitalization(.never)
-                        .onSubmit(applyHost)
-                    Button("Reconnect", action: applyHost)
+                        .onSubmit { _ = applyBridgeSettings() }
+                    SecureField("Pairing code from PC", text: $pairingCodeDraft)
+                        .textInputAutocapitalization(.never)
+                        .disableAutocorrection(true)
+                        .onSubmit { _ = applyBridgeSettings() }
+                    Button("Reconnect") { _ = applyBridgeSettings() }
+                    if let pairingError { Text(pairingError).foregroundColor(Theme.warnOrange) }
                     LabeledRow("Bridge", bridgeState)
                     if let error = bridge.lastError { Text(error).foregroundColor(Theme.warnOrange) }
                     LabeledRow("Simulator", bridge.status.map { $0.sim.connected ? "Connected" : "Not running" } ?? "–")
@@ -136,7 +144,10 @@ struct SettingsView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         app.simbriefUser = simbriefDraft
-                        if hostDraft != app.bridgeHost { applyHost() }
+                        let enteredCode = pairingCodeDraft.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                        if hostDraft != app.bridgeHost || enteredCode != storedPairingCode {
+                            guard applyBridgeSettings() else { return }
+                        }
                         presentationMode.wrappedValue.dismiss()
                     }
                 }
@@ -144,7 +155,9 @@ struct SettingsView: View {
         }
         .navigationViewStyle(.stack)
         .onAppear {
-            hostDraft = app.bridgeHost
+            hostDraft = BridgeAddress.normalize(app.bridgeHost) ?? app.bridgeHost
+            pairingCodeDraft = SecretStore.read("bridgePairingKey") ?? ""
+            storedPairingCode = pairingCodeDraft
             simbriefDraft = app.simbriefUser
         }
     }
@@ -158,8 +171,22 @@ struct SettingsView: View {
         }
     }
 
-    private func applyHost() {
+    @discardableResult
+    private func applyBridgeSettings() -> Bool {
+        let code = pairingCodeDraft.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard code.isEmpty || BridgePairingCode.parse(code) != nil else {
+            pairingError = "Enter the 64-character key and 64-character certificate fingerprint, separated by a colon."
+            return false
+        }
+        guard SecretStore.write("bridgePairingKey", code) else {
+            pairingError = "Couldn't save the pairing code to Keychain. Check device settings and try again."
+            return false
+        }
+        pairingError = nil
+        storedPairingCode = code
+        bridge.setPairingKey(code.isEmpty ? nil : code)
         app.bridgeHost = hostDraft.trimmingCharacters(in: .whitespaces)
         app.connect()
+        return true
     }
 }

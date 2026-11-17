@@ -59,7 +59,8 @@ function Write-LinkReport([string]$Folder, [string]$Phase, [switch]$Append) {
       Invoke-RestMethod 'http://127.0.0.1:8386/api/status' -Headers @{ Origin = 'coui://html_ui' } -TimeoutSec 3 -ErrorAction Stop | Out-Null
       $lines.Add('Server accepted the in-sim Origin header (this does not test Coherent itself).')
     } catch { $lines.Add('Server Origin check: ' + $_.Exception.Message) }
-    $logs = Invoke-RestMethod 'http://127.0.0.1:8386/api/diagnostics' -TimeoutSec 3 -ErrorAction Stop
+    $pairing = Invoke-RestMethod 'http://127.0.0.1:8386/bridge/info' -TimeoutSec 3 -ErrorAction Stop
+    $logs = Invoke-RestMethod 'http://127.0.0.1:8386/api/diagnostics' -Headers @{ 'x-simpilot-token' = $pairing.pairingKey } -TimeoutSec 3 -ErrorAction Stop
     foreach ($entry in @($logs.entries | Select-Object -Last 60)) {
       $message = [string]$entry.message
       $lines.Add("$($entry.time) $($entry.level) $($entry.scope): " + $message.Substring(0, [Math]::Min(500, $message.Length)))

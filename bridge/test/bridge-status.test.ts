@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import vm from 'node:vm';
@@ -13,11 +14,11 @@ import { createServer } from '../src/server.js';
 const hubs: Hub[] = [];
 afterEach(() => { hubs.forEach((hub) => hub.close()); hubs.length = 0; vi.restoreAllMocks(); });
 
-function bridge() {
+function bridge(store = new ChartStore('/unused')) {
   const hub = new Hub();
   hubs.push(hub);
-  const server = createServer(hub, new ChartStore('/unused'), undefined, undefined, { tile: async () => {}, finish: async () => Buffer.alloc(0) });
-  function request(url: string, origin = 'coui://html_ui', method = 'GET', body?: string) {
+  const server = createServer(hub, store, 'test-pairing-key', undefined, undefined, { tile: async () => {}, finish: async () => Buffer.alloc(0) });
+  function request(url: string, origin = 'coui://html_ui', method = 'GET', body?: string, token = 'test-pairing-key', remoteAddress = '127.0.0.1') {
     return new Promise<{ status: number; headers: Record<string, string>; body: any }>((resolve) => {
       const headers: Record<string, string> = {};
       const response = {
@@ -26,7 +27,9 @@ function bridge() {
         writeHead(status: number, values?: Record<string, string>) { this.status = status; Object.assign(headers, values); return this; },
         end(data?: string) { resolve({ status: this.status, headers, body: data ? JSON.parse(data) : undefined }); },
       };
-      const incoming = Object.assign(Readable.from(body ? [body] : []), { method, url, headers: { origin }, socket: { remoteAddress: '127.0.0.1' } });
+      const requestHeaders: Record<string, string> = { origin, host: '127.0.0.1:8386' };
+      if (token) requestHeaders['x-simpilot-token'] = token;
+      const incoming = Object.assign(Readable.from(body ? [body] : []), { method, url, headers: requestHeaders, socket: { remoteAddress } });
       server.emit('request', incoming as unknown as IncomingMessage, response as unknown as ServerResponse);
     });
   }
@@ -49,6 +52,21 @@ describe('read-only bridge identity', () => {
     expect(status.body.bridge.buildId).toMatch(/^sha256:[a-f0-9]{64}$/);
     await get('/api/status');
     expect(seen).not.toHaveBeenCalled();
+  });
+
+  it('keeps status public but requires pairing for flight data and rejects other localhost origins', async () => {
+    const { get } = bridge();
+    expect((await get('/api/status', 'http://127.0.0.1:8386', 'GET', undefined, '')).status).toBe(200);
+    expect((await get('/api/ownship', 'http://127.0.0.1:8386', 'GET', undefined, '')).status).toBe(401);
+    expect((await get('/api/ownship')).status).toBe(204);
+    expect((await get('/api/status', 'http://localhost:3000', 'GET', undefined, '')).status).toBe(403);
+  });
+
+  it('rejects bridge data over unencrypted LAN HTTP', async () => {
+    const { get } = bridge();
+    const response = await get('/api/status', undefined, 'GET', undefined, '', '192.168.1.57');
+    expect(response.status).toBe(403);
+    expect(response.body.error).toContain('requires HTTPS');
   });
 
   it('rejects an incompatible protocol without reporting a usable chart link', async () => {
@@ -101,5 +119,24 @@ describe('read-only bridge identity', () => {
     expect(requests.slice(0, 2)).toEqual(['/api/status', '/link/poll?proto=3']);
     expect(status.textContent).toBe('connected');
     expect(hub.status().link.connected).toBe(true);
+  });
+
+  it('continues serving a cached chart after a refresh is refused with the panel closed', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'simpilot-refresh-'));
+    try {
+      const store = new ChartStore(dir);
+      const chart = { guid: 'chart-1', type: 'IAC', name: 'Test approach', runways: [], procedures: [], geoReferenced: false };
+      await store.saveIndex({ icao: 'EDDF', provider: 'LIDO', fetchedAt: Date.now(), categories: [{ name: 'IAC', charts: [chart] }] });
+      await store.savePages('EDDF', chart.guid, [{ index: 0, width: 10, height: 10, areas: [], geoReferenced: false }]);
+      await store.saveImage('EDDF', chart.guid, 0, Buffer.from('89504e470d0a1a0a00', 'hex'));
+      const { get } = bridge(store);
+      const path = '/api/charts/EDDF/chart-1';
+      const cached = await get(path);
+      expect(cached.status).toBe(200);
+      expect((await get(path + '?refresh=1')).status).toBe(409);
+      expect(await get(path)).toEqual(cached);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 });

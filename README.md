@@ -1,340 +1,369 @@
 <div align="center">
 
-<img src="docs/images/hero.jpg" alt="SimPilot EFB on iPad: enroute map and airport moving map" width="100%">
-
 # SimPilot EFB
 
-**An airline-style electronic flight bag for Microsoft Flight Simulator 2024, built for the iPad.**
+**An airline-style flight bag for Microsoft Flight Simulator 2024. Built for iPad.**
 
 [![Build IPA](https://github.com/footfungus2/simpilot-efb/actions/workflows/build-ipa.yml/badge.svg)](https://github.com/footfungus2/simpilot-efb/actions/workflows/build-ipa.yml)
-[![Latest release](https://img.shields.io/github/v/release/footfungus2/simpilot-efb?include_prereleases&label=download&color=3d8bff)](https://github.com/footfungus2/simpilot-efb/releases/latest)
-![iPadOS 15+](https://img.shields.io/badge/iPadOS-15%2B-black?logo=apple)
-![MSFS 2024](https://img.shields.io/badge/MSFS-2024-0b5cad)
-![Swift](https://img.shields.io/badge/Swift-SwiftUI-F05138?logo=swift&logoColor=white)
-![PC: Windows](https://img.shields.io/badge/PC-Windows%2010%2F11-0078D6)
+[![Latest release](https://img.shields.io/github/v/release/footfungus2/simpilot-efb?include_prereleases&label=release&color=3d8bff)](https://github.com/footfungus2/simpilot-efb/releases/latest)
+![iPadOS 15+](https://img.shields.io/badge/iPadOS-15%2B-111827?logo=apple&logoColor=white)
+[![License: zlib](https://img.shields.io/badge/license-zlib-64748b)](LICENSE)
 
-[**Download**](https://github.com/footfungus2/simpilot-efb/releases/latest) · [Features](#features) · [Screenshots](#screenshots) · [Install](#install-on-the-ipad) · [Connect to MSFS](#connect-to-msfs-2024)
+[**Download the latest release**](https://github.com/footfungus2/simpilot-efb/releases/latest) · [Get started](#get-started) · [What's new](docs/updates)
+
+<img src="docs/images/hero.jpg" alt="SimPilot EFB on iPad, showing an enroute flight plan and airport moving map" width="100%">
+
+[Features](#features) · [Screenshots](#screenshots) · [Connect to MSFS](#connect-to-msfs-2024) · [Troubleshooting](#troubleshooting) · [Build from source](#building-from-source)
 
 </div>
 
----
-
-SimPilot EFB recreates the look and workflow of a modern airline EFB (inspired by Lido mPilot) for home cockpit use. It runs
-natively on the iPad, talks to MSFS 2024 over your local Wi-Fi, and stays useful even when the sim PC is off: SimBrief,
-weather, VATSIM and the maps all load directly on the iPad.
+SimPilot EFB brings a SimBrief flight folder, moving maps, charts, weather and VATSIM into a native SwiftUI app.
+Its layout is inspired by Lido mPilot. Plan and brief on the iPad, then connect to your sim PC for live aircraft
+position, chart exports and Fenix A320 controls.
 
 > [!NOTE]
-> Unofficial hobby project, not affiliated with or endorsed by Lufthansa Systems, Lido, Microsoft, Asobo, SimBrief or
-> VATSIM. It uses none of their names or logos in the app. Charts come from your own MSFS 2024 installation and are
-> for personal use only. Don't redistribute them.
-
-## Contents
-
-- [Update log](docs/updates)
-- [Features](#features)
-- [Screenshots](#screenshots)
-- [Install on the iPad](#install-on-the-ipad)
-- [Connect to MSFS 2024](#connect-to-msfs-2024)
-- [How it works](#how-it-works)
-- [Building from source](#building-from-source)
-- [Project status](#project-status)
-- [Data sources & credits](#data-sources--credits)
+> **Release candidate (0.1.x).** Automated build, test and packaging checks run before publication. Physical iPad,
+> MSFS chart export and Fenix checks are still tracked in [release validation](docs/release-validation.md).
 
 ## Features
 
-### Enroute map
-- **3D globe** that flattens into a flat chart as you zoom in, with a clean solid-colour basemap
-- SimBrief route with waypoint triangles, FIR boundaries and airports
-- **NAV filters**: route, airports, FIRs, VOR, NDB, DME/TACAN and frequency labels
-- **Low / High** switches level choices and map detail; High hides NDBs and small airfields
-- **AA** changes map text size; the **ruler** measures distance, true/magnetic bearing and time, with snapping and a live aircraft start point
-- **Tap anything for details**: route fixes show the planned level, leg and remaining distance and the ETA; navaids show frequency, channel and variation; airports show the live METAR
-- **Vertical profile** and **flight progress strip** (next fix, top of descent, destination)
-- **Weather layer**: METAR indicators for 5 000+ stations worldwide (green / amber / red by flight category) and SIGMET areas
-  with hazard and level labels. Tap an indicator for the airport's METAR and TAF, raw or in plain language, or a SIGMET for its details
-- **Radar**: a precipitation layer in the WX panel (RainViewer, the last two hours, stepped in ten-minute frames). The free tiles stop at zoom 7, and
-  the radar is real-world weather: it matches the sim only with live weather
-- **TFC**: AI and multiplayer aircraft from the sim drawn on the map with callsign and level (needs the PC bridge)
-- **Airways on your route** are labelled along the route line from the SimBrief plan, and **grid MORA** (NAV panel) shows approximate minimum
-  off-route altitudes in hundreds of feet. MORA is worked out from open terrain data for Europe, the Mediterranean, North Africa, the Middle East and
-  the North Atlantic: no obstacles, no guarantee, never for real navigation. Other airways and unflown intersections need navigation data that
-  isn't openly available, so they are not included
-- **Weather time**: the `+00:00` menu in the top bar shows the forecast up to 12 hours ahead (TAF-based indicators, SIGMETs valid at that time)
-- **ATIS & weather briefing**: the speech-bubble button in the top bar opens VATSIM ATIS, METAR and TAF for your departure,
-  destination, alternates, the nearest airport or any ICAO, with a *Decoded* switch for plain language
+| | What you can do |
+| :--- | :--- |
+| **Enroute map** | Follow your SimBrief route on a 3D globe that becomes a flat map as you zoom in. See planned waypoint altitudes, T/C and T/D, route airways, FIRs and navaids, with a vertical profile and flight progress strip. |
+| **Airport moving map** | See runways, taxiways, stands and named holding points. Enter a taxi route, choose your stand and hold point, and follow the route as completed sections turn grey. Runway-awareness banners show when you approach or enter a runway. |
+| **Charts** | View the sim's built-in charts, put your aircraft on georeferenced pages, overlay a chart on the map, or open chart and map side by side. Add Pencil annotations, star favourites and pin a flight pack for offline use. |
+| **Flight folder & tools** | Import your SimBrief OFP, navlog, fuel and alternates. Edit the runway and SID/STAR in use, brief the flight, record clearances, tick checklists, compare fuel, keep a logbook and annotate your own PDFs. |
+| **Weather** | METAR and TAF with plain-language decoding, VATSIM ATIS, SIGMETs, precipitation radar and TAF-based map indicators up to 12 hours ahead. |
+| **VATSIM & ACARS** | Live pilots, controllers and VATGlasses sectors; company traffic; an assistant showing your filed route, assigned squawk and nearby ATC; Hoppie PDC, telex, weather requests and CPDLC replies. |
+| **Fenix A320** | Radio panels, ATC/TCAS, FCU targets and push/pull actions, exterior lights and cabin signs, connected through the PC bridge. |
+| **Customization** | Day, Night or Match iPad appearance, accent and route colours, map text size, UTC clock, dark charts, opening screen and motion settings that respect Reduce Motion. |
 
-### Make it yours
-- **Settings → Customization**: Night, Day or *Match iPad* theme, accent colour, animations (Full, Reduced, Off), a UTC clock in the
-  top bar, map text size, route colour, 3D globe and grid on or off, dark charts at night, and the screen the app opens on
-- Smooth, subtle animations throughout; they follow the iPad's *Reduce Motion* setting
+<details>
+<summary><b>Map controls and data coverage</b></summary>
 
-### Airport moving map
-- Zoom into any airport for a ground map with taxiways, runways, **stands and holding points**, without roads or clutter
-- Taxi route drawn as the line you will actually drive (only the stretch of each taxiway between the junctions you use, with an outline and
-  direction arrows and rounded corners, greyed out as you taxi it); a taxiway and its EAST/WEST/NORTH/SOUTH parts count as one, and the unnamed
-  connectors between taxiways are driven over. If the names still don't connect it lights up the taxiways instead
-- **Holding points carry their chart names** (N1, H3…, from OpenStreetMap) on the map and in the picker; choose one and the route line ends exactly there
-- An **ON RWY / APPROACHING RWY** awareness banner
-- **Taxi guidance** (the taxi button): pick your stand (its lead-in line turns green) and the holding point to stop at (red), and while taxiing a
-  banner shows progress along the entered taxi route (taxiways done, the one you are on, the next) and the distance to the stand and hold point
-- Data from OpenStreetMap, cached on the device so it works offline afterwards
+- **NAV** filters the route, airports, FIRs, VORs, NDBs, DME/TACAN and frequency labels. Waypoint altitude labels are coloured by climb, cruise and descent and can be switched off.
+- **Low / High** changes level choices and map detail. **AA** changes text size; the ruler measures distance, true/magnetic bearing and time, with snapping and a live aircraft start point.
+- Tap route fixes for planned level, leg distance and ETA; navaids for frequency, channel and variation; airports for weather.
+- **WX** includes METAR indicators, SIGMET details and RainViewer radar with two hours of history. Radar is real-world weather and matches the sim only when using live weather; its free tiles stop at zoom 7.
+- **TFC** shows AI and multiplayer aircraft from the sim. **CMPY** highlights your airline's VATSIM traffic independently of the main VATSIM layer.
+- **Grid MORA** uses terrain data for Europe, the Mediterranean, North Africa, the Middle East and the North Atlantic. It does not include obstacles and is never for real navigation.
+- Airways are labelled along your imported route. Airways and enroute intersections beyond that route, plus icing and turbulence forecasts, are not included.
+- Airport maps come from OpenStreetMap and are cached after loading. Taxi routes follow connected taxiway paths; when a path cannot be connected, the named taxiways are highlighted instead.
 
-### Charts
-- **Favourites and recent charts**: star a chart (viewer side button) and it appears in **★ FAVOURITES**, with the last twelve opened in **RECENT**, across airports
-- The sim's built-in Lido charts, exported by an in-sim toolbar panel: the list loads at once, a chart takes a few seconds the first time you open it
-- **Your aircraft drawn on georeferenced charts**, with follow mode
-- **Show a chart on the map**, overlaid in place
-- **Apple Pencil annotations** (double-tap honours the system eraser and palette setting), plus split view of chart and map
-- **Flight chart pack**: pin the charts for this flight and keep them available offline
+</details>
 
-### Flight folder
-- Loads your latest **SimBrief** OFP: route, navlog, fuel, alternates and the full OFP document
-- **Edit Flight**: the runway and SID/STAR actually in use (VATSIM often differs from the plan); the briefing, the charts that
-  open first and the charts exported ahead of time follow it
-- Route notes and extra alternates
-- **Documents** opens your PDF library (below)
+<details>
+<summary><b>Inside the Flight screen</b></summary>
 
-### Flight tools
-A **Flight** screen (the checklist icon in the bottom bar) with everything you work with during a flight. None of it needs the PC, except fuel and automatic logging:
-- **Briefing**: departure, arrival and alternates on one screen: runway and SID/STAR, live QNH, wind and METAR, the VATSIM
-  ATIS text when someone is online, the minima you enter, and a shortcut to the airport's charts
-- **Clearances**: quick fields for cleared altitude, heading, speed, squawk and next frequency, a timestamped history of
-  the instructions, and a Pencil scratchpad. Kept per flight
-- **Checklists**: editable A320 normal checklists you tick by hand, with progress saved for each flight
-- **Fuel**: fuel on board against the SimBrief plan now and at each waypoint passed (needs the PC and an aircraft that reports its total fuel)
-- **Logbook**: takeoffs and landings are logged by themselves while the sim is connected; block times and notes can be typed
-  in and corrected, and the route and aircraft are saved with each flight
-- **ACARS**: Hoppie's ACARS network for VATSIM: pre-departure clearance request, telex to ATC, METAR/TAF/ATIS requests and CPDLC
-  replies (WILCO, UNABLE, ROGER). You need a free logon code from hoppie.nl, kept in the iPad's Keychain. CPDLC follows how other clients use the
-  network and has not been tried against real ATC yet
-- **Documents**: import your own PDFs from Files (airline procedures, airport documents) with bookmarks, a remembered
-  last page, night mode and Apple Pencil notes
+Open **Flight** using the checklist icon in the bottom bar.
 
-### Fenix A320 cockpit panels
-- An **Aircraft** tab with the Fenix A320's controls in a clean EFB layout, live in both directions:
-  - **Radios**: RMP 1 and 2 with active/standby windows, transfer, VHF/HF/NAV keys and the dual frequency knob
-  - **ATC / TCAS**: squawk keypad, IDENT, transponder mode, ALT RPTG, TCAS mode and traffic selector
-  - **Autopilot (FCU)**: speed, heading, altitude and V/S targets with push/pull, AP1/AP2, A/THR, LOC, APPR, EXPED
-  - **Lights and signs**: exterior lights, seat belts, no smoking, emergency exit, dome and annunciator lights
-- Runs through the PC bridge (SimConnect L:vars), using the community HubHop presets for the Fenix
+- **Briefing:** departure, destination and alternates with runway, SID/STAR, live QNH, wind, METAR, available VATSIM ATIS, entered minima and chart shortcuts.
+- **Clearances:** altitude, heading, speed, squawk and next frequency, with timestamped history and a Pencil scratchpad saved per flight.
+- **Checklists:** editable A320 normal checklists with progress saved per flight.
+- **Fuel:** reported fuel on board against the SimBrief plan, including waypoint checks. Requires the bridge and an aircraft that reports total fuel.
+- **Logbook:** automatic takeoff/landing logging while connected to the sim, with editable block times and notes.
+- **Documents:** import PDFs up to 100 MB from Files, bookmark pages, resume reading, use night mode and add Pencil notes.
+- **ACARS:** use your own [Hoppie logon code](https://www.hoppie.nl/acars/), stored in the iPad's Keychain. CPDLC follows community client conventions; live ATC validation is still outstanding.
 
-### VATSIM assistant
-- Enter your callsign and see what ATC has given your flight: the **assigned squawk** (one tap sets it in the Fenix),
-  the cruise level and route in your flight plan, and a log of **flight-plan changes**
-- **Who to call**: the approach/centre covering your position and the stations at your departure and arrival
-- Uses only your callsign's entry in the public VATSIM data feed (spoken instructions aren't published by VATSIM)
+The VATSIM assistant reads your callsign's public feed entry. It cannot retrieve spoken ATC instructions.
 
-### VATSIM layer
-- Live pilots and controllers, styled after VATSIM Radar
-- **Real sector ownership** from VATGlasses at the flight level you choose, with approach areas and traffic counts
-- **CMPY company traffic**: your airline's pilots, highlighted in orange with callsigns; it works independently of the main VATSIM layer
+</details>
 
 ## Screenshots
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/enroute-map.jpg" alt="Enroute map with the SimBrief route and altitude labels"><br><b>Enroute map</b><br>SimBrief route with the planned altitude at every fix, coloured by climb, cruise and descent</td>
-    <td width="50%"><img src="docs/images/airport-map.jpg" alt="Airport moving map at London Stansted"><br><b>Airport moving map</b><br>Stands, holding points, taxiway names and runway badges</td>
+    <td width="50%" align="center">
+      <a href="docs/images/enroute-map.jpg"><img src="docs/images/enroute-map.jpg" alt="Enroute map with a SimBrief route and colour-coded waypoint altitudes" width="100%"></a>
+      <br><b>Enroute map</b><br>Route, waypoint altitudes and flight progress
+    </td>
+    <td width="50%" align="center">
+      <a href="docs/images/airport-map.jpg"><img src="docs/images/airport-map.jpg" alt="Airport moving map at London Stansted with stands and holding points" width="100%"></a>
+      <br><b>Airport moving map</b><br>Stands, taxiways and named holding points
+    </td>
   </tr>
   <tr>
-    <td><img src="docs/images/vatsim.jpg" alt="Live VATSIM controllers and sectors"><br><b>Live VATSIM</b><br>Online controllers, real sector ownership and approach areas</td>
-    <td><img src="docs/images/waypoint-details.jpg" alt="Waypoint details card"><br><b>Tap for details</b><br>Planned level, leg and distance for any fix on the route</td>
-  </tr>
-  <tr>
-    <td><img src="docs/images/charts.jpg" alt="SID chart with your aircraft on it"><br><b>Charts</b><br>The sim's own charts by category, with your aircraft drawn on the chart</td>
-    <td><img src="docs/images/chart-on-map.jpg" alt="A SID chart laid over the enroute map"><br><b>Chart on the map</b><br>Lay a georeferenced chart over the map with an opacity slider; split view puts chart and map side by side</td>
-  </tr>
-  <tr>
-    <td colspan="2"><img src="docs/images/flight-briefing.jpg" alt="Flight screen briefing for EGSS to LIRA" width="50%"><br><b>Flight screen</b><br>Departure and arrival briefing with live METAR and QNH, plus clearances, checklists, fuel, logbook, documents and ACARS</td>
+    <td align="center">
+      <a href="docs/images/charts.jpg"><img src="docs/images/charts.jpg" alt="Chart list and georeferenced chart viewer" width="100%"></a>
+      <br><b>Charts</b><br>Chart browsing, annotations and aircraft position
+    </td>
+    <td align="center">
+      <a href="docs/images/flight-briefing.jpg"><img src="docs/images/flight-briefing.jpg" alt="Flight briefing with departure and destination weather" width="100%"></a>
+      <br><b>Flight briefing</b><br>Departure, arrival and live weather in one place
+    </td>
   </tr>
 </table>
 
-## Install on the iPad
+<details>
+<summary><b>More screenshots: VATSIM, route details and chart layouts</b></summary>
 
-**Requirements:** an iPad on iPadOS 15 or later with a compatible [TrollStore](https://github.com/opa334/TrollStore) or [SideStore](https://sidestore.io) installation.
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <a href="docs/images/vatsim.jpg"><img src="docs/images/vatsim.jpg" alt="VATSIM controllers and sector coverage" width="100%"></a>
+      <br><b>Live VATSIM</b><br>Controllers, sectors and approach areas
+    </td>
+    <td width="50%" align="center">
+      <a href="docs/images/waypoint-details.jpg"><img src="docs/images/waypoint-details.jpg" alt="Route waypoint detail card with planned level and distance" width="100%"></a>
+      <br><b>Waypoint details</b><br>Planned level, leg distance and ETA
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <a href="docs/images/chart-on-map.jpg"><img src="docs/images/chart-on-map.jpg" alt="Georeferenced chart overlaid on the enroute map" width="100%"></a>
+      <br><b>Chart on the map</b><br>Georeferenced overlay with adjustable opacity
+    </td>
+    <td align="center">
+      <a href="docs/images/split-view.jpg"><img src="docs/images/split-view.jpg" alt="Airport chart and moving map displayed side by side" width="100%"></a>
+      <br><b>Split view</b><br>Chart and map with independent zoom
+    </td>
+  </tr>
+</table>
 
-1. On the iPad, open the **[latest release](https://github.com/footfungus2/simpilot-efb/releases/latest)**.
-2. Download **`SimPilotEFB.ipa`**.
-3. Open it with **TrollStore** and tap *Install*, or import the IPA into **SideStore** to sign and install it. SideStore must be set up on the iPad first; see the [official install guide](https://docs.sidestore.io/docs/installation/install).
+</details>
 
-The app checks for updates on launch. Tap **Update** in the optional banner or **Settings → Updates** to open
-the detected installer (TrollStore or SideStore) with the latest IPA. Tap **Later** to dismiss the banner and keep using the installed version.
-Detection checks this app's installation markers. If the installer is unknown, choose it in **Settings → Updates → Update with**;
-you can also override detection there. Settings has a manual check, release notes and a download link. The installer may ask you to confirm installation.
-Keep the same installer and signing identity when updating to retain app data. Every push to `main` is checked by
-GitHub Actions; a complete, tested build is published under its own version/build tag. Update metadata comes from
-the packaged app, so newer builds within the same app version are detected too.
+Some screenshots show development test charts. These are not bundled with release builds.
 
-On first launch, a short walkthrough covers SimBrief, the PC bridge and the main app sections. Tap **Skip** at any time. To load a flight, open **Settings**, enter your SimBrief username or pilot ID, then tap **Load latest OFP**.
+## Get started
 
-### Diagnostics
+### Install on the iPad
 
-Open **Settings → Help → Diagnostics / debug console** for bridge, simulator and chart-link status, the age of
-aircraft data, and recent app errors. Reproduce a problem, then tap **Copy diagnostic report** to copy the current
-status and the last 300 events. **Load PC bridge logs** includes up to 200 events from the connected PC. Logs stay
-in memory for the session and are not sent to a reporting service. URLs, credentials and account paths are redacted;
-flight plans and account details are not logged. Review copied reports before sharing them.
+You need an **iPad on iPadOS 15 or later** and a compatible [TrollStore](https://github.com/opa334/TrollStore)
+or [SideStore](https://sidestore.io) setup. Installer support depends on your iPadOS version.
 
-To use charts without the PC connection, save them to the **★ FLIGHT** pack first. Failed saves show an error instead
-of claiming the chart is available offline.
+1. Open the **[latest release](https://github.com/footfungus2/simpilot-efb/releases/latest)** on your iPad and download **`SimPilotEFB.ipa`**.
+2. Install it with **TrollStore**, or import it into **SideStore** to sign and install. Set up your chosen installer first; SideStore has an [installation guide](https://docs.sidestore.io/docs/installation/install).
+3. Open SimPilot EFB. The first-launch walkthrough covers the main screens and connections; you can skip it.
+4. In **Settings**, enter your SimBrief username or pilot ID and tap **Load latest OFP**.
+
+### What needs a connection?
+
+| Setup | Available features |
+| :--- | :--- |
+| **iPad with internet** | SimBrief, weather, VATSIM, Hoppie ACARS and airport-map downloads. These services connect directly from the iPad. |
+| **iPad + PC bridge** | Live aircraft position, sim traffic, aircraft fuel data, automatic takeoff/landing logging and Fenix controls. |
+| **PC bridge + SimPilot Link panel** | Exporting the sim's chart list and images. |
+| **Saved on the iPad** | Pinned flight charts, previously cached airport maps, imported PDFs, clearances and checklist progress. |
+
+For offline charts, pin them to **★ FLIGHT** while connected and wait for the save to finish. Failed or incomplete
+saves show an error. Opening a chart once does not guarantee it will remain available offline.
+
+### Updates
+
+**iPad:** use the optional update banner or **Settings → Updates**. Choose **Update** to open TrollStore or SideStore,
+or **Later** to keep flying. If detection is wrong or unavailable, choose **Settings → Updates → Update with**.
+Keep the same installer and signing identity to retain app data. Version and build numbers are checked, so updates
+within the same app version are detected too.
+
+**PC:** click **Install update** when it appears in SimPilot Bridge. The bridge downloads the update and restarts.
+Keep the PC bridge and SimPilot Link panel from the same PC download.
 
 ## Connect to MSFS 2024
 
-You only need this for the **live aircraft on the map**, the **sim's charts** and the **Fenix A320 controls**. Everything
-else works without the PC. Put the iPad and sim PC on the **same local network**, by Wi-Fi or Ethernet.
+Put the iPad and Windows sim PC on the **same local network**. Ethernet on the PC is fine.
 
-### Step 1: run SimPilot Bridge on the PC
+### 1. Start the PC bridge
 
-1. On the sim PC, open the **[latest release](https://github.com/footfungus2/simpilot-efb/releases/latest)** and download
-   **`SimPilot-for-PC.zip`**.
-2. Right-click the zip, choose **Extract All**, then open the **SimPilot for PC** folder inside.
-3. Double-click **SimPilot Bridge** (the one with the SimPilot icon) and leave it running while you fly. Its window shows what is connected; closing it keeps the bridge running in the tray. If it won't open, **SimPilot Bridge (console).cmd** runs the same bridge in a plain text window.
-   - If Windows Firewall asks, tick **Private networks** and click **Allow access**. Windows may call this app
-     **Node.js JavaScript Runtime**; that is SimPilot Bridge.
-4. On the iPad, tap **OK** when SimPilot EFB asks to find devices on your local network.
+1. On the sim PC, download **`SimPilot-for-PC.zip`** from the [latest release](https://github.com/footfungus2/simpilot-efb/releases/latest).
+2. Right-click → **Extract All**, then open the **SimPilot for PC** folder.
+3. Run **SimPilot Bridge.exe** and leave it running while you fly. Closing its window leaves it in the system tray.
+   If the app will not open, use **SimPilot Bridge (console).cmd**.
+4. Allow **Private networks** if Windows Firewall asks. It may identify the bridge as **Node.js JavaScript Runtime**.
+5. In the bridge window or console, find the PC address and pairing code. Enter both in **SimPilot → Settings → Bridge** on the iPad.
+   The code contains a pairing key and the PC certificate fingerprint, separated by a colon. It stays in the iPad's Keychain.
 
-That's all: there is nothing to install, and it doesn't matter whether you start it before or after MSFS. The app finds
-it by itself. The round icon at the top right turns **orange !** when the PC is found, and **green ✓** once MSFS
-and the optional chart panel are connected too. An orange icon with no chart panel is expected.
+No separate Node.js installation is needed for the PC download. Start the bridge before or after MSFS.
+The iPad bridge connection uses TLS and pins the certificate from the pairing code. Keep the code private and use a trusted local network.
+The in-sim panel uses loopback HTTP on port **8386**; the iPad connects over HTTPS and WebSocket Secure on port **8387**.
+After updating an older bridge, replace the saved pairing code with the new key-and-fingerprint code from the PC.
+Allow SimPilot EFB to use the iPad's local network when prompted. The top-right connection icon is **orange !** when the bridge is found but
+MSFS or the chart panel is missing, and **green ✓** when both are connected. Orange is expected if you do not use the chart panel.
 
-### Step 2 (optional): show the sim's charts on the iPad
+### 2. Add the chart panel (optional)
 
-A small **SimPilot Link** panel in the MSFS toolbar sends the sim's charts to the iPad. You set it up once:
+The **SimPilot Link** toolbar panel exports the charts from your own MSFS 2024 installation.
 
-1. In MSFS 2024, open **Settings → Advanced Options** and switch **Developer Mode** on. In the menu bar that appears at
-   the top, choose **Help → SDK Installer** and install the SDK (Microsoft's free add-on kit, which the panel installer
-   uses). You can switch Developer Mode off again afterwards.
-2. **Close MSFS 2024.** Inside **SimPilot for PC**, open **Chart panel (optional)** and double-click **Install SimPilot Link**
-   (shown as **Install SimPilot Link.bat** if file extensions are visible). It finds your
-   MSFS folder by itself. If it asks, choose the MSFS **Packages** folder.
-3. **Start MSFS 2024 again**; new add-ons load when the sim starts. In a flight, click the **gear icon** in the toolbar,
-   switch **SimPilot Link** on, then open it. Check its **Startup**, **Panel build**, **Bridge build** and **Last request**
-   rows; a healthy connection shows *Bridge: connected*. Open it once per flight.
-4. **Keep the panel open and fully visible** (not minimised or covered). The panel requests the chart list, then
-   exports each selected chart on demand. MSFS doesn't let
-   add-ons read its chart images, so the panel shows each page and SimPilot Bridge copies it from the screen. A bigger
-   panel, or one popped out into its own window, is faster and gives sharper charts. Each chart is exported once, then
-   kept on the PC and the iPad. Charts of your loaded flight (SID, STAR, approaches for the planned runway) are
-   exported in the background while the panel is open; charts you open yourself go first.
+1. In MSFS, enable **Settings → Advanced Options → Developer Mode**. In the developer menu, choose
+   **Help → SDK Installer** and install the SDK. Developer Mode can then be switched off.
+2. **Close MSFS.** In **SimPilot Bridge → Charts**, click **Install chart panel** and follow the checks.
+   Alternatively, run **Chart panel (optional) → Install SimPilot Link.bat** from the extracted PC folder.
+   If asked for a location, select the MSFS **Packages** folder.
+3. Restart MSFS. In a flight, open the toolbar's **gear icon**, enable **SimPilot Link**, then open the panel.
+   A healthy connection shows **Bridge: connected**. Open the panel once per flight.
+4. Run MSFS in **windowed or borderless mode**. Keep the panel open, fully visible and uncovered during export.
 
-### Not connecting?
+The panel displays each chart page so the bridge can capture it from the screen. A larger or popped-out panel gives
+sharper captures. Chart lists load first; pages export when requested, with the loaded flight's SID, STAR and runway
+approaches prepared in the background. Charts you open yourself take priority.
 
-- If an installed panel stays on **searching**, close MSFS and run **Repair SimPilot Link.bat** from the matching PC
-  download. It replaces and verifies the panel HTML, CSS and script without another SDK build, and keeps a backup.
-- **Diagnose SimPilot Link.bat** records the active package paths and asset hashes, bridge listener, read-only status
-  and bounded bridge logs. Review the local report before sharing it. Keep the panel's startup/error text too;
-  an installed hash does not prove MSFS loaded that copy.
-- Use the same local network, not a guest network. Wired Ethernet on the PC is fine.
-- Windows: **Settings → Network & internet → Wi-Fi** (or **Ethernet**) → your home network → **Private network**.
-- If you cancelled the firewall prompt: **Windows Security → Firewall & network protection → Allow an app through
-  firewall → Change settings**, find **Node.js JavaScript Runtime** and tick **Private**.
-- iPad: **Settings → Privacy → Local Network** → switch **SimPilot EFB** on.
-- Type the address shown in the SimPilot Bridge window, for example `192.168.1.20:8386`, into the app under
-  **Settings → Bridge**.
-- Choose the Wi-Fi or Ethernet address rather than a VPN or virtual adapter. If selecting text pauses the bridge
-  window, press **Esc** to resume.
-- **Settings → Help → Diagnostics** in the app shows which part isn't connected.
+Charts are for personal simulator use. Do not redistribute exported images.
+
+## Troubleshooting
+
+<details>
+<summary><b>The iPad cannot find the bridge</b></summary>
+
+- Use the same local network; avoid guest networks and isolated Wi-Fi clients.
+- Set your home connection to **Private** in Windows **Settings → Network & internet**.
+- In the bridge's **Repair** page, use **Fix firewall**. You can also allow **Node.js JavaScript Runtime** on private networks in Windows Security.
+- On iPad, check **Settings → Privacy → Local Network → SimPilot EFB**.
+- Enter the PC address and pairing code shown in the bridge window under **Settings → Bridge**. Choose the Wi-Fi or Ethernet address rather than a VPN or virtual adapter.
+- In the console version, selecting text can pause the bridge. Press **Esc** to resume.
+
+</details>
+
+<details>
+<summary><b>SimPilot Link stays on “searching” or charts will not export</b></summary>
+
+- Confirm MSFS is windowed or borderless and the panel is visible, uncovered and not minimised.
+- Check the panel's **Startup**, **Panel build**, **Bridge build** and **Last request** rows. Keep the startup or error text when reporting a problem.
+- Close MSFS and run **Repair SimPilot Link.bat** from **Chart panel (optional)** in the matching PC download. It verifies and replaces the installed HTML, CSS and script, keeping a backup without another SDK build.
+- **Diagnose SimPilot Link.bat** creates a local report of package paths, asset hashes, the bridge listener, status and bounded logs. Review it before sharing. A matching installed file does not prove MSFS loaded that copy.
+- Restart MSFS after installation or repair, then open SimPilot Link again.
+
+</details>
+
+<details>
+<summary><b>Collect a diagnostic report</b></summary>
+
+Open **Settings → Help → Diagnostics / debug console** in the iPad app. It shows bridge, simulator and chart-link
+status, aircraft-data age and recent errors.
+
+Reproduce the problem, then tap **Copy diagnostic report** for the current status and last 300 app events.
+**Load PC bridge logs** adds up to 200 events from the connected PC. Logs stay in memory for the session and are
+not uploaded automatically. URLs, credentials and account paths are redacted; review reports before sharing.
+
+</details>
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    subgraph PC["Sim PC (Windows)"]
+    subgraph PC["Sim PC · Windows"]
         MSFS["MSFS 2024"]
         Link["SimPilot Link<br/>toolbar panel"]
         Bridge["SimPilot Bridge"]
         MSFS -- SimConnect --> Bridge
-        Link -- "chart export (HTTP)" --> Bridge
+        Link -- "Chart export · HTTP" --> Bridge
     end
     iPad["iPad app<br/>SwiftUI · MapLibre"]
-    Bridge <-- "Wi-Fi · WebSocket 10 Hz + HTTP" --> iPad
-    Web["SimBrief · aviationweather.gov<br/>VATSIM · OpenStreetMap"] --> iPad
+    Bridge <-- "Local network<br/>TLS · WSS 10 Hz + HTTPS" --> iPad
+    Web["SimBrief · weather<br/>VATSIM · OpenStreetMap · Hoppie"] --> iPad
 ```
 
 | Folder | Contents |
-|---|---|
-| [`ios/`](ios) | The iPad app: SwiftUI, iOS 15 target, XcodeGen project, MapLibre Native |
-| [`bridge/`](bridge) | Node.js + TypeScript server on the sim PC: aircraft position at 10 Hz, chart cache, Bonjour discovery |
-| [`sim-package/`](sim-package) | MSFS 2024 toolbar panel that exports the sim's charts to the bridge |
-| [`shared/protocol.md`](shared/protocol.md) | Protocol between bridge, app and panel |
-| [`scripts/`](scripts) | IPA build, Wi-Fi install page, map library and basemap data tools |
-| [`docs/`](docs) | UI design reference |
+| :--- | :--- |
+| [`ios/`](ios) | SwiftUI iPad app, MapLibre Native and XCTest sources |
+| [`bridge/`](bridge) | Node.js/TypeScript bridge, Windows launcher, chart cache and Bonjour discovery |
+| [`sim-package/`](sim-package) | MSFS toolbar panel and install/repair tools |
+| [`shared/protocol.md`](shared/protocol.md) | App, bridge and panel protocol |
+| [`scripts/`](scripts) | Build, packaging, development install and map-data tools |
+| [`docs/`](docs) | Design reference, update notes, screenshots and release validation |
 
 ## Building from source
 
+Run these commands from the repository root unless noted otherwise.
+
 <details>
-<summary><b>iPad app (macOS + Xcode)</b></summary>
+<summary><b>iPad app · macOS and full Xcode</b></summary>
+
+Install Xcode and XcodeGen, then build an unsigned IPA:
 
 ```sh
 brew install xcodegen
-./scripts/build-ipa.sh          # downloads MapLibre if needed, builds an unsigned SimPilotEFB.ipa
+./scripts/build-ipa.sh
 ```
 
-- Open in Xcode: `cd ios && xcodegen && open SimPilotEFB.xcodeproj`
-- To run on **My Mac (Designed for iPad)**, create `ios/Local.xcconfig` containing `DEVELOPMENT_TEAM = <your team ID>`.
-  This file is not committed.
-- MapLibre is vendored by `scripts/vendor-maplibre.sh`. It uses the globe build, with its declared minimum lowered to iOS 15.0.
-</details>
+The script downloads the pinned MapLibre build if needed, builds the app and validates **`SimPilotEFB.ipa`** in the
+repository root. Install it with TrollStore or sign it with SideStore.
 
-<details>
-<summary><b>Fast updates over Wi-Fi during development</b></summary>
-
-Recent Xcode versions can't deploy to iOS 15 devices, so development builds go through TrollStore's install link:
+To open the project in Xcode:
 
 ```sh
-./scripts/dev-install.sh        # build and serve an install page on port 8090
-./scripts/dev-install.sh stop   # stop the page
+cd ios
+xcodegen
+open SimPilotEFB.xcodeproj
 ```
 
-Open the printed `http://<mac-ip>:8090` on the iPad and tap **Install update in TrollStore**. The *URL Scheme Enabled*
-option must be on in TrollStore's settings.
+For **My Mac (Designed for iPad)**, put `DEVELOPMENT_TEAM = <your team ID>` in `ios/Local.xcconfig`; it is ignored by Git.
+MapLibre uses a vendored globe pre-release with its deployment declaration lowered to iOS 15.0. Device compatibility
+still needs the checks listed in [release validation](docs/release-validation.md).
+
 </details>
 
 <details>
-<summary><b>Bridge and sim panel</b></summary>
+<summary><b>Development installs</b></summary>
 
-Running from source needs [Node.js 20+](https://nodejs.org) (the release's `SimPilot-for-PC.zip` doesn't).
+Build the IPA and copy it into `ios/build/dist` for transfer to the iPad:
 
 ```sh
-cd bridge && npm install && npm test && npm run dev   # or double-click bridge/start-bridge.bat on Windows
-cd sim-package && npm install && npm run build
+./scripts/dev-install.sh
+# Stop an install page server left by an older checkout:
+./scripts/dev-install.sh stop
 ```
 
-- `npm run package:portable` (in `bridge/`, on Windows with the official Node.js 22+ runtime) bundles the bridge
-  beside an unmodified, signature-checked `node.exe` and checks that it starts; `scripts/package-pc.ps1` stages
-  `SimPilot-for-PC.zip` with the ready-made chart panel. No separate Node.js installation is needed.
-- `sim-package/install.bat` builds the panel from source (Node.js + MSFS 2024 SDK) and installs it into `Community2024`.
-  To choose the folder yourself: `build.ps1 -Community "D:\MSFS\Packages\Community2024"`.
-- `sim-package/repair.bat` updates and verifies the HTML, CSS and script in an existing panel without the SDK (`build.ps1 -UpdateScript`).
-  Close MSFS first. The previous panel is saved beside `Community2024`; a first installation still needs the SDK.
+Use AirDrop to send the IPA, then open it with TrollStore or import it into SideStore. The former one-tap HTTP page is disabled because an unencrypted transfer could install a substituted IPA.
 
-To run the bridge on another machine, enable remote SimConnect on the sim PC (`SimConnect.xml`, address `0.0.0.0`,
-port 5111) and start the bridge with `SIMPILOT_SIMCONNECT=<pc-ip>:5111`.
 </details>
 
 <details>
-<summary><b>Basemap data</b></summary>
+<summary><b>PC bridge and MSFS panel</b></summary>
 
-The bundled map layers (land, airports, navaids, FIRs, VATSIM sectors) are rebuilt with:
+Use **Node.js 22.x, version 22.12 or later**, to match CI and the locked test tools.
+The packaged PC download includes its runtime and does not need Node installed separately.
+
+Install, test and start the bridge:
+
+```sh
+npm --prefix bridge ci
+npm --prefix bridge test
+npm --prefix bridge run dev
+```
+
+The development server stays running. In a separate terminal at the repository root, build the panel:
+
+```sh
+npm --prefix sim-package ci
+npm --prefix sim-package run build
+```
+
+- On Windows, `bridge/start-bridge.bat` is another way to start the bridge from source.
+- `npm --prefix bridge run package:portable` on Windows bundles the bridge beside an unmodified official Node.js runtime and checks startup. CI separately verifies the runtime's signature. `scripts/package-pc.ps1` stages `SimPilot-for-PC.zip` with the chart panel.
+- `sim-package/install.bat` builds and installs the panel into `Community2024`; this requires Node.js and the MSFS 2024 SDK. From `sim-package/`, use `.\build.ps1 -Community "D:\MSFS\Packages\Community2024"` to choose the folder.
+- `sim-package/repair.bat` updates an existing panel without the SDK (`.\build.ps1 -UpdateScript`). Close MSFS first. It keeps a backup; a first installation still needs the SDK.
+
+For aircraft data and development with the bridge on another machine, enable remote SimConnect on the sim PC using
+`SimConnect.xml`, address `0.0.0.0` and port `5111`, then start the bridge with `SIMPILOT_SIMCONNECT=<pc-ip>:5111`.
+Chart screen capture still requires the bridge to run on the sim PC.
+
+</details>
+
+<details>
+<summary><b>Rebuild basemap data</b></summary>
+
+Rebuild the bundled land, airport, navaid, FIR and VATSIM sector layers:
 
 ```sh
 python3 -I scripts/build-basemap.py
 ```
+
 </details>
 
 ## Project status
 
-Release candidate (`0.1.x`). SimBrief, maps, weather and VATSIM work independently of the simulator.
-Build/test and packaging checks run before publication; the remaining device checks are tracked in
-[release validation](docs/release-validation.md).
+SimPilot EFB is a hobby project and release candidate. Build and packaging checks do not establish physical-device
+or live-simulator compatibility. The [validation checklist](docs/release-validation.md) tracks the remaining checks:
 
-- [ ] First end-to-end test of the bridge and chart export in MSFS 2024
-- [ ] Confirm the globe build of MapLibre on iPadOS 15.3
-- [ ] Verify Fenix controls and installer updates on physical devices
+- [ ] Map/globe rendering and performance on iPadOS 15.3.1
+- [ ] End-to-end Windows bridge, SimPilot Link chart capture and reconnection in MSFS 2024
+- [ ] Fenix control/readback, fuel data and automatic flight logging in the simulator
+- [ ] Pinned charts, annotations and saved flight data after an offline app restart
+- [ ] Installer updates and retained data on physical devices; live Hoppie/CPDLC exchanges
 
-Not included: airways and enroute intersections beyond your own route (they need navigation data without an open licence), weather forecasts for icing and turbulence.
+Issues and pull requests are welcome. Include the app/bridge versions and a reviewed diagnostic report when reporting a connection problem.
 
-Issues and pull requests are welcome.
+This project is not affiliated with or endorsed by Lufthansa Systems, Lido, Microsoft, Asobo, SimBrief or VATSIM.
+It is for flight simulation only.
 
 ## License
 

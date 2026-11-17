@@ -2,13 +2,13 @@
 
 Three parties:
 
-- **bridge**: Node server on the MSFS PC, port `8386` by default.
+- **bridge**: Node server on the MSFS PC. It serves the PC launcher and in-sim panel on loopback HTTP `8386`, and iPad clients on LAN HTTPS/WSS `8387`.
 - **link**: an in-sim toolbar panel. It reaches the bridge at `http://127.0.0.1:8386` (not 8380, FlyByWire SimBridge's port) (HTTP only; Coherent's WebSocket support is unreliable).
-- **app**: the iPad. It finds the bridge through Bonjour `_simpilot._tcp` or a manually entered IP.
+- **app**: the iPad. It finds the secure bridge port through Bonjour `_simpilot._tcp` or a manually entered IP. Pairing uses a 256-bit key and the SHA-256 fingerprint of the bridge's self-signed TLS certificate.
 
 All JSON fields are camelCase. Coordinates are decimal degrees, altitudes are feet, speeds are knots, angles are degrees true.
 
-## App ⇄ bridge: WebSocket `ws://<host>:8386/ws`
+## App ⇄ bridge: WebSocket Secure `wss://<host>:8387/ws`
 
 Bridge → app:
 
@@ -31,19 +31,23 @@ App → bridge:
 | `t` | payload |
 |---|---|
 | `requestCharts` | `{ icao, role?, procedures?, runway? }`: queues the airport's chart list unless it is already cached (e.g. for the airports of a loaded flight). With `role` (`origin`/`destination`/`alternate`) the bridge also exports the flight's own charts in the background once the list is there: the SID (`procedures`) at the origin, the STAR and the approaches for `runway` at the destination. A chart the iPad opens always goes first |
-| `trafficWatch` | `{ on: boolean }`: turn the sim traffic feed on or off. The bridge asks SimConnect for nearby aircraft only while it is on and an app is connected; turning it off sends an empty `traffic` list |
+| `trafficWatch` | `{ on: boolean }`: subscribe this connection to sim traffic. The bridge asks SimConnect for nearby aircraft while any iPad is subscribed |
 | `lvarWatch` | `{ names: string[] }`: start sending these L:vars (e.g. `N_PED_RMP1_ACTIVE`) as they change |
 | `lvarRun` | `{ code, value?, id? }`: run an MSFS RPN snippet (HubHop preset syntax) on the aircraft's L:vars; `@` = `value`. Commands run in order; with an `id` the bridge answers `commandResult` once it has written the values |
 | `fenixSquawk` | `{ code, id? }`: Fenix only. Clears a half-typed entry, types the code key by key (waiting for each key in the sim) and checks the final code; one at a time |
 | `fenixTune` | `{ rmp, khz, id? }`: Fenix only. Turns RMP `rmp`'s knobs until its standby window reads `khz` (121800 = 121.800), reading it back after every click |
 
-## App → bridge: HTTP
+## App → bridge: HTTPS
+
+Flight data, charts, images and WebSocket control require the pairing key. The iPad accepts only the certificate whose
+SHA-256 fingerprint is in the pairing code. `/api/status` is public for connection status. The in-sim panel and launcher
+use the separate loopback HTTP listener; the Repair page's explicit firewall rule opens the TLS port only.
 
 | method & path | result |
 |---|---|
 | `GET /api/status` | existing `sim` / `link` status plus `bridge: { name: 'SimPilot Bridge', version, buildId, linkProtocol: 3, port }`; read-only, `Cache-Control: no-store` |
 | `GET /api/charts/:icao` | `ChartIndex` (below), or `202 { queued: true, linkConnected }` if the list isn't cached yet. A list older than 24 h is served as is and fetched again in the background |
-| `GET /api/charts/:icao/:guid` | `{ chart: ChartMeta, pages: ChartPage[] }` once every page is exported. Otherwise `202 { queued: true, linkConnected, done, total }`: the sim exports the chart now and `chartProgress`, then `chartReady` or `chartError`, follow. `?refresh=1` forgets the exported pages first |
+| `GET /api/charts/:icao/:guid` | `{ chart: ChartMeta, pages: ChartPage[] }` once every page is exported. Otherwise `202 { queued: true, linkConnected, done, total }`: the sim exports the chart and sends `chartProgress`, then `chartReady` or `chartError`. `?refresh=1` queues a replacement and keeps the current export readable until the replacement is complete. Returns 409 if the panel is offline |
 | `GET /charts/:icao/:guid/:page.png` | the PNG image |
 | `GET /api/ofp?user=<simbrief username or id>` | `Ofp` (normalized SimBrief OFP) |
 | `GET /api/wx/metar?ids=EDDF,EGLL` | `Metar[]` |

@@ -27,18 +27,16 @@ export interface TrafficEntry {
 }
 
 /**
- * AI and multiplayer aircraft around the user, for the iPad's traffic layer. The sim is only asked while the app
- * has turned the layer on (and at least one app is connected), because the list can be long.
+ * AI and multiplayer aircraft around the user. The sim is only asked while an iPad has its traffic layer on.
  */
 export class Traffic {
   private port: TrafficPort | undefined;
-  private wanted = false;
   private timer: NodeJS.Timeout | undefined;
   private userObject: number | undefined;
   private user: { lat: number; lon: number } | undefined;
   private batch: TrafficAircraft[] = [];
 
-  constructor(private readonly hub: Pick<Hub, 'broadcast' | 'clientCount'>) {}
+  constructor(private readonly hub: Pick<Hub, 'broadcast' | 'hasTrafficClients'>) {}
 
   attach(port: TrafficPort): void {
     this.detach();
@@ -57,7 +55,7 @@ export class Traffic {
       ['SIM ON GROUND', 'bool', SimConnectDataType.FLOAT64],
     ];
     for (const [name, unit, type] of defs) port.addToDataDefinition(DEF_TRAFFIC, name, unit, type);
-    if (this.wanted) this.start();
+    this.updateSubscriptions();
   }
 
   detach(): void {
@@ -66,14 +64,9 @@ export class Traffic {
     this.batch = [];
   }
 
-  /** The app turned the traffic layer on or off. */
-  watch(on: boolean): void {
-    this.wanted = on;
-    if (on) this.start();
-    else {
-      this.stop();
-      this.hub.broadcast({ t: 'traffic', aircraft: [] });
-    }
+  updateSubscriptions(): void {
+    if (this.hub.hasTrafficClients()) this.start();
+    else this.stop();
   }
 
   /** The user's own aircraft is part of the sim's answer; it is left out by object id or, failing that, by position. */
@@ -119,9 +112,7 @@ export class Traffic {
   private start(): void {
     if (!this.port || this.timer) return;
     const ask = () => {
-      if (this.hub.clientCount() === 0) {
-        // Nobody is listening any more (the app closed): stop asking until it asks again.
-        this.wanted = false;
+      if (!this.hub.hasTrafficClients()) {
         this.stop();
         return;
       }

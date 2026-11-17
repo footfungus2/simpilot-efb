@@ -15,7 +15,7 @@ afterEach(() => { hubs.forEach((hub) => hub.close()); hubs.length = 0; });
 function call(method: string, url: string, headers: Record<string, string> = {}, remoteAddress = '127.0.0.1') {
   const hub = new Hub();
   hubs.push(hub);
-  const server = createServer(hub, new ChartStore('/unused'));
+  const server = createServer(hub, new ChartStore('/unused'), 'test-pairing-key');
   return new Promise<{ status: number; body: string }>((resolve) => {
     const res = { status: 200, setHeader() {}, writeHead(status: number) { this.status = status; return this; }, end(body = '') { resolve({ status: this.status, body }); } };
     const req = Object.assign(Readable.from([]), { method, url, headers: { host: 'localhost:8386', ...headers }, socket: { remoteAddress } });

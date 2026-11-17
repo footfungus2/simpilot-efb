@@ -1,6 +1,7 @@
 import Combine
 import CoreImage
 import CoreLocation
+import ImageIO
 import UIKit
 
 /// Loads an airport's chart list from the bridge right away; a chart's pages are exported from the sim (by the
@@ -374,7 +375,8 @@ final class ChartsModel: ObservableObject {
 
     /// Whether "export again" applies: the selected chart comes from the sim (not a pinned or bundled chart).
     var canReexport: Bool {
-        guard let chart = selected, bridge.isConnected, !isOfflineCharts, !pack.contains(chart.guid) else { return false }
+        guard let chart = selected, bridge.status?.link.connected == true, exportProgress == nil,
+              !isOfflineCharts, !pack.contains(chart.guid) else { return false }
         return true
     }
 
@@ -441,6 +443,13 @@ final class ChartsModel: ObservableObject {
             return img
         }
         let data = try await bridge.data(path)
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = (properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue,
+              let height = (properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue,
+              BridgeImageLimit.supportsDimensions(width: width, height: height) else {
+            throw BridgeClient.HTTPError(status: 0, message: "Chart image dimensions exceed the supported limit")
+        }
         guard let img = UIImage(data: data) else { throw BridgeClient.HTTPError(status: 0, message: "Invalid image") }
         imageCache.setObject(img, forKey: path as NSString)
         ChartImageDiskCache.store(data, for: path) // keep sim charts between sessions

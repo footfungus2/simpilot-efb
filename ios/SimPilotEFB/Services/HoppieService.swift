@@ -121,13 +121,19 @@ enum SecretStore {
         return String(data: data, encoding: .utf8)
     }
 
-    static func write(_ key: String, _ value: String?) {
-        SecItemDelete(query(key) as CFDictionary)
-        guard let value, !value.isEmpty else { return }
-        var q = query(key)
-        q[kSecValueData as String] = Data(value.utf8)
-        q[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(q as CFDictionary, nil)
+    static func write(_ key: String, _ value: String?) -> Bool {
+        let item = query(key)
+        guard let value, !value.isEmpty else {
+            let status = SecItemDelete(item as CFDictionary)
+            return status == errSecSuccess || status == errSecItemNotFound
+        }
+        let attributes: [String: Any] = [kSecValueData as String: Data(value.utf8)]
+        let status = SecItemUpdate(item as CFDictionary, attributes as CFDictionary)
+        if status != errSecItemNotFound { return status == errSecSuccess }
+        var newItem = item
+        newItem.merge(attributes) { _, new in new }
+        newItem[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        return SecItemAdd(newItem as CFDictionary, nil) == errSecSuccess
     }
 }
 
@@ -145,7 +151,8 @@ final class HoppieStore: ObservableObject {
     /// Polling runs once the first message has been sent (or you went online by hand).
     @Published private(set) var polling = false
 
-    @Published var logon: String { didSet { SecretStore.write("hoppieLogon", logon.trimmingCharacters(in: .whitespaces)) } }
+    @Published private(set) var logonSaveFailed = false
+    @Published var logon: String { didSet { logonSaveFailed = !SecretStore.write("hoppieLogon", logon.trimmingCharacters(in: .whitespaces)) } }
     @Published var callsign: String { didSet { UserDefaults.standard.set(callsign, forKey: "hoppieCallsign") } }
 
     var unreadCount: Int { messages.filter(\.unread).count }
@@ -177,14 +184,18 @@ final class HoppieStore: ObservableObject {
     /// CPDLC reply to a message of ATC ("WILCO", "UNABLE", "ROGER", "AFFIRM", "NEGATIVE").
     func reply(to message: HoppieMessage, _ answer: String) async {
         guard let id = message.cpdlcID else { return }
-        defer { nextCpdlcID += 1 }
-        await send(to: message.station, type: "cpdlc", packet: "/data2/\(nextCpdlcID)/\(id)/N/\(answer)")
+        await sendCpdlc(to: message.station, reference: String(id), replyCode: "N", text: answer)
     }
 
     /// Asks an ATC station for a CPDLC connection.
     func requestLogon(to station: String) async {
-        defer { nextCpdlcID += 1 }
-        await send(to: station, type: "cpdlc", packet: "/data2/\(nextCpdlcID)//Y/REQUEST LOGON")
+        await sendCpdlc(to: station, reference: "", replyCode: "Y", text: "REQUEST LOGON")
+    }
+
+    private func sendCpdlc(to station: String, reference: String, replyCode: String, text: String) async {
+        let id = nextCpdlcID
+        nextCpdlcID += 1
+        await send(to: station, type: "cpdlc", packet: "/data2/\(id)/\(reference)/\(replyCode)/\(text)")
     }
 
     private func send(to station: String, type: String, packet: String) async {

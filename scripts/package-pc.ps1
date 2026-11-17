@@ -48,13 +48,14 @@ Open the "SimPilot for PC" folder after choosing Extract All.
    Its window shows whether the iPad, MSFS and the chart panel are connected. Closing the window
    keeps it running in the tray (next to the clock); right-click the tray icon to quit.
    When a newer version exists, an "Install update" button appears in the window and updates by itself.
-   (If it won't open, "SimPilot Bridge (console).cmd" runs the same bridge in a plain text window.)
+   (If it won't open, run "SimPilot Bridge (console).cmd" for the PC address and pairing code.)
    - If Windows Firewall asks: tick "Private networks" and click "Allow access".
      Windows may call it "Node.js JavaScript Runtime"; that is SimPilot Bridge.
    Keep the iPad and PC on the same local network (Wi-Fi or Ethernet).
    On the iPad, tap OK when SimPilot EFB asks to find devices on your local network.
-   The app's status icon turns orange when the PC is found, and green once MSFS and
-   the optional SimPilot Link chart panel are connected too.
+   In SimPilot > Settings > Bridge, enter the PC address and pairing code shown in the
+   bridge window or console. Keep the code private. The app's status icon turns orange
+   when paired, and green once MSFS and the optional SimPilot Link panel are connected.
 
 2. Optional - the sim's charts on the iPad (one-time setup):
    a. In MSFS 2024 open Settings > Advanced Options and switch Developer Mode on.

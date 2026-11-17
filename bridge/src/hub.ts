@@ -27,6 +27,7 @@ function isAppMessage(value: unknown): value is AppToBridge {
 /** Shared state and fan-out to connected iPads. */
 export class Hub {
   private clients = new Set<WebSocket>();
+  private trafficClients = new Set<WebSocket>();
   private simConnected = false;
   private aircraftTitle: string | undefined;
   private linkLastSeen: number | undefined;
@@ -51,6 +52,7 @@ export class Hub {
     clearInterval(this.timer);
     for (const client of this.clients) client.terminate();
     this.clients.clear();
+    this.trafficClients.clear();
     this.messageHandlers = [];
   }
 
@@ -89,6 +91,10 @@ export class Hub {
         log.warn('ignoring invalid app message');
         return;
       }
+      if (msg.t === 'trafficWatch') {
+        if (msg.on) this.trafficClients.add(ws);
+        else this.trafficClients.delete(ws);
+      }
       try {
         for (const h of this.messageHandlers) h(msg);
       } catch (err) {
@@ -98,13 +104,14 @@ export class Hub {
     });
     ws.on('close', () => {
       this.clients.delete(ws);
+      this.trafficClients.delete(ws);
       log.info(`app disconnected from ${remote} (${this.clients.size} left)`);
     });
     ws.on('error', (err) => log.warn(`socket error from ${remote}: ${err.message}`));
   }
 
-  clientCount(): number {
-    return this.clients.size;
+  hasTrafficClients(): boolean {
+    return this.trafficClients.size > 0;
   }
 
   onMessage(handler: (msg: AppToBridge) => void): void {
@@ -140,6 +147,7 @@ export class Hub {
   broadcast(msg: BridgeToApp): void {
     const data = JSON.stringify(msg);
     for (const ws of this.clients) {
+      if (msg.t === 'traffic' && !this.trafficClients.has(ws)) continue;
       if (ws.readyState === ws.OPEN) {
         if (ws.bufferedAmount > 1024 * 1024) ws.terminate();
         else ws.send(data);

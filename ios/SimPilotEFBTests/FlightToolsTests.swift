@@ -76,11 +76,12 @@ final class FlightToolsStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.data.log.map(\.origin), ["EGSS"])
     }
 
+    private func sample(_ s: Double, ground: Bool, gs: Double) -> Ownship {
+        Ownship(lat: 51.9, lon: 0.2, altFt: 0, gsKt: gs, trkDeg: 0, hdgDeg: 0, vsFpm: 0, onGround: ground, magVarDeg: 0, ts: s * 1000)
+    }
+
     func testTakeoffAndLandingMakeOneLogEntry() {
         let (store, _) = makeStore()
-        func sample(_ s: Double, ground: Bool, gs: Double) -> Ownship {
-            Ownship(lat: 51.9, lon: 0.2, altFt: 0, gsKt: gs, trkDeg: 0, hdgDeg: 0, vsFpm: 0, onGround: ground, magVarDeg: 0, ts: s * 1000)
-        }
         store.observe(sample(0, ground: true, gs: 0), ofp: nil, aircraftTitle: "Fenix A320")
         store.observe(sample(10, ground: false, gs: 150), ofp: nil, aircraftTitle: "Fenix A320")
         store.observe(sample(20, ground: false, gs: 160), ofp: nil, aircraftTitle: "Fenix A320")
@@ -92,10 +93,54 @@ final class FlightToolsStoreTests: XCTestCase {
         XCTAssertEqual(store.data.log.count, 1)
         XCTAssertNotNil(store.data.log[0].landing)
     }
+
+    func testLandingMatchesTheSavedFlightAfterRelaunch() {
+        let (store, url) = makeStore()
+        defer { try? FileManager.default.removeItem(at: url) }
+        store.upsert(LogEntry(callsign: "CURRENT", takeoff: Date(timeIntervalSince1970: 500), automatic: true, flightKey: "current"))
+        store.upsert(LogEntry(callsign: "OTHER", takeoff: Date(timeIntervalSince1970: 700), automatic: true, flightKey: "other"))
+        store.saveNow()
+        let reloaded = FlightToolsStore(url: url)
+        reloaded.observe(sample(900, ground: false, gs: 230), ofp: nil, aircraftTitle: "Fenix A320", flight: "current")
+        reloaded.observe(sample(1_000, ground: true, gs: 120), ofp: nil, aircraftTitle: "Fenix A320", flight: "current")
+        reloaded.observe(sample(1_010, ground: true, gs: 60), ofp: nil, aircraftTitle: "Fenix A320", flight: "current")
+        XCTAssertEqual(reloaded.data.log.count, 2)
+        XCTAssertEqual(reloaded.data.log.first?.landing, Date(timeIntervalSince1970: 1_000))
+        XCTAssertNil(reloaded.data.log.last?.landing)
+    }
+
+    func testAnUnplannedLandingDoesNotCloseAnUnrelatedTakeoff() {
+        let (store, _) = makeStore()
+        store.upsert(LogEntry(callsign: "PREVIOUS", takeoff: Date(timeIntervalSince1970: 500), automatic: true))
+        store.observe(sample(900, ground: false, gs: 230), ofp: nil, aircraftTitle: "Fenix A320")
+        store.observe(sample(1_000, ground: true, gs: 120), ofp: nil, aircraftTitle: "Fenix A320")
+        store.observe(sample(1_010, ground: true, gs: 60), ofp: nil, aircraftTitle: "Fenix A320")
+        XCTAssertEqual(store.data.log.count, 2)
+        XCTAssertNil(store.data.log.first?.landing)
+        XCTAssertEqual(store.data.log.last?.landing, Date(timeIntervalSince1970: 1_000))
+    }
 }
 
 @MainActor
 final class FuelCheckTests: XCTestCase {
+    func testRouteProgressFollowsTheShortLegAcrossTheDateLine() throws {
+        var plan = ofp()
+        plan.origin.lat = 0
+        plan.origin.lon = 179
+        var fix = try XCTUnwrap(plan.navlog.last)
+        fix.lat = 0
+        fix.lon = -179
+        fix.cumNm = 120
+        plan.navlog = [fix]
+        var ownship = sample(lat: 0, fuel: 4900, ts: 1_000)
+        ownship.lon = 180
+        XCTAssertEqual(try XCTUnwrap(RouteProgress.alongTrackNm(ofp: plan, ownship)), 60, accuracy: 0.01)
+        ownship.lon = -179.5
+        XCTAssertEqual(try XCTUnwrap(RouteProgress.alongTrackNm(ofp: plan, ownship)), 90, accuracy: 0.01)
+        ownship.lon = 0
+        XCTAssertNil(RouteProgress.alongTrackNm(ofp: plan, ownship))
+    }
+
     /// A straight route north along the 0° meridian: one degree of latitude is 60 NM, so along-track = (lat − 50) × 60.
     private func ofp() -> Ofp {
         func fix(_ ident: String, lat: Double, cum: Double, fuel: Double, type: String = "wpt") -> OfpFix {

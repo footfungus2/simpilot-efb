@@ -43,6 +43,7 @@ final class ChartPackTests: XCTestCase {
         pack.add(icao: "EGSS", detail: chart("failed-write"), images: [0: image])
         XCTAssertTrue(pack.items.isEmpty)
         XCTAssertNotNil(pack.error)
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: directory.path).contains { $0.hasSuffix(".png") })
     }
 
     @MainActor

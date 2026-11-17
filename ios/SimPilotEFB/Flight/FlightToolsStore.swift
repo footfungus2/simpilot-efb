@@ -54,6 +54,8 @@ struct LogEntry: Codable, Identifiable, Equatable {
     var notes = ""
     /// Takeoff/landing were picked up from the sim rather than typed in.
     var automatic = false
+    /// Ties a saved automatic takeoff to its OFP when the app is reopened during the flight.
+    var flightKey: String?
 
     /// When the flight happened (for sorting): the first time that is set.
     var sortDate: Date { blockOff ?? takeoff ?? landing ?? blockOn ?? .distantPast }
@@ -175,6 +177,7 @@ final class FlightToolsStore: ObservableObject {
     private let url: URL
     private var saveTask: Task<Void, Never>?
     private var detector = FlightPhaseDetector()
+    private var activeTakeoffID: UUID?
     private var lastFuelCheckMs = 0.0
 
     init(url: URL? = nil) {
@@ -259,29 +262,37 @@ final class FlightToolsStore: ObservableObject {
 
     func removeLog(_ id: UUID) { data.log.removeAll { $0.id == id } }
 
+    func resetTelemetry() {
+        detector = FlightPhaseDetector()
+        activeTakeoffID = nil
+        lastFuelCheckMs = 0
+    }
+
     /// Feeds the live aircraft state: takeoffs and landings go into the logbook by themselves (times can be
     /// corrected by hand afterwards). A takeoff starts an entry from the loaded flight; a landing closes it.
     func observe(_ o: Ownship, ofp: Ofp?, aircraftTitle: String?, flight: String = "no-flight") {
         recordFuel(o, ofp: ofp, flight: flight)
         guard let event = detector.feed(ts: o.ts, onGround: o.onGround, gsKt: o.gsKt) else { return }
+        let key = flight == "no-flight" ? nil : flight
+        var entry = LogEntry(callsign: ofp?.callsign ?? "", origin: ofp?.origin.icao ?? "", destination: ofp?.destination.icao ?? "",
+                             aircraft: ofp?.aircraft.name ?? aircraftTitle ?? "", route: ofp?.route ?? "", automatic: true, flightKey: key)
         switch event {
         case let .takeoff(at):
-            var entry = LogEntry(callsign: ofp?.callsign ?? "", origin: ofp?.origin.icao ?? "", destination: ofp?.destination.icao ?? "",
-                                 aircraft: ofp?.aircraft.name ?? aircraftTitle ?? "", route: ofp?.route ?? "")
             entry.takeoff = at
-            entry.automatic = true
+            activeTakeoffID = entry.id
             upsert(entry)
         case let .landing(at):
-            if let i = data.log.lastIndex(where: { $0.automatic && $0.takeoff != nil && $0.landing == nil }) {
+            if let i = data.log.lastIndex(where: { item in
+                guard item.automatic, let takeoff = item.takeoff, takeoff < at, item.landing == nil else { return false }
+                if let key { return item.flightKey == key }
+                return item.flightKey == nil && item.id == activeTakeoffID
+            }) {
                 data.log[i].landing = at
             } else {
-                // Started the app in flight: there's no takeoff to pair it with, but the landing is still worth keeping.
-                var entry = LogEntry(callsign: ofp?.callsign ?? "", origin: ofp?.origin.icao ?? "", destination: ofp?.destination.icao ?? "",
-                                     aircraft: ofp?.aircraft.name ?? aircraftTitle ?? "", route: ofp?.route ?? "")
                 entry.landing = at
-                entry.automatic = true
                 upsert(entry)
             }
+            activeTakeoffID = nil
         }
     }
 

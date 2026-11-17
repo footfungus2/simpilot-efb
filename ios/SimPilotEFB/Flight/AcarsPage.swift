@@ -53,6 +53,10 @@ struct AcarsPage: View {
                     }
                     LabeledField(title: "Callsign", text: $hoppie.callsign, placeholder: "EZY128W")
                 }
+                if hoppie.logonSaveFailed {
+                    Text("Couldn't save the logon code to Keychain. Check device settings and try again.")
+                        .font(.footnote).foregroundColor(Theme.warnOrange)
+                }
                 if !hoppie.configured {
                     Text("Get a free logon code at hoppie.nl/acars (Get Logon Code), paste it here once, and enter the callsign you fly with. The code stays in this iPad's Keychain.")
                         .font(.system(size: 13)).foregroundColor(theme.textSecondary).fixedSize(horizontal: false, vertical: true)

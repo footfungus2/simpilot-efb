@@ -22,9 +22,21 @@ describe('bridge updater', () => {
     await expect(checkForUpdate()).rejects.toThrow('unreadable');
   });
 
-  it('script takes paths as arguments and checks the files before copying', () => {
+  it('keeps filesystem paths out of cmd arguments and checks files before copying', () => {
     const s = updateScript();
-    expect(s).toContain('%~1');
+    expect(s).toContain('"%SIMPILOT_UPDATE_APP_DIR%"');
+    expect(s).toContain('"%SIMPILOT_UPDATE_ZIP%"');
+    expect(s).not.toContain('%~1');
     expect(s.indexOf('if not exist "%SRC%\\bridge.cjs"')).toBeLessThan(s.indexOf('robocopy "%SRC%" '));
+  });
+
+  it('installs the matching panel and setup guide with the new bridge', () => {
+    const s = updateScript();
+    const panelCheck = 'if not exist "%SRC%\\Chart panel (optional)\\PackageSources\\panel-assets.json" goto fail';
+    const panelCopy = 'robocopy "%SRC%\\Chart panel (optional)" "%SIMPILOT_UPDATE_APP_DIR%\\Chart panel (optional)" /E';
+    expect(s).toContain(panelCheck);
+    expect(s).toContain(panelCopy);
+    expect(s.indexOf(panelCheck)).toBeLessThan(s.indexOf(panelCopy));
+    expect(s).toMatch(/node\.exe bridge\.cjs "SimPilot Bridge\*" "Read me\.txt"/);
   });
 });

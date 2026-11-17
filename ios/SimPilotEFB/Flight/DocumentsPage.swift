@@ -6,12 +6,17 @@ import UniformTypeIdentifiers
 enum DocumentFiles {
     enum ImportError: LocalizedError {
         case unreadable(String)
+        case tooLarge(String)
         var errorDescription: String? {
             switch self {
             case let .unreadable(name): return "\(name) couldn't be opened. Password-protected and damaged PDFs aren't supported."
+            case let .tooLarge(name): return "\(name) is larger than the 100 MB import limit."
             }
         }
     }
+
+    static let maxImportBytes = 100 * 1024 * 1024
+    static func supportsImportSize(_ size: Int) -> Bool { size >= 0 && size <= maxImportBytes }
 
     private static var folder: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("documents", isDirectory: true)
@@ -26,6 +31,8 @@ enum DocumentFiles {
         let scoped = source.startAccessingSecurityScopedResource()
         defer { if scoped { source.stopAccessingSecurityScopedResource() } }
         let name = source.lastPathComponent
+        guard let size = (try? source.resourceValues(forKeys: [.fileSizeKey]))?.fileSize else { throw ImportError.unreadable(name) }
+        guard supportsImportSize(size) else { throw ImportError.tooLarge(name) }
         guard let pdf = PDFDocument(url: source), pdf.pageCount > 0, !pdf.isLocked else { throw ImportError.unreadable(name) }
         let doc = ImportedDocument(title: source.deletingPathExtension().lastPathComponent, pageCount: pdf.pageCount)
         try FileManager.default.copyItem(at: source, to: url(doc))

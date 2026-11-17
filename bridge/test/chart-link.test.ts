@@ -30,6 +30,7 @@ describe('chart list and chart export', () => {
     link = new ChartLink(store, hub, capturer);
   });
   afterEach(async () => {
+    hub.close();
     vi.useRealTimers();
     vi.restoreAllMocks();
     await fs.rm(dir, { recursive: true, force: true });
@@ -49,6 +50,36 @@ describe('chart list and chart export', () => {
     for (let page = 0; page < count; page++) if (!have.includes(page) && !skip.includes(page)) await link.onCapture(tile(job.id, page, 0, 0, 1, 1, guid));
     return { job, have };
   }
+
+  it('keeps the old chart through an interrupted refresh and publishes a complete replacement', async () => {
+    await listed();
+    const { job: original } = await exportChart('chart-1', 2);
+    await link.onDone({ jobId: original.id });
+    const cached = await store.getChart('EDDF', 'chart-1');
+    expect(cached?.pages.every((page) => page.image)).toBe(true);
+
+    async function replacement() {
+      const job = await link.requestChart('EDDF', 'chart-1', undefined, true);
+      expect(await link.onPages({ jobId: job.id, guid: 'chart-1', pages: [{ width: 20, height: 28 }, { width: 20, height: 28 }] }))
+        .toEqual({ have: [] });
+      await link.onCapture(tile(job.id, 0));
+      return job;
+    }
+    const first = await replacement();
+    expect(await store.getChart('EDDF', 'chart-1')).toEqual(cached);
+    await link.onDone({ jobId: first.id });
+    expect(hub.broadcast).toHaveBeenLastCalledWith(expect.objectContaining({ t: 'chartError' }));
+    expect(await store.getChart('EDDF', 'chart-1')).toEqual(cached);
+
+    const second = await replacement();
+    await link.onCapture(tile(second.id, 1));
+    await link.onDone({ jobId: second.id });
+    const refreshed = await store.getChart('EDDF', 'chart-1');
+    expect(refreshed?.pages.map((page) => page.width)).toEqual([20, 20]);
+    expect(refreshed?.pages.every((page) => page.image?.includes('&revision='))).toBe(true);
+    expect(await store.hasImage('EDDF', 'chart-1', 0)).toBe(true);
+    expect(hub.broadcast).toHaveBeenLastCalledWith({ t: 'chartReady', icao: 'EDDF', guid: 'chart-1' });
+  });
 
   it('saves the chart list as soon as the panel sends it and tells the iPad once', async () => {
     const job = link.requestIndex('EDDF');

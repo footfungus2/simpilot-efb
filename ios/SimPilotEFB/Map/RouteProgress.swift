@@ -32,17 +32,19 @@ struct RouteProgress {
         var points: [(CLLocationCoordinate2D, Double)] = [(ofp.origin.coordinate, 0)]
         points += ofp.navlog.map { ($0.coordinate, $0.cumNm) }
         guard points.count >= 2 else { return nil }
-        let cosLat = cos(o.lat * .pi / 180)
-        func xy(_ c: CLLocationCoordinate2D) -> (Double, Double) { (c.longitude * 60 * cosLat, c.latitude * 60) } // NM, local flat approx
-        let p = xy(o.coordinate)
+        let longitudeScale = 60 * cos(o.lat * .pi / 180)
         var best: (dist: Double, along: Double)?
         for i in 0..<(points.count - 1) {
-            let a = xy(points[i].0), b = xy(points[i + 1].0)
-            let dx = b.0 - a.0, dy = b.1 - a.1
+            let a = points[i].0, b = points[i + 1].0
+            let deltaLon = (b.longitude - a.longitude).remainder(dividingBy: 360)
+            // Use the longitude copy nearest the leg so the shorter segment also works at the date line.
+            let midpointLon = a.longitude + deltaLon / 2
+            let px = ((o.lon - midpointLon).remainder(dividingBy: 360) + deltaLon / 2) * longitudeScale
+            let py = (o.lat - a.latitude) * 60
+            let dx = deltaLon * longitudeScale, dy = (b.latitude - a.latitude) * 60
             let len2 = dx * dx + dy * dy
-            let t = len2 > 0 ? max(0, min(1, ((p.0 - a.0) * dx + (p.1 - a.1) * dy) / len2)) : 0
-            let cx = a.0 + t * dx, cy = a.1 + t * dy
-            let d = hypot(p.0 - cx, p.1 - cy)
+            let t = len2 > 0 ? max(0, min(1, (px * dx + py * dy) / len2)) : 0
+            let d = hypot(px - t * dx, py - t * dy)
             let along = points[i].1 + t * (points[i + 1].1 - points[i].1)
             if best == nil || d < best!.dist { best = (d, along) }
         }

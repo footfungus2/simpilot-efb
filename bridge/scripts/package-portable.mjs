@@ -51,6 +51,7 @@ const compiled = spawnSync(csc, [
   '/nologo', '/target:winexe', '/optimize+', '/platform:anycpu', `/out:${launcherExe}`,
   `/win32icon:${path.join(root, 'launcher', 'simpilot.ico')}`,
   `/resource:${path.join(root, 'launcher', 'logo.png')},logo.png`,
+  ...fs.readdirSync(path.join(root, 'launcher', 'fonts')).filter((f) => f.endsWith('.ttf')).map((f) => `/resource:${path.join(root, 'launcher', 'fonts', f)},${f}`),
   '/r:System.dll', '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll', '/r:System.Web.Extensions.dll', '/r:System.Xaml.dll',
   ...['PresentationFramework', 'PresentationCore', 'WindowsBase'].map((name) => `/r:${path.join(frameworkDir, 'WPF', `${name}.dll`)}`),
   path.join(root, 'launcher', 'SimPilotBridge.cs'),

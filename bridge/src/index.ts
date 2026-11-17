@@ -15,23 +15,29 @@ for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal
 void start().catch((err: Error) => finish(1, `SimPilot Bridge couldn't start: ${err.message}`));
 
 async function start(): Promise<void> {
-  const [{ config }, { Bonjour }, { ChartStore }, { Hub }, { FenixProcedures }, { LVars }, { createServer }, { startSim }, { Traffic }, { lanAddresses }] = await Promise.all([
-    import('./config.js'), import('bonjour-service'), import('./charts/store.js'), import('./hub.js'),
+  const [{ config }, { loadOrCreatePairingKey }, { loadOrCreateTls }, { Bonjour }, { ChartStore }, { Hub }, { FenixProcedures }, { LVars }, { createServer, createSecureServer }, { startSim }, { Traffic }, { lanAddresses }] = await Promise.all([
+    import('./config.js'), import('./auth.js'), import('./tls.js'), import('bonjour-service'), import('./charts/store.js'), import('./hub.js'),
     import('./fenix.js'), import('./lvars.js'), import('./server.js'), import('./sim.js'), import('./traffic.js'), import('./manage.js'),
   ]);
   if (stopping) return;
   const hub = new Hub();
   const store = new ChartStore(config.cacheDir);
+  const pairingKey = smokeTest ? '0'.repeat(64) : loadOrCreatePairingKey(config.pairingFile);
+  const tls = smokeTest ? undefined : await loadOrCreateTls(config.tlsDir, pairingKey);
   const lvars = new LVars((values) => hub.broadcast({ t: 'lvars', values }));
   const traffic = new Traffic(hub);
-  const server = createServer(hub, store, lvars, new FenixProcedures(lvars), undefined, traffic);
+  const server = createServer(hub, store, pairingKey, lvars, new FenixProcedures(lvars), undefined, traffic, tls?.fingerprint);
+  const secureServer = tls ? createSecureServer(server, tls, hub, pairingKey) : undefined;
   let stopSim: (() => void) | undefined;
   let discovery: InstanceType<typeof Bonjour> | undefined;
   cleanup = async () => {
     stopSim?.();
     hub.close();
-    server.close();
-    server.closeAllConnections();
+    for (const listener of [server, secureServer]) {
+      if (!listener) continue;
+      if (listener.listening) listener.close();
+      listener.closeAllConnections();
+    }
     if (discovery) {
       const bonjour = discovery;
       await new Promise<void>((resolve) => {
@@ -41,33 +47,41 @@ async function start(): Promise<void> {
       bonjour.destroy();
     }
   };
-  server.on('error', (err: NodeJS.ErrnoException) => void finish(1, err.code === 'EADDRINUSE'
-    ? `Port ${config.port} is already in use. If SimPilot Bridge is open, keep using that window and close this one. Otherwise close the program using that port and try again.`
-    : `SimPilot Bridge couldn't start: ${err.message}`));
-
-  server.listen(config.port, '0.0.0.0', () => {
+  for (const [listener, port] of [[server, config.port], ...(secureServer ? [[secureServer, config.securePort] as const] : [])] as const) {
+    listener.on('error', (err: NodeJS.ErrnoException) => void finish(1, err.code === 'EADDRINUSE'
+      ? `Port ${port} is already in use. If SimPilot Bridge is open, keep using that window and close this one. Otherwise close the program using that port and try again.`
+      : `SimPilot Bridge couldn't start: ${err.message}`));
+  }
+  let ready = 0;
+  const expectedListeners = secureServer ? 2 : 1;
+  const onListening = () => {
+    if (++ready !== expectedListeners) return;
     if (smokeTest) {
       log.info(`startup check passed (port ${config.port})`);
       process.exit(0);
     }
     stopSim = startSim(hub, lvars, traffic);
-    welcome(config.port, config.bridgeVersion, config.buildId, lanAddresses);
+    welcome(config.securePort, config.bridgeVersion, config.buildId, lanAddresses,
+      tls && process.stdout.isTTY ? `${pairingKey}:${tls.fingerprint}` : undefined);
     // Discovery failures should not take down the working manual-address connection.
     discovery = new Bonjour(undefined, (err: Error) => log.warn('Local discovery unavailable; use the PC address in Settings > Bridge', err));
-    discovery.publish({ name: `SimPilot Bridge (${os.hostname()})`, type: 'simpilot', port: config.port, txt: { v: '1' } });
-    log.info(`listening on port ${config.port}; chart cache: ${config.cacheDir}`);
-  });
+    discovery.publish({ name: `SimPilot Bridge (${os.hostname()})`, type: 'simpilot', port: config.securePort, txt: { v: '1' } });
+    log.info(`listening on loopback HTTP ${config.port} and LAN HTTPS ${config.securePort}; chart cache: ${config.cacheDir}`);
+  };
+  server.listen(config.port, '127.0.0.1', onListening);
+  secureServer?.listen(config.securePort, '0.0.0.0', onListening);
 }
 
-function welcome(port: number, version: string, buildId: string, lanAddresses: (port: number) => { name: string; address: string }[]): void {
+function welcome(port: number, version: string, buildId: string, lanAddresses: (port: number) => { name: string; address: string }[], pairingCode?: string): void {
   console.log(`\n  SimPilot Bridge ${version} is running. Leave this window open while you fly.`);
   console.log(`  Build: ${buildId}`);
   console.log('  Keep the iPad and PC on the same local network (Wi-Fi or Ethernet).');
   const adapters = lanAddresses(port);
   if (adapters.length) {
-    console.log('  If the app cannot find the PC, type its Wi-Fi or Ethernet address in Settings > Bridge:');
+    console.log('  Enter this PC’s Wi-Fi or Ethernet address in SimPilot > Settings > Bridge:');
     for (const adapter of adapters) console.log(`    ${adapter.name}: ${adapter.address}`);
   }
+  if (pairingCode) console.log(`  Pairing code (keep private): ${pairingCode}`);
   console.log('  MSFS 2024 connects automatically whenever it is running. To stop, close this window.');
   if (process.platform === 'win32') {
     console.log('  Windows may call the bridge "Node.js JavaScript Runtime" in its firewall prompt. Allow Private networks.');

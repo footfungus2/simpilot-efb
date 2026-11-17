@@ -1,5 +1,10 @@
+import { EventEmitter } from 'node:events';
 import { RawBuffer, SimConnectDataType, SimObjectType } from 'node-simconnect';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { WebSocket } from 'ws';
+import { ChartStore } from '../src/charts/store.js';
+import { Hub } from '../src/hub.js';
+import { createServer } from '../src/server.js';
 import { DEF_TRAFFIC, REQ_TRAFFIC, Traffic, type TrafficPort } from '../src/traffic.js';
 import type { BridgeToApp } from '../src/types.js';
 
@@ -29,16 +34,16 @@ function aircraft(o: { title?: string; tail?: string; airline?: string; flight?:
 
 describe('traffic feed', () => {
   let sent: BridgeToApp[];
-  let clients: number;
+  let watching: boolean;
   let traffic: Traffic;
   let port: FakePort;
-  const hub = { broadcast: (m: BridgeToApp) => void sent.push(m), clientCount: () => clients };
+  const hub = { broadcast: (m: BridgeToApp) => void sent.push(m), hasTrafficClients: () => watching };
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.spyOn(console, 'log').mockImplementation(() => {});
     sent = [];
-    clients = 1;
+    watching = false;
     traffic = new Traffic(hub);
     port = new FakePort();
     traffic.attach(port);
@@ -52,25 +57,58 @@ describe('traffic feed', () => {
   it('asks the sim only while the app wants traffic', () => {
     vi.advanceTimersByTime(10_000);
     expect(port.requests).toHaveLength(0);
-    traffic.watch(true);
+    watching = true;
+    traffic.updateSubscriptions();
     expect(port.requests).toHaveLength(1);
     expect(port.requests[0]).toEqual({ radius: 150_000, type: SimObjectType.AIRCRAFT });
     vi.advanceTimersByTime(6_000);
     expect(port.requests.length).toBeGreaterThanOrEqual(3);
     const asked = port.requests.length;
-    traffic.watch(false);
+    watching = false;
+    traffic.updateSubscriptions();
     vi.advanceTimersByTime(10_000);
     expect(port.requests).toHaveLength(asked);
-    expect(sent.at(-1)).toEqual({ t: 'traffic', aircraft: [] }); // the iPad clears its symbols
   });
 
   it('stops asking once no app is connected', () => {
-    traffic.watch(true);
-    clients = 0;
+    watching = true;
+    traffic.updateSubscriptions();
+    watching = false;
     vi.advanceTimersByTime(3_500);
     const asked = port.requests.length;
     vi.advanceTimersByTime(20_000);
     expect(port.requests).toHaveLength(asked);
+  });
+
+  it('keeps sending traffic to the iPad that still has TFC enabled', () => {
+    const hub = new Hub();
+    const traffic = new Traffic(hub);
+    const makeClient = () => Object.assign(new EventEmitter(), {
+      OPEN: 1, readyState: 1, send: vi.fn(), terminate: vi.fn(),
+    });
+    const first = makeClient(), second = makeClient();
+    try {
+      createServer(hub, new ChartStore('unused'), 'test-key', undefined, undefined, undefined, traffic);
+      hub.addClient(first as unknown as WebSocket, 'iPad A');
+      hub.addClient(second as unknown as WebSocket, 'iPad B');
+      traffic.attach(port);
+      const watch = (client: EventEmitter, on: boolean) => client.emit('message', JSON.stringify({ t: 'trafficWatch', on }));
+      watch(first, true);
+      watch(second, true);
+      watch(second, false);
+      vi.advanceTimersByTime(3_000);
+      expect(port.requests).toHaveLength(2);
+      const message: BridgeToApp = { t: 'traffic', aircraft: [] };
+      hub.broadcast(message);
+      expect(first.send).toHaveBeenCalledWith(JSON.stringify(message));
+      expect(second.send).not.toHaveBeenCalledWith(JSON.stringify(message));
+      first.emit('close');
+      vi.advanceTimersByTime(6_000);
+      expect(port.requests).toHaveLength(2);
+    } finally {
+      traffic.detach();
+      hub.close();
+    }
   });
 
   it('collects a whole answer and publishes it once, with the airline callsign when there is one', () => {

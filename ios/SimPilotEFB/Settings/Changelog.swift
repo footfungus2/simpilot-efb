@@ -40,6 +40,17 @@ struct ChangelogEntry: Identifiable {
 
 enum Changelog {
     static let entries: [ChangelogEntry] = [
+        ChangelogEntry(id: "0.1.2", version: "0.1.2", date: "November 2026", summary: "Secure iPad pairing and fixes for charts, traffic and flight tools.", sections: [
+            .init(kind: .changed, items: [
+                "Update the iPad app and PC bridge together. Enter the address and pairing code from the bridge window or console in Settings → Bridge.",
+                "SimPilot Bridge uses HTTPS port 8387 for the iPad and local port 8386 for SimPilot Link.",
+            ]),
+            .init(kind: .fixed, items: [
+                "Chart re-exports keep the previous complete chart until the replacement is ready.",
+                "In-place PC updates include the matching SimPilot Link installer and repair files.",
+                "Corrected date-line route progress, separate traffic settings for each iPad, and fixed duplicate CPDLC IDs and mismatched logbook landings.",
+            ]),
+        ]),
         ChangelogEntry(id: "0.1.1", version: "0.1.1", date: "November 2026", summary: "Waypoint altitudes on the route and a self-updating PC bridge.", sections: [
             .init(kind: .added, items: [
                 "Route waypoints show their planned altitude, colour-coded by phase (climb green, cruise cyan, descent orange), with T/C and T/D markers; switch it off in NAV",
@@ -58,7 +69,6 @@ enum Changelog {
             ]),
             .init(kind: .changed, items: [
                 "Charts from the sim are captured sharper and checked tile by tile; SimPilot Bridge and SimPilot Link must be updated together",
-                "SimPilot Bridge uses port 8386 (FlyByWire SimBridge uses 8380)",
             ]),
             .init(kind: .removed, items: [
                 "The demo flight and the generated placeholder charts",
